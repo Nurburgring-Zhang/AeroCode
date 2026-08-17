@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -20,6 +20,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AeroCode.Skills", "src\AeroCode.Skills\AeroCode.Skills.csproj", "{44444444-4444-4444-4444-444444444444}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AeroCode.Harness", "src\AeroCode.Harness\AeroCode.Harness.csproj", "{55555555-5555-5555-5555-555555555555}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AeroAgent.Conversation", "src\AeroAgent.Conversation\AeroAgent.Conversation.csproj", "{F20671E7-9B0F-4076-BE7F-1C47112FF524}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -45,8 +47,7 @@ Global
 		{11111111-1111-1111-1111-111111111111}.Release|x86.Build.0 = Release|Any CPU
 		{22222222-2222-2222-2222-222222222222}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{22222222-2222-2222-2222-222222222222}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{22222222-2222-2222-1111-111111111111}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{22222222-2222-2222-2222-222222222222}.Debug|x64.Build.0 = Debug|Any CPU
+		{22222222-2222-2222-2222-222222222222}.Debug|x64.Build.0 = ?
 		{22222222-2222-2222-2222-222222222222}.Debug|x86.ActiveCfg = Debug|Any CPU
 		{22222222-2222-2222-2222-222222222222}.Debug|x86.Build.0 = Debug|Any CPU
 		{22222222-2222-2222-2222-222222222222}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -87,8 +88,7 @@ Global
 		{E7161FCD-C526-46F1-BD88-7F8DED5DF942}.Debug|x86.Build.0 = Debug|Any CPU
 		{E7161FCD-C526-46F1-BD88-7F8DED5DF942}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E7161FCD-C526-46F1-BD88-7F8DED5DF942}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E7161FCD-C526-46F1-BD88-7EF8DED5DF942}.Release|x64.ActiveCfg = Release|Any CPU
-		{E7161FCD-C526-46F1-BD88-7F8DED5DF942}.Release|x64.Build.0 = Release|Any CPU
+		{E7161FCD-C526-46F1-BD88-7F8DED5DF942}.Release|x64.Build.0 = ?
 		{E7161FCD-C526-46F1-BD88-7F8DED5DF942}.Release|x86.ActiveCfg = Release|Any CPU
 		{E7161FCD-C526-46F1-BD88-7F8DED5DF942}.Release|x86.Build.0 = Release|Any CPU
 		{44444444-4444-4444-4444-444444444444}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
@@ -115,6 +115,18 @@ Global
 		{55555555-5555-5555-5555-555555555555}.Release|x64.Build.0 = Release|Any CPU
 		{55555555-5555-5555-5555-555555555555}.Release|x86.ActiveCfg = Release|Any CPU
 		{55555555-5555-5555-5555-555555555555}.Release|x86.Build.0 = Release|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Debug|x64.Build.0 = Debug|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Debug|x86.Build.0 = Debug|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Release|x64.ActiveCfg = Release|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Release|x64.Build.0 = Release|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Release|x86.ActiveCfg = Release|Any CPU
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -127,5 +139,6 @@ Global
 		{E7161FCD-C526-46F1-BD88-7F8DED5DF942} = {A1B2C3D4-0001-0000-0000-000000000001}
 		{44444444-4444-4444-4444-444444444444} = {A1B2C3D4-0001-0000-0000-000000000001}
 		{55555555-5555-5555-5555-555555555555} = {A1B2C3D4-0001-0000-0000-000000000001}
+		{F20671E7-9B0F-4076-BE7F-1C47112FF524} = {A1B2C3D4-0001-0000-0000-000000000001}
 	EndGlobalSection
 EndGlobal

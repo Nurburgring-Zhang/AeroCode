@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\AeroCode.Harness\AeroCode.Harness.csproj" />
     <ProjectReference Include="..\..\src\AeroCode.App\AeroCode.App.csproj" />
     <ProjectReference Include="..\..\src\AeroCode.Mcp\AeroCode.Mcp.csproj" />
+    <ProjectReference Include="..\..\src\AeroAgent.Conversation\AeroAgent.Conversation.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net.Http;
 using AeroCode.AI.Configuration;
@@ -12,7 +13,7 @@ namespace AeroCode.AI.Providers;
 /// Provider 工厂。按 ProviderConfig 创建对应 IAiProvider。
 /// 不在代码里硬编码任何 API key / endpoint,只根据 config 装配。
 /// </summary>
-public sealed class ProviderFactory
+public sealed class ProviderFactory : IProviderRegistry
 {
     private readonly AIOptions _options;
     private readonly ILoggerFactory _loggerFactory;
@@ -48,6 +49,17 @@ public sealed class ProviderFactory
     }
 
     public IEnumerable<string> ListConfiguredIds() => _options.Providers.Select(p => p.Id);
+
+    /// <summary>查询 provider 配置（编排层解析默认模型用）。未配置返回 false。</summary>
+    public bool TryGetConfig(string providerId, [NotNullWhen(true)] out ProviderConfig? config)
+    {
+        var found = _options.Providers.FirstOrDefault(p => p.Id == providerId);
+        config = found;
+        return found is not null;
+    }
+
+    /// <summary>全局默认 provider 的 Id。</summary>
+    public string DefaultProviderId => _options.DefaultProviderId;
 
     private AiResiliencePipeline GetOrCreatePipeline(string providerId)
     {
