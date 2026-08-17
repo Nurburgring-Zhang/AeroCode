@@ -36,15 +36,28 @@ public class TaskGraphTests
     [Fact]
     public async Task Graph_ParallelLayer_TwoIndependentNodesRunTogether()
     {
-        var t1 = DateTime.UtcNow;
+        // Deterministic parallelism proof: record each node's execution interval
+        // and assert the intervals overlap. Wall-clock thresholds are flaky under
+        // loaded CI machines; interval overlap is load-independent.
+        var starts = new Dictionary<string, DateTime>();
+        var ends = new Dictionary<string, DateTime>();
+        var sync = new object();
+        Func<string, Func<CancellationToken, Task<string>>> node = id => async _ =>
+        {
+            lock (sync) starts[id] = DateTime.UtcNow;
+            await Task.Delay(300);
+            lock (sync) ends[id] = DateTime.UtcNow;
+            return id;
+        };
         var g = new TaskGraphBuilder()
-            .Add("a", "A", async _ => { await Task.Delay(300); return "a"; })
-            .Add("b", "B", async _ => { await Task.Delay(300); return "b"; })
+            .Add("a", "A", node("a"))
+            .Add("b", "B", node("b"))
             .Build();
         var r = await g.ExecuteAsync();
         Assert.True(r.AllSucceeded);
-        // 2 nodes @ 300ms each; sequential would be >= 600ms; parallel should be ~300ms
-        Assert.True(r.Total < TimeSpan.FromMilliseconds(550), $"took {r.Total.TotalMilliseconds}ms, expected < 550");
+        // Overlap: each node started before the other finished. Sequential execution can never satisfy this.
+        Assert.True(starts["a"] < ends["b"] && starts["b"] < ends["a"],
+            $"intervals did not overlap: a=[{starts["a"]:O},{ends["a"]:O}] b=[{starts["b"]:O},{ends["b"]:O}]");
     }
 
     [Fact]
@@ -93,7 +106,7 @@ public class TaskGraphTests
     }
 
     [Fact]
-    public async Task Graph_Ascii_RendersReadable()
+    public void Graph_Ascii_RendersReadable()
     {
         var g = new TaskGraphBuilder()
             .Add("a", "A", _ => Task.FromResult("x"))
@@ -113,7 +126,7 @@ public class LoopRunnerTests
         var loop = new LoopRunner(maxIterations: 3);
         var r = await loop.RunAsync(_ => Task.FromResult<string?>(null));
         Assert.True(r.Succeeded);
-        Assert.Equal(1, r.History.Count);
+        Assert.Single(r.History);
     }
 
     [Fact]

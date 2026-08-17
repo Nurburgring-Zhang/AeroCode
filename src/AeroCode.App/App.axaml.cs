@@ -1,6 +1,9 @@
 ﻿using System;
 using System.IO;
 using System.Threading.Tasks;
+using AeroAgent.Conversation.Data;
+using AeroAgent.Conversation.Orchestration;
+using AeroAgent.Conversation.Services;
 using AeroCode.AI.Embedding;
 using AeroCode.AI.Providers;
 using AeroCode.AI.Telemetry;
@@ -93,6 +96,7 @@ public partial class App : Application
         var loggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
         var providerFactory = new ProviderFactory(aiOptions, loggerFactory);
         sc.AddSingleton(providerFactory);
+        sc.AddSingleton<IProviderRegistry>(providerFactory);
         sc.AddSingleton(loggerFactory);
 
         // 2b. V3.2 OpenTelemetry bootstrapper (real CNCF SDK). Set AEROCODE_OTLP_ENDPOINT env to enable OTLP export.
@@ -127,6 +131,21 @@ public partial class App : Application
         var dbPath = paths.DatabaseFile;
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
         sc.AddDbContext<AeroCodeDbContext>(opt => opt.UseSqlite($"Data Source={dbPath}"));
+
+        // 3b. 统一对话（AeroAgent.Conversation）。独立 SQLite 库，单例匹配本应用
+        //     既有约定（笔记服务亦为单例）；对话操作按用户顺序执行，无并发上下文复用。
+        var convPath = paths.ConversationDatabaseFile;
+        Directory.CreateDirectory(Path.GetDirectoryName(convPath)!);
+        var convOptions = new DbContextOptionsBuilder<ConversationDbContext>()
+            .UseSqlite($"Data Source={convPath}")
+            .Options;
+        var convDb = new ConversationDbContext(convOptions);
+        convDb.Database.EnsureCreated();
+        sc.AddSingleton(convDb);
+        sc.AddSingleton<ISessionService, SessionService>();
+        sc.AddSingleton<IOrchestrationStrategy, SingleStrategy>();
+        sc.AddSingleton<IChatOrchestrationFacade, ChatOrchestrationFacade>();
+        sc.AddSingleton<ChatViewModel>();
 
         // 4. Core services
         sc.AddSingleton<ITagService, TagService>();

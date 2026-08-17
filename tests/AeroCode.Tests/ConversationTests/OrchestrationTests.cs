@@ -91,6 +91,8 @@ internal sealed class TestProviderRegistry : IProviderRegistry
 
     public IAiProvider Get(string id) => _providers[id];
 
+    public IEnumerable<string> ListConfiguredIds() => _providers.Keys;
+
     public bool TryGetConfig(string providerId, [NotNullWhen(true)] out ProviderConfig? config)
     {
         if (_providers.ContainsKey(providerId))

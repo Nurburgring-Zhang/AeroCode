@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using AeroCode.AI.Configuration;
 
@@ -17,4 +18,7 @@ public interface IProviderRegistry
 
     /// <summary>查询 provider 配置（编排层解析默认模型用）。未配置返回 false。</summary>
     bool TryGetConfig(string providerId, [NotNullWhen(true)] out ProviderConfig? config);
+
+    /// <summary>列出已配置的 provider Id（UI 下拉枚举用）。</summary>
+    IEnumerable<string> ListConfiguredIds();
 }
