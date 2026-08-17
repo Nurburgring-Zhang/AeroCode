@@ -1,6 +1,7 @@
 // Copyright (c) AeroCode V3.0
 // SkillHub — main entry point for the Skills engine (Hermes-style hub).
 using AeroCode.Skills.AutoCreate;
+using AeroCode.Skills.Bundled.Analysis;
 using AeroCode.Skills.Bundled.Engineering;
 using AeroCode.Skills.Bundled.Productivity;
 using AeroCode.Skills.Loader;
@@ -42,7 +43,7 @@ public sealed class SkillHub
         RegisterBundledSkills();
     }
 
-    /// <summary>Register the 7 default bundled skills (5 engineering + 2 productivity).</summary>
+    /// <summary>Register the 8 default bundled skills (5 engineering + 2 productivity + 1 analysis).</summary>
     private void RegisterBundledSkills()
     {
         TryRegister(() => new CodeReviewSkill());
@@ -52,6 +53,9 @@ public sealed class SkillHub
         TryRegister(() => new SetupSkillsSkill());
         TryRegister(() => new SummarizeNoteSkill());
         TryRegister(() => new AutoTagNoteSkill());
+        // DeepAuditSkill consumes SkillContext.LlmInvoker (real provider via SkillToolbox);
+        // falls back to a static-only audit when no LLM is wired — never fake output.
+        TryRegister(() => new DeepAuditSkill());
     }
 
     private void TryRegister(Func<ISkill> factory)

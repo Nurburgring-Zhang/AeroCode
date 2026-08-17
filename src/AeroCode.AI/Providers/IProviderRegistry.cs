@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using AeroCode.AI.Configuration;
@@ -10,6 +11,12 @@ namespace AeroCode.AI.Providers;
 /// </summary>
 public interface IProviderRegistry
 {
+    /// <summary>
+    /// Provider 配置变更完成（热重载）：实现方替换配置后触发，
+    /// 订阅方（对话 VM 的 provider 下拉等）据此刷新，无需重启应用。
+    /// </summary>
+    event Action? ProvidersChanged;
+
     /// <summary>全局默认 provider 的 Id。</summary>
     string DefaultProviderId { get; }
 

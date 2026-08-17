@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using AeroAgent.Conversation.Data;
 using AeroAgent.Conversation.Orchestration;
@@ -9,16 +10,21 @@ using AeroAgent.Moa.Assignment;
 using AeroAgent.Moa.Planning;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Strategies;
+using AeroAgent.Moa.Tools;
 using AeroCode.AI.Embedding;
 using AeroCode.AI.Providers;
 using AeroCode.AI.Telemetry;
 using AeroCode.App.Configuration;
+using AeroCode.App.Mcp;
 using AeroCode.App.Services;
+using AeroCode.App.Tools;
 using AeroCode.App.ViewModels;
 using AeroCode.App.Views;
 using AeroCode.Core.Data;
 using AeroCode.Core.Services;
 using AeroCode.Harness;
+using AeroCode.Harness.Permission;
+using AeroCode.Mcp.Client;
 using AeroCode.Skills;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -77,9 +83,10 @@ public partial class App : Application
         var paths = new AppDataPaths();
         sc.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
         sc.AddSingleton(paths);
-        sc.AddSingleton<SettingsService>();
 
-        // 1. Load settings synchronously (SettingsService is sync-ready)
+        // 1. Load settings synchronously (SettingsService is sync-ready)。
+        //    注册"已加载的这个实例"——按类型注册会让 DI 另造一个未 Load 的空实例，
+        //    设置页将水合空白配置并在保存时擦掉 settings.json。
         var settings = new SettingsService(paths);
         try
         {
@@ -90,6 +97,8 @@ public partial class App : Application
             LogToFile("WARN", $"Settings load failed, using defaults: {ex.Message}");
             // Fall through with default settings
         }
+
+        sc.AddSingleton(settings);
 
         // 1b. Apply theme (before any view is rendered)
         var themeService = new ThemeService();
@@ -159,9 +168,33 @@ public partial class App : Application
         sc.AddSingleton<IModelProfileCatalog>(profileCatalog);
         sc.AddSingleton(profileCatalog);
 
-        var moaOptions = new JsonMoaOptionsStore(paths.MoaOptionsFile)
-            .LoadAsync().GetAwaiter().GetResult();
+        var moaOptionsStore = new JsonMoaOptionsStore(paths.MoaOptionsFile);
+        var moaOptions = moaOptionsStore.LoadAsync().GetAwaiter().GetResult();
+        sc.AddSingleton(moaOptionsStore);
         sc.AddSingleton(moaOptions);
+
+        // 3d. Harness 与工具内核。HarnessHost 提前创建：其 PermissionPolicy 是
+        //     ToolRouter 的唯一裁决源；注册表/路由器以单例实例注入，
+        //     WorkerRunner 的可选 ToolRouter 构造参数由 MS.DI 自动解析。
+        //     工具箱本体（内建 + MCP）在容器构建后注册（需要解析 Core 服务）。
+        var harnessHost = new HarnessHost();
+        sc.AddSingleton(harnessHost);
+        sc.AddSingleton(harnessHost.Permission);
+
+        // S7 授权链：持久化存储（permissions.json）+ 对话框代理（Ask → 真实授权窗口）。
+        // 用户的持久化决策在 RegisterToolboxes 之后应用（用户决定优先于内建默认）。
+        var permissionStore = new JsonPermissionStore(paths.PermissionsFile);
+        sc.AddSingleton(permissionStore);
+        var permissionBroker = new DialogPermissionBroker(
+            harnessHost.Permission, permissionStore,
+            new AvaloniaPermissionDialogPresenter(),
+            loggerFactory.CreateLogger<DialogPermissionBroker>());
+        sc.AddSingleton<IPermissionBroker>(permissionBroker);
+
+        var toolboxRegistry = new ToolboxRegistry();
+        var toolRouter = new ToolRouter(toolboxRegistry, harnessHost.Permission, permissionBroker);
+        sc.AddSingleton(toolboxRegistry);
+        sc.AddSingleton(toolRouter);
 
         sc.AddSingleton<WorkerRunner>();
         sc.AddSingleton<ModelAssigner>();
@@ -192,11 +225,7 @@ public partial class App : Application
         skillHub.LoadFromDisk();  // Sync — load all user SKILL.md files
         sc.AddSingleton(skillHub);
 
-        // 7. V3 Harness engine (uses providerFactory + eventBus)
-        var harnessHost = new HarnessHost();
-        sc.AddSingleton(harnessHost);
-
-        // 8. ViewModels
+        // 7. ViewModels
         sc.AddSingleton<MainWindowViewModel>();
         sc.AddSingleton<AIAssistantViewModel>();
         sc.AddSingleton<SkillsViewModel>();
@@ -206,7 +235,139 @@ public partial class App : Application
         sc.AddSingleton<SettingsViewModel>();
         sc.AddSingleton<MainWindow>();
 
-        return sc.BuildServiceProvider(validateScopes: false);
+        var serviceProvider = sc.BuildServiceProvider(validateScopes: false);
+        RegisterToolboxes(serviceProvider, settings, loggerFactory);
+        ApplyPersistedPermissions(serviceProvider, loggerFactory);
+        return serviceProvider;
+    }
+
+    /// <summary>
+    /// 应用 permissions.json 中的用户决策，覆盖内建默认（笔记/技能工具 Allow、
+    /// MCP 工具 Ask、CreateDefault 规则表）。必须在 RegisterToolboxes 之后执行：
+    /// 用户记住的拒绝/询问优先于应用的便利默认。读取失败如实降级为默认策略。
+    /// </summary>
+    private static void ApplyPersistedPermissions(
+        ServiceProvider services, ILoggerFactory loggerFactory)
+    {
+        var logger = loggerFactory.CreateLogger("AeroCode.Permissions");
+        PermissionSettings persisted;
+        try
+        {
+            persisted = services.GetRequiredService<JsonPermissionStore>()
+                .LoadAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("[DEGRADED] 权限文件读取失败，使用内建默认策略：{Error}", ex.Message);
+            return;
+        }
+
+        var permission = services.GetRequiredService<PermissionPolicy>();
+        foreach (var (toolName, decision) in persisted.ToolDecisions)
+        {
+            permission.SetDefaultDecision(toolName, decision);
+        }
+
+        if (persisted.ToolDecisions.Count > 0)
+        {
+            logger.LogInformation("已恢复 {Count} 条持久化工具授权决策", persisted.ToolDecisions.Count);
+        }
+    }
+
+    /// <summary>
+    /// 容器构建后注册工具域：内建（笔记/技能）+ settings.json 中启用的 MCP 服务器。
+    /// 权限默认裁决：内建工具 = 用户在笔记 UI 本来就能做的操作 → Allow
+    /// （delete_note 的硬删除不可逆 → Override 升级为 Ask）；
+    /// MCP 工具来自外部进程、副作用任意 → 保持 Ask（S7 授权代理落地后向用户询问）。
+    /// MCP 配置错误绝不阻塞启动：发现失败如实降级记录，应用照常可用。
+    /// </summary>
+    private static void RegisterToolboxes(
+        ServiceProvider services, SettingsService settings, ILoggerFactory loggerFactory)
+    {
+        var registry = services.GetRequiredService<ToolboxRegistry>();
+        var permission = services.GetRequiredService<HarnessHost>().Permission;
+        var logger = loggerFactory.CreateLogger("AeroCode.Toolboxes");
+
+        var noteToolbox = new NoteToolbox(
+            services.GetRequiredService<INoteService>(),
+            services.GetRequiredService<INotebookService>(),
+            services.GetRequiredService<ITagService>(),
+            services.GetRequiredService<ISearchService>());
+        registry.Register(noteToolbox);
+
+        var skillToolbox = new SkillToolbox(
+            services.GetRequiredService<SkillHub>(),
+            services.GetRequiredService<IProviderRegistry>(),
+            services.GetRequiredService<AppDataPaths>().RootDirectory,
+            logger);
+        registry.Register(skillToolbox);
+
+        foreach (var def in noteToolbox.Definitions)
+        {
+            permission.SetDefaultDecision(def.Name, PermissionDecision.Allow);
+        }
+
+        permission.SetRule(new ToolPermissionRule
+        {
+            ToolName = "delete_note",
+            DefaultDecision = PermissionDecision.Allow,
+            Notes = "软删除可恢复→放行；硬删除不可逆→询问用户",
+            Override = args => args is not null
+                && args.TryGetValue("hard", out var hard)
+                && hard is true
+                ? PermissionDecision.Ask
+                : PermissionDecision.Allow,
+        });
+
+        foreach (var def in skillToolbox.Definitions)
+        {
+            permission.SetDefaultDecision(def.Name, PermissionDecision.Allow);
+        }
+
+        var mcpConfigs = settings.Current.McpServers.Where(c => c.Enabled).ToList();
+        if (mcpConfigs.Count == 0)
+        {
+            return;
+        }
+
+        var gateways = mcpConfigs
+            .Select(c => (IMcpGateway)new McpGateway(c, logger))
+            .ToList();
+        var mcpToolbox = new McpToolbox(gateways, logger);
+        try
+        {
+            mcpToolbox.DiscoverAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("[DEGRADED] MCP 工具发现整体失败：{Error}", ex.Message);
+        }
+
+        foreach (var warning in mcpToolbox.DiscoveryWarnings)
+        {
+            logger.LogWarning("[DEGRADED] {Warning}", warning);
+        }
+
+        if (mcpToolbox.Definitions.Count > 0)
+        {
+            registry.Register(mcpToolbox);
+            // 显式 Ask 规则（而非依赖"未知工具→Ask"兜底）：
+            // MCP 工具进入设置页权限列表，用户可预先允许/拒绝/保持询问。
+            foreach (var def in mcpToolbox.Definitions)
+            {
+                permission.SetRule(new ToolPermissionRule
+                {
+                    ToolName = def.Name,
+                    DefaultDecision = PermissionDecision.Ask,
+                    Notes = "MCP 外部进程工具：副作用任意，须征求授权",
+                });
+            }
+        }
+        else
+        {
+            // 一个工具都没发现：不注册，如实释放子进程资源。
+            mcpToolbox.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
     }
 
     private static void ApplyMigrations(IServiceProvider sp)

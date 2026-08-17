@@ -15,6 +15,7 @@ using AeroCode.Harness;
 using AeroCode.Skills;
 using AeroCode.Skills.Registry;
 using Avalonia;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.DependencyInjection;
@@ -71,6 +72,42 @@ public partial class AIAssistantViewModel : ObservableObject
         if (AvailableProviders.Count > 0)
             SelectedProviderId = factory.GetDefault().ProviderId;
         RefreshSkills();
+
+        // 热重载：设置保存后 provider 集合变化 → 就地刷新下拉，
+        // 否则已删除的 provider 留在列表里，后续 Get(已删id) 会抛异常。
+        _factory.ProvidersChanged += OnProvidersChanged;
+    }
+
+    private void OnProvidersChanged()
+    {
+        var ids = _factory.ListConfiguredIds().ToList();
+        try
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                ApplyProviderList(ids);
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() => ApplyProviderList(ids));
+        }
+        catch (InvalidOperationException)
+        {
+            // 无 UI 调度器（无头测试环境）：就地应用
+            ApplyProviderList(ids);
+        }
+    }
+
+    private void ApplyProviderList(IReadOnlyList<string> ids)
+    {
+        var current = SelectedProviderId;
+        AvailableProviders.Clear();
+        foreach (var id in ids)
+        {
+            AvailableProviders.Add(id);
+        }
+
+        SelectedProviderId = ids.Contains(current) ? current : ids.FirstOrDefault() ?? string.Empty;
     }
 
     private void RefreshSkills()

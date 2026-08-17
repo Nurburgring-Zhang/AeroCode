@@ -1,0 +1,69 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AeroCode.App.Views.PermissionDialog"
+        Title="🔐 工具授权"
+        Width="560" Height="460"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+
+    <Window.Resources>
+        <SolidColorBrush x:Key="BgPanel" Color="#11141B" />
+        <SolidColorBrush x:Key="BgElev" Color="#161A23" />
+        <SolidColorBrush x:Key="Border" Color="#2A3142" />
+        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0" />
+        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6" />
+        <SolidColorBrush x:Key="AccentGreen" Color="#10B981" />
+        <SolidColorBrush x:Key="AccentRed" Color="#EF4444" />
+        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B" />
+    </Window.Resources>
+
+    <DockPanel Background="{StaticResource BgPanel}" LastChildFill="True">
+        <!-- 头部：意图说明 -->
+        <Border DockPanel.Dock="Top" Padding="20,14" Background="{StaticResource BgElev}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="4">
+                <TextBlock Text="🔐 模型请求执行工具" FontSize="16" FontWeight="Bold"
+                           Foreground="{StaticResource AccentAmber}" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="工具：" Foreground="{StaticResource FgMuted}" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock x:Name="ToolNameText" FontSize="13" FontWeight="SemiBold"
+                               Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- 底部：记住 + 决定按钮 -->
+        <Border DockPanel.Dock="Bottom" Padding="20,12" Background="{StaticResource BgElev}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
+            <StackPanel Spacing="10">
+                <CheckBox x:Name="RememberBox" Foreground="{StaticResource FgPrimary}" FontSize="12"
+                          Content="记住我的选择（以后此工具不再询问；可在 设置 → 工具权限 中改回）" />
+                <Grid ColumnDefinitions="*,Auto,Auto">
+                    <TextBlock Grid.Column="0" Foreground="{StaticResource FgMuted}" FontSize="11"
+                               VerticalAlignment="Center" TextWrapping="Wrap"
+                               Text="拒绝的原因会如实返回给模型，模型可改用其他方式完成任务。" />
+                    <Button Grid.Column="1" Content="⛔ 拒绝" Click="OnDenyClick" Margin="0,0,8,0"
+                            Background="{StaticResource AccentRed}" Foreground="White" MinWidth="96" />
+                    <Button Grid.Column="2" Content="✅ 允许" Click="OnAllowClick"
+                            Background="{StaticResource AccentGreen}" Foreground="White" MinWidth="96" />
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- 中部：参数预览 -->
+        <Border Padding="20,12">
+            <DockPanel LastChildFill="True">
+                <TextBlock DockPanel.Dock="Top" Text="将要用到的参数" FontSize="12"
+                           FontWeight="SemiBold" Foreground="{StaticResource FgMuted}" Margin="0,0,0,6" />
+                <Border Background="{StaticResource BgElev}" BorderBrush="{StaticResource Border}"
+                        BorderThickness="1" CornerRadius="4" Padding="10">
+                    <ScrollViewer>
+                        <TextBlock x:Name="ArgsText" Foreground="{StaticResource FgPrimary}"
+                                   FontSize="12" FontFamily="Consolas,Menlo,monospace"
+                                   TextWrapping="Wrap" />
+                    </ScrollViewer>
+                </Border>
+            </DockPanel>
+        </Border>
+    </DockPanel>
+</Window>

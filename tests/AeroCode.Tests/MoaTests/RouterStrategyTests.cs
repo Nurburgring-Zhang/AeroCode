@@ -133,6 +133,40 @@ public sealed class RouterStrategyTests : MoaTestBase
     }
 
     [Fact]
+    public async Task Router_GhostProviderBinding_FallsBackToAutoAssignment_StillAnswers()
+    {
+        // 孤儿绑定运行期回归（Reviewer-A P2-4）：设置页允许绑定指向已删除的 provider
+        // （如实列"（未配置）"、绝不静默重置）；运行期 ModelResolver 对这类绑定
+        // 必须回退到画像自动分配，整轮照常出答，而不是抛异常/失败。
+        var fast = AddProvider("fast");
+        SetProfile("fast", new[] { ModelStrength.General }, speed: SpeedTier.Fast);
+        fast.ChatQueue.Enqueue("{\"category\":\"code\",\"reason\":\"代码请求\"}"); // 分类调用落到自动分配的 fast
+
+        var coder = AddProvider("coder");
+        SetProfile("coder", new[] { ModelStrength.Code });
+        coder.Deltas = new[] { "自动分配回答" };
+
+        Options.Router = new ModelBinding("ghost-provider", null); // 注册表里不存在
+
+        var facade = MakeFacade(MakeStrategy());
+        var session = await NewSessionAsync(OrchestrationStrategy.Router);
+        var events = await CollectAsync(facade.SendAsync(session.Id, "写一个排序函数"));
+
+        // 整轮成功：路由分类走回退分配，最终答复产出，无失败事件
+        Assert.DoesNotContain(events, e => e is MessageFailedEvent);
+        Assert.IsType<TurnCompletedEvent>(events[^1]);
+
+        var routerStart = events.OfType<AssistantMessageStarted>()
+            .Single(s => s.OrchestrationRole == StrategyRole.Router);
+        Assert.Equal("fast", routerStart.ProviderId); // 回退到画像打分指派
+
+        var messages = (await Sessions.GetMessagesAsync(session.Id)).Value!;
+        var workerMsg = messages.Single(m => m.OrchestrationRole == StrategyRole.Worker);
+        Assert.Equal("coder", workerMsg.ProviderId); // code 类别路由到 Code 强项
+        Assert.Equal("自动分配回答", workerMsg.Content);
+    }
+
+    [Fact]
     public async Task Router_SecondTurn_ContextExcludesClassification()
     {
         // P1-1 端到端回归：第二轮调用时，第一轮的"路由分类"中间产物（IsFinal=false）

@@ -80,6 +80,34 @@
                                                Foreground="{StaticResource ChatFg}" FontSize="14" />
                                 </Border>
 
+                                <!-- 工具结果消息：紧凑行（徽章 + 参数 + 输出） -->
+                                <StackPanel Grid.Column="0" IsVisible="{Binding IsTool}"
+                                            Margin="{Binding IndentMargin}"
+                                            MaxWidth="680" HorizontalAlignment="Left" Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Border Background="{StaticResource ChatCyan}" CornerRadius="6" Padding="6,2">
+                                            <TextBlock Text="{Binding ToolBadge}" FontSize="10"
+                                                       Foreground="#04121A" />
+                                        </Border>
+                                        <TextBlock Text="{Binding StatusGlyph}" IsVisible="{Binding !!StatusGlyph}"
+                                                   Foreground="{StaticResource ChatRed}" FontSize="10"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <Border Background="{StaticResource ChatPanel}"
+                                            CornerRadius="2,10,10,10" Padding="10,6"
+                                            BorderBrush="{StaticResource ChatBorder}" BorderThickness="1">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="{Binding ToolArguments}"
+                                                       IsVisible="{Binding !!ToolArguments}"
+                                                       Foreground="{StaticResource ChatMuted}" FontSize="10"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding ToolArguments}" />
+                                            <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                                       Foreground="{StaticResource ChatFg}" FontSize="12" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
                                 <!-- 助手消息靠左；MOA 归属树按父级深度缩进 -->
                                 <StackPanel Grid.Column="0" IsVisible="{Binding IsAssistant}"
                                             Margin="{Binding IndentMargin}"
@@ -94,6 +122,11 @@
                                                 Padding="6,2" IsVisible="{Binding !!Label}">
                                             <TextBlock Text="{Binding Label}" FontSize="10"
                                                        Foreground="#04121A" />
+                                        </Border>
+                                        <Border Background="{StaticResource ChatBorder}" CornerRadius="6"
+                                                Padding="6,2" IsVisible="{Binding !!ToolCallsBadge}">
+                                            <TextBlock Text="{Binding ToolCallsBadge}" FontSize="10"
+                                                       Foreground="{StaticResource ChatFg}" />
                                         </Border>
                                         <TextBlock Text="{Binding StatusGlyph}" IsVisible="{Binding !!StatusGlyph}"
                                                    Foreground="{StaticResource ChatRed}" FontSize="10"

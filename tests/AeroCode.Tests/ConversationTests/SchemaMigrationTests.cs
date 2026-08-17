@@ -126,7 +126,81 @@ public sealed class SchemaMigrationTests : MoaTestBase
         await ConversationDbContext.EnsureSchemaAsync(Db);
 
         var columns = await ListColumnsAsync();
-        Assert.Equal(1, columns.Count(c => string.Equals(c, "Label", StringComparison.OrdinalIgnoreCase)));
-        Assert.Equal(1, columns.Count(c => string.Equals(c, "IsFinal", StringComparison.OrdinalIgnoreCase)));
+        foreach (var managed in new[] { "Label", "IsFinal", "ToolCallsJson", "ToolCallId", "Name" })
+        {
+            Assert.Equal(1, columns.Count(c => string.Equals(c, managed, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    /// <summary>把当前库改回 Phase 2 形态：删掉三个工具列。</summary>
+    private async Task DropPhase3ColumnsAsync()
+    {
+        await Db.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE chat_messages DROP COLUMN \"ToolCallsJson\";");
+        await Db.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE chat_messages DROP COLUMN \"ToolCallId\";");
+        await Db.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE chat_messages DROP COLUMN \"Name\";");
+        Assert.False(await ColumnExistsAsync("ToolCallsJson"));
+        Assert.False(await ColumnExistsAsync("ToolCallId"));
+        Assert.False(await ColumnExistsAsync("Name"));
+    }
+
+    [Fact]
+    public async Task Phase2Database_EnsureSchemaBackfillsToolColumns_EfRoundTripWorks()
+    {
+        await DropPhase3ColumnsAsync();
+
+        Db.Database.EnsureCreated();
+        await ConversationDbContext.EnsureSchemaAsync(Db);
+
+        Assert.True(await ColumnExistsAsync("ToolCallsJson"));
+        Assert.True(await ColumnExistsAsync("ToolCallId"));
+        Assert.True(await ColumnExistsAsync("Name"));
+
+        // 升级后立即真实读写：助手 tool_calls 轮 + tool 结果经 EF 完整往返
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Title = "工具升级回归",
+            Strategy = OrchestrationStrategy.Single,
+        };
+        Db.Sessions.Add(session);
+        await Db.SaveChangesAsync();
+
+        var turnId = Guid.NewGuid().ToString("N");
+        Db.Messages.Add(new ChatMessage
+        {
+            Id = turnId,
+            SessionId = session.Id,
+            Role = ChatRole.Assistant,
+            Content = string.Empty,
+            ToolCallsJson = "[{\"Id\":\"call-1\",\"Type\":\"function\",\"FunctionName\":\"get_note\",\"ArgumentsJson\":\"{}\"}]",
+            IsFinal = false,
+            Status = MessageStatus.Completed,
+        });
+        Db.Messages.Add(new ChatMessage
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            SessionId = session.Id,
+            Role = ChatRole.Tool,
+            Content = "笔记正文",
+            Name = "get_note",
+            ToolCallId = "call-1",
+            ParentMessageId = turnId,
+            IsFinal = false,
+            Status = MessageStatus.Completed,
+        });
+        await Db.SaveChangesAsync();
+
+        var toolRow = await Db.Messages
+            .Where(m => m.SessionId == session.Id && m.Role == ChatRole.Tool)
+            .SingleAsync();
+        Assert.Equal("get_note", toolRow.Name);
+        Assert.Equal("call-1", toolRow.ToolCallId);
+        Assert.Equal("笔记正文", toolRow.Content);
+
+        var turnRow = await Db.Messages.SingleAsync(m => m.Id == turnId);
+        Assert.Contains("get_note", turnRow.ToolCallsJson);
     }
 }

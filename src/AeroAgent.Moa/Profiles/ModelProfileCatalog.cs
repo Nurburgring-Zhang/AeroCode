@@ -82,6 +82,14 @@ public sealed class ModelProfileCatalog : IModelProfileCatalog
         }
     }
 
+    public bool Remove(string providerId, string modelId)
+    {
+        lock (_sync)
+        {
+            return _profiles.Remove(ModelProfile.MakeKey(providerId, modelId));
+        }
+    }
+
     public IReadOnlyList<ModelProfile> List()
     {
         lock (_sync)

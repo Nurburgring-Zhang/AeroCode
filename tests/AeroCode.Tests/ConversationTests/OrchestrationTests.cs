@@ -41,22 +41,43 @@ public sealed class ScriptedProvider : IAiProvider
     public UsageInfo? NonStreamUsage { get; set; }
     public List<AiChatMessage>? LastRequestMessages { get; private set; }
 
+    /// <summary>最近一次 ChatAsync 收到的完整请求（断言 Tools/消息序列用）。</summary>
+    public AeroCode.AI.Models.ChatRequest? LastRequest { get; private set; }
+
     /// <summary>按调用次序出队的非流式响应（MOA 多阶段测试用）；空则回退 NonStreamContent。</summary>
     public Queue<string> ChatQueue { get; } = new();
+
+    /// <summary>按调用次序出队的完整非流式响应（工具循环测试用：可携带 ToolCalls/Usage）；
+    /// 优先级高于 <see cref="ChatQueue"/>。</summary>
+    public Queue<AeroCode.AI.Models.ChatResponse> ResponseQueue { get; } = new();
 
     /// <summary>ChatAsync（非流式）抛出的异常。</summary>
     public Exception? ThrowDuringChat { get; set; }
 
-    public Task<ChatResponse> ChatAsync(ChatRequest request, CancellationToken ct = default)
+    /// <summary><see cref="ResponseQueue"/> 耗尽后 ChatAsync 抛出的异常（模拟循环中途失败）。</summary>
+    public Exception? ThrowWhenResponseQueueEmpty { get; set; }
+
+    public Task<AeroCode.AI.Models.ChatResponse> ChatAsync(AeroCode.AI.Models.ChatRequest request, CancellationToken ct = default)
     {
         LastRequestMessages = request.Messages.ToList();
+        LastRequest = request;
         if (ThrowDuringChat is not null)
         {
             throw ThrowDuringChat;
         }
 
+        if (ResponseQueue.Count > 0)
+        {
+            return Task.FromResult(ResponseQueue.Dequeue());
+        }
+
+        if (ThrowWhenResponseQueueEmpty is not null)
+        {
+            throw ThrowWhenResponseQueueEmpty;
+        }
+
         var content = ChatQueue.Count > 0 ? ChatQueue.Dequeue() : NonStreamContent;
-        return Task.FromResult(new ChatResponse
+        return Task.FromResult(new AeroCode.AI.Models.ChatResponse
         {
             Id = "resp-1",
             Model = request.Model,
@@ -99,7 +120,15 @@ public sealed class TestProviderRegistry : IProviderRegistry
     private readonly Dictionary<string, IAiProvider> _providers = new();
     public string DefaultProviderId { get; set; } = "scripted";
 
+    public event Action? ProvidersChanged;
+
+    /// <summary>测试专用：显式触发热重载事件（验证订阅方刷新行为）。</summary>
+    public void RaiseProvidersChanged() => ProvidersChanged?.Invoke();
+
     public void Add(IAiProvider provider) => _providers[provider.ProviderId] = provider;
+
+    /// <summary>测试专用：移除 provider（模拟配置删除后的热重载）。</summary>
+    public bool Remove(string id) => _providers.Remove(id);
 
     public IAiProvider Get(string id) => _providers[id];
 

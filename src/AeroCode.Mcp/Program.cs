@@ -21,16 +21,33 @@ public static class Program
             .WithStdioServerTransport()
             .WithToolsFromAssembly()
             .WithPromptsFromAssembly();
-        await builder.Build().RunAsync();
+        var host = builder.Build();
+
+        // 首次启动建库建表（桌面 App 有自己的 EnsureCreated 入口；
+        // MCP server 作为独立宿主必须同样负责 schema 引导，否则全新环境无表可写）。
+        using (var scope = host.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AeroCodeDbContext>();
+            db.Database.EnsureCreated();
+            FtsMigrations.EnsureFts5(db);
+        }
+
+        await host.RunAsync();
     }
 
     private static void ConfigureServices(IServiceCollection services)
     {
-        services.AddLogging(b => b.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Warning));
-        var dbPath = System.IO.Path.Combine(
-            System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
-            "AeroCode", "aerocode.db");
-        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(dbPath)!);
+        // stdio 传输的 stdout 只能跑 JSON-RPC：所有级别日志一律走 stderr。
+        services.AddLogging(b => b.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace));
+        // AEROCODE_DB_PATH 覆盖：E2E/隔离环境指向临时库，不污染用户真实笔记库。
+        var dbPath = Environment.GetEnvironmentVariable("AEROCODE_DB_PATH");
+        if (string.IsNullOrWhiteSpace(dbPath))
+        {
+            dbPath = System.IO.Path.Combine(
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
+                "AeroCode", "aerocode.db");
+        }
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(dbPath))!);
         services.AddDbContext<AeroCode.Core.Data.AeroCodeDbContext>(opt => opt.UseSqlite($"Data Source={dbPath}"));
         services.AddSingleton<ITagService, TagService>();
         services.AddSingleton<INotebookService, NotebookService>();

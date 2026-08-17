@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -11,6 +12,8 @@ using AeroAgent.Conversation.Services;
 using AeroAgent.Moa.Accounting;
 using AeroAgent.Moa.Assignment;
 using AeroAgent.Moa.Profiles;
+using AeroAgent.Moa.Tools;
+using AeroCode.AI.Providers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using AiChatMessage = AeroCode.AI.Models.ChatMessage;
@@ -40,18 +43,27 @@ public sealed record WorkerOutcome(
 /// </summary>
 public sealed class WorkerRunner
 {
+    /// <summary>工具循环最大轮数：防止模型无限套娃调用工具（超限诚实中止并落失败态）。</summary>
+    public const int MaxToolTurns = 8;
+
     private readonly ISessionService _sessions;
     private readonly IModelProfileCatalog _catalog;
     private readonly ILogger<WorkerRunner> _logger;
+    private readonly ToolRouter? _tools;
+    private readonly MoaOptions? _options;
 
     public WorkerRunner(
         ISessionService sessions,
         IModelProfileCatalog catalog,
-        ILogger<WorkerRunner>? logger = null)
+        ILogger<WorkerRunner>? logger = null,
+        ToolRouter? tools = null,
+        MoaOptions? options = null)
     {
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _logger = logger ?? NullLogger<WorkerRunner>.Instance;
+        _tools = tools;
+        _options = options;
     }
 
     /// <summary>
@@ -136,6 +148,14 @@ public sealed class WorkerRunner
             ParentMessageId = parentMessageId,
             Label = label,
         });
+
+        // ---- 工具循环：注册中心有工具且未禁用时走非流式多轮（需要完整 tool_calls 才能配对执行）。
+        // 占位消息承载最终答复；中间轮次（助手 tool_calls + tool 结果）逐条真实落库。
+        // stream 参数在此路径被忽略——工具轮没有打字机，这是 Phase 3 的既定取舍。----
+        if (_options?.ToolsEnabled is not false && _tools is { HasTools: true })
+        {
+            return await RunToolLoopAsync(ctx, assignment, role, message, provider, messages, sink, budget, ct);
+        }
 
         var request = new AiChatRequest
         {
@@ -282,6 +302,336 @@ public sealed class WorkerRunner
         return new WorkerOutcome(message.Id, assignment.ProviderId, assignment.ModelId,
             message.Content, Succeeded: true, Cancelled: false, null,
             tokensIn, tokensOut, cost, message.LatencyMs);
+    }
+
+    /// <summary>
+    /// 工具循环：非流式多轮。每轮把上一轮的助手 tool_calls + tool 结果追加进上下文再问模型，
+    /// 直到模型不再请求工具（得到最终答复）或达到 <see cref="MaxToolTurns"/>（诚实中止）。
+    /// 占位消息承载最终答复；中间轮次逐条落库（IsFinal == false，HistoryMapper 按配对规则回灌）。
+    /// 成本核算：每轮 API 调用各记各的 usage/cost（消息行为事实源），outcome 汇总。
+    /// </summary>
+    private async Task<WorkerOutcome> RunToolLoopAsync(
+        OrchestrationContext ctx,
+        ModelAssignment assignment,
+        StrategyRole role,
+        ChatMessage finalMessage,
+        IAiProvider provider,
+        IReadOnlyList<AiChatMessage> messages,
+        ChannelWriter<ChatEvent>? sink,
+        TurnBudget? budget,
+        CancellationToken ct)
+    {
+        var sessionId = ctx.Session.Id;
+        var definitions = _tools!.Definitions;
+        var conversation = new List<AiChatMessage>(messages);
+        var runSw = Stopwatch.StartNew();
+        var tokensIn = 0;
+        var tokensOut = 0;
+        var totalCost = 0.0;
+        ChatMessage? inFlightToolMessage = null;
+
+        try
+        {
+            for (var turn = 0; ; turn++)
+            {
+                if (turn >= MaxToolTurns)
+                {
+                    var error = $"tool-call loop exceeded the limit ({MaxToolTurns} turns), aborted";
+                    _logger.LogWarning(
+                        "tool loop aborted: {Provider}/{Model} hit {MaxTurns} turns",
+                        assignment.ProviderId, assignment.ModelId, MaxToolTurns);
+                    return await FailRunAsync(sink, finalMessage, assignment, error,
+                        tokensIn, tokensOut, (int)runSw.ElapsedMilliseconds, countInStats: true,
+                        budget, totalCost);
+                }
+
+                var turnSw = Stopwatch.StartNew();
+                var request = new AiChatRequest
+                {
+                    Model = assignment.ModelId,
+                    Messages = conversation,
+                    Tools = definitions,
+                    Stream = false, // 工具轮必须非流式：拿到完整 tool_calls 才能配对执行
+                };
+                var response = await provider.ChatAsync(request, ct);
+                var turnLatency = (int)turnSw.ElapsedMilliseconds;
+
+                var turnTokensIn = 0;
+                var turnTokensOut = 0;
+                if (response.Usage is not null)
+                {
+                    turnTokensIn = response.Usage.PromptTokens;
+                    turnTokensOut = response.Usage.CompletionTokens;
+                }
+
+                tokensIn += turnTokensIn;
+                tokensOut += turnTokensOut;
+                var turnCost = CostTracker.Estimate(assignment.Profile, turnTokensIn, turnTokensOut) ?? 0.0;
+                totalCost += turnCost;
+
+                if (response.ToolCalls.Count == 0)
+                {
+                    // ---- 最终答复：写回占位消息，按常规收尾 ----
+                    runSw.Stop();
+                    finalMessage.Content = response.Content;
+                    finalMessage.Status = MessageStatus.Completed;
+                    finalMessage.TokensIn = turnTokensIn;
+                    finalMessage.TokensOut = turnTokensOut;
+                    finalMessage.CostUsd = turnCost;
+                    finalMessage.LatencyMs = turnLatency;
+                    await _sessions.UpdateMessageAsync(finalMessage);
+
+                    if (sink is not null && response.Content.Length > 0)
+                    {
+                        await sink.WriteAsync(new TextDeltaEvent
+                        {
+                            SessionId = sessionId,
+                            MessageId = finalMessage.Id,
+                            Delta = response.Content,
+                        }, ct);
+                    }
+
+                    _catalog.RecordUsage(assignment.ProviderId, assignment.ModelId, turnLatency, failed: false);
+                    await SaveCatalogQuietlyAsync();
+                    budget?.AddActual(totalCost);
+
+                    await EmitAsync(sink, new MessageCompletedEvent
+                    {
+                        SessionId = sessionId,
+                        MessageId = finalMessage.Id,
+                        TokensIn = turnTokensIn,
+                        TokensOut = turnTokensOut,
+                        CostUsd = turnCost,
+                        LatencyMs = turnLatency,
+                    });
+
+                    return new WorkerOutcome(finalMessage.Id, assignment.ProviderId, assignment.ModelId,
+                        finalMessage.Content, Succeeded: true, Cancelled: false, null,
+                        tokensIn, tokensOut, totalCost, (int)runSw.ElapsedMilliseconds);
+                }
+
+                // ---- 工具轮：助手 tool_calls 消息落库（IsFinal == false，仅供配对回灌）----
+                var turnMessage = new ChatMessage
+                {
+                    SessionId = sessionId,
+                    Role = ChatRole.Assistant,
+                    ProviderId = assignment.ProviderId,
+                    ModelId = assignment.ModelId,
+                    OrchestrationRole = role,
+                    ParentMessageId = finalMessage.Id,
+                    Label = finalMessage.Label,
+                    Content = response.Content,
+                    ToolCallsJson = JsonSerializer.Serialize(response.ToolCalls),
+                    IsFinal = false,
+                    Status = MessageStatus.Completed,
+                    TokensIn = turnTokensIn,
+                    TokensOut = turnTokensOut,
+                    CostUsd = turnCost,
+                    LatencyMs = turnLatency,
+                };
+                var appendedTurn = await _sessions.AppendMessageAsync(turnMessage);
+                if (!appendedTurn.IsSuccess)
+                {
+                    return await FailRunAsync(sink, finalMessage, assignment,
+                        appendedTurn.Error ?? "persist failed",
+                        tokensIn, tokensOut, (int)runSw.ElapsedMilliseconds, countInStats: true,
+                        budget, totalCost);
+                }
+
+                await EmitAsync(sink, new AssistantMessageStarted
+                {
+                    SessionId = sessionId,
+                    MessageId = turnMessage.Id,
+                    ProviderId = assignment.ProviderId,
+                    ModelId = assignment.ModelId,
+                    OrchestrationRole = role,
+                    ParentMessageId = finalMessage.Id,
+                    Label = finalMessage.Label,
+                    HasToolCalls = true,
+                });
+                if (sink is not null && response.Content.Length > 0)
+                {
+                    await sink.WriteAsync(new TextDeltaEvent
+                    {
+                        SessionId = sessionId,
+                        MessageId = turnMessage.Id,
+                        Delta = response.Content,
+                    }, ct);
+                }
+
+                await EmitAsync(sink, new MessageCompletedEvent
+                {
+                    SessionId = sessionId,
+                    MessageId = turnMessage.Id,
+                    TokensIn = turnTokensIn,
+                    TokensOut = turnTokensOut,
+                    CostUsd = turnCost,
+                    LatencyMs = turnLatency,
+                });
+
+                conversation.Add(new AiChatMessage
+                {
+                    Role = "assistant",
+                    Content = response.Content,
+                    ToolCalls = response.ToolCalls,
+                });
+
+                // ---- 逐个执行工具调用：先裁决后执行，结果如实回传模型 ----
+                foreach (var call in response.ToolCalls)
+                {
+                    var toolMessage = new ChatMessage
+                    {
+                        SessionId = sessionId,
+                        Role = ChatRole.Tool,
+                        ProviderId = assignment.ProviderId,
+                        ModelId = assignment.ModelId,
+                        OrchestrationRole = role,
+                        ParentMessageId = turnMessage.Id,
+                        Name = call.FunctionName,
+                        ToolCallId = call.Id,
+                        IsFinal = false,
+                        Status = MessageStatus.Pending,
+                    };
+                    var appendedTool = await _sessions.AppendMessageAsync(toolMessage);
+                    if (!appendedTool.IsSuccess)
+                    {
+                        return await FailRunAsync(sink, finalMessage, assignment,
+                            appendedTool.Error ?? "persist failed",
+                            tokensIn, tokensOut, (int)runSw.ElapsedMilliseconds, countInStats: true,
+                            budget, totalCost);
+                    }
+
+                    inFlightToolMessage = toolMessage;
+                    await EmitAsync(sink, new ToolCallStartedEvent
+                    {
+                        SessionId = sessionId,
+                        MessageId = toolMessage.Id,
+                        ToolCallId = call.Id,
+                        ToolName = call.FunctionName,
+                        ArgumentsJson = call.ArgumentsJson,
+                        ParentMessageId = turnMessage.Id,
+                    });
+
+                    var toolSw = Stopwatch.StartNew();
+                    var result = await _tools.InvokeAsync(call.FunctionName, call.ArgumentsJson, ct);
+                    toolSw.Stop();
+
+                    toolMessage.Content = result.Output;
+                    toolMessage.Status = result.Success ? MessageStatus.Completed : MessageStatus.Degraded;
+                    toolMessage.Error = result.Success ? null : result.Error;
+                    toolMessage.LatencyMs = (int)toolSw.ElapsedMilliseconds;
+                    await _sessions.UpdateMessageAsync(toolMessage);
+                    inFlightToolMessage = null;
+
+                    await EmitAsync(sink, new ToolCallCompletedEvent
+                    {
+                        SessionId = sessionId,
+                        MessageId = toolMessage.Id,
+                        ToolCallId = call.Id,
+                        ToolName = call.FunctionName,
+                        Success = result.Success,
+                        Denied = result.Denied,
+                        OutputPreview = ErrorText.Truncate(result.Output),
+                        LatencyMs = toolMessage.LatencyMs,
+                    });
+
+                    conversation.Add(new AiChatMessage
+                    {
+                        Role = "tool",
+                        Content = result.Output,
+                        Name = call.FunctionName,
+                        ToolCallId = call.Id,
+                    });
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            runSw.Stop();
+            var latency = (int)runSw.ElapsedMilliseconds;
+
+            // 进行中的工具消息与最终答复都落取消态（DB 是事实源，不留 Pending 僵尸）。
+            if (inFlightToolMessage is not null)
+            {
+                inFlightToolMessage.Status = MessageStatus.Cancelled;
+                inFlightToolMessage.LatencyMs = latency;
+                await _sessions.UpdateMessageAsync(inFlightToolMessage);
+            }
+
+            finalMessage.Status = MessageStatus.Cancelled;
+            finalMessage.LatencyMs = latency;
+            await _sessions.UpdateMessageAsync(finalMessage);
+
+            // 用户取消不是模型质量问题：不计入画像统计，也不产生成本。
+            await EmitAsync(sink, new MessageCancelledEvent
+            {
+                SessionId = sessionId,
+                MessageId = finalMessage.Id,
+            });
+
+            return new WorkerOutcome(finalMessage.Id, assignment.ProviderId, assignment.ModelId,
+                string.Empty, Succeeded: false, Cancelled: true, "cancelled by user",
+                tokensIn, tokensOut, 0, latency);
+        }
+        catch (Exception ex)
+        {
+            runSw.Stop();
+            var error = ErrorText.Truncate(ex.Message) ?? ex.Message;
+            _logger.LogWarning(
+                "tool loop failed: {Provider}/{Model} after {LatencyMs}ms: {Error}",
+                assignment.ProviderId, assignment.ModelId, (int)runSw.ElapsedMilliseconds, error);
+            return await FailRunAsync(sink, finalMessage, assignment, error,
+                tokensIn, tokensOut, (int)runSw.ElapsedMilliseconds, countInStats: true,
+                budget, totalCost);
+        }
+    }
+
+    /// <summary>
+    /// 失败收尾：最终答复落 Failed 终态 + 画像统计（可选）+ 终态事件 + outcome。
+    /// 预算纪律：工具循环中途失败时，此前各轮 API 调用的成本已真实发生且逐条落库，
+    /// 必须同样记入 TurnBudget（spentUsd）——否则同轮后续 worker/judge 会再次花满预算，
+    /// 静默突破用户单轮上限。outcome.CostUsd 如实返回累计成本而非 0。
+    /// </summary>
+    private async Task<WorkerOutcome> FailRunAsync(
+        ChannelWriter<ChatEvent>? sink,
+        ChatMessage finalMessage,
+        ModelAssignment assignment,
+        string error,
+        int tokensIn,
+        int tokensOut,
+        int latencyMs,
+        bool countInStats,
+        TurnBudget? budget,
+        double spentUsd)
+    {
+        finalMessage.Status = MessageStatus.Failed;
+        finalMessage.Error = error;
+        finalMessage.TokensIn = tokensIn;
+        finalMessage.TokensOut = tokensOut;
+        finalMessage.LatencyMs = latencyMs;
+        await _sessions.UpdateMessageAsync(finalMessage);
+
+        if (countInStats)
+        {
+            _catalog.RecordUsage(assignment.ProviderId, assignment.ModelId, latencyMs, failed: true);
+            await SaveCatalogQuietlyAsync();
+        }
+
+        if (spentUsd > 0)
+        {
+            budget?.AddActual(spentUsd);
+        }
+
+        await EmitAsync(sink, new MessageFailedEvent
+        {
+            SessionId = finalMessage.SessionId,
+            MessageId = finalMessage.Id,
+            Error = error,
+        });
+
+        return new WorkerOutcome(finalMessage.Id, assignment.ProviderId, assignment.ModelId,
+            string.Empty, Succeeded: false, Cancelled: false, error,
+            tokensIn, tokensOut, spentUsd, latencyMs);
     }
 
     /// <summary>

@@ -71,5 +71,19 @@ public class ChatMessage
     /// </summary>
     public bool? IsFinal { get; set; }
 
+    /// <summary>
+    /// 模型请求的工具调用（助手消息；ToolCall[] 的 JSON 序列化，含 Id/函数名/参数）。
+    /// 工具循环的中间轮次：IsFinal == false 但 HistoryMapper 仍会回灌进后续
+    /// provider 上下文——模型必须看到自己发起的工具调用，才能衔接紧随其后的
+    /// tool 结果消息（严格角色交替 API 如 Anthropic 要求 tool_calls 与 tool 配对）。
+    /// </summary>
+    public string? ToolCallsJson { get; set; }
+
+    /// <summary>工具结果消息（Role == Tool）对应的工具调用 Id，与上游助手轮 ToolCallsJson 中的 Id 配对。</summary>
+    public string? ToolCallId { get; set; }
+
+    /// <summary>工具结果消息（Role == Tool）调用的工具名。</summary>
+    public string? Name { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

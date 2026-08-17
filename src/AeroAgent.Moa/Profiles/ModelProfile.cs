@@ -122,6 +122,9 @@ public interface IModelProfileCatalog
 
     void Upsert(ModelProfile profile);
 
+    /// <summary>删除精确键（providerId + modelId）的画像。不存在返回 false。</summary>
+    bool Remove(string providerId, string modelId);
+
     IReadOnlyList<ModelProfile> List();
 
     /// <summary>记录一次真实调用的延迟/成败（自学习）。</summary>

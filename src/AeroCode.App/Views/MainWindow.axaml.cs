@@ -55,6 +55,9 @@ public partial class MainWindow : Window
         {
             var sp = App.Services;
             var vm = sp.GetRequiredService<SettingsViewModel>();
+            // 单例 VM 的快照在窗口关闭后即过期：每次打开前强制刷新，
+            // 否则陈旧快照随 Save 合并会擦掉期间"记住"的授权决策。
+            vm.RefreshFromSources();
             var dlg = new SettingsDialog { DataContext = vm };
             await dlg.ShowDialog(this);
             // After settings close, the saved theme is already applied inside VM.

@@ -167,6 +167,35 @@ public sealed class ProfileCatalogTests
         Assert.Equal(0.5, profile.Stats.FailureRate, 3);
         Assert.Equal(200, profile.Stats.AvgLatencyMs, 3);
     }
+
+    [Fact]
+    public void Remove_ExistingProfile_ReturnsTrueAndProfileGone()
+    {
+        var catalog = new ModelProfileCatalog();
+        catalog.Upsert(new ModelProfile { ProviderId = "p1", ModelId = "m1" });
+        catalog.Upsert(new ModelProfile { ProviderId = "p1", ModelId = string.Empty });
+
+        Assert.True(catalog.Remove("p1", "m1"));
+
+        Assert.Null(catalog.Find("p1", "m1"));
+        Assert.DoesNotContain(catalog.List(), p => p.Key == ModelProfile.MakeKey("p1", "m1"));
+        // 同 provider 的其他画像（含默认模型画像）不受牵连
+        Assert.NotNull(catalog.Find("p1", string.Empty));
+    }
+
+    [Fact]
+    public void Remove_MissingProfile_ReturnsFalse()
+    {
+        var catalog = new ModelProfileCatalog();
+        Assert.False(catalog.Remove("ghost", "none"));
+
+        // 删掉精确画像后，GetOrAddDefault 回退链不再命中被删项而是重建默认
+        catalog.Upsert(new ModelProfile { ProviderId = "p2", ModelId = "m2" });
+        Assert.True(catalog.Remove("p2", "m2"));
+        Assert.False(catalog.Remove("p2", "m2"));
+        var recreated = catalog.GetOrAddDefault("p2", "m2");
+        Assert.Contains(ModelStrength.General, recreated.Strengths);
+    }
 }
 
 public sealed class CostTrackerTests
@@ -235,19 +264,47 @@ public sealed class MoaOptionsStoreTests
             var store = new JsonMoaOptionsStore(path);
             var options = new MoaOptions
             {
+                DefaultStrategy = AeroAgent.Conversation.Models.OrchestrationStrategy.Ensemble,
                 Router = new ModelBinding("fast", null),
                 Planner = new ModelBinding("smart", "plan-model"),
                 EnsembleSize = 3,
                 MaxUsdPerTurn = 0.5,
+                ToolsEnabled = false,
             };
             await store.SaveAsync(options);
 
             var loaded = await new JsonMoaOptionsStore(path).LoadAsync();
+            Assert.Equal(AeroAgent.Conversation.Models.OrchestrationStrategy.Ensemble, loaded.DefaultStrategy);
             Assert.Equal("fast", loaded.Router!.ProviderId);
             Assert.Null(loaded.Router.ModelId);
             Assert.Equal("plan-model", loaded.Planner!.ModelId);
             Assert.Equal(3, loaded.EnsembleSize);
             Assert.Equal(0.5, loaded.MaxUsdPerTurn);
+            Assert.False(loaded.ToolsEnabled);
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DefaultStrategy_PersistedAsStringEnum_HumanReadable()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"moa_options_{Guid.NewGuid():N}.json");
+        try
+        {
+            await new JsonMoaOptionsStore(path).SaveAsync(new MoaOptions
+            {
+                DefaultStrategy = AeroAgent.Conversation.Models.OrchestrationStrategy.Decompose,
+            });
+
+            var json = await File.ReadAllTextAsync(path);
+            Assert.Contains("\"DefaultStrategy\": \"Decompose\"", json);
+            Assert.DoesNotContain("\"DefaultStrategy\": 2", json);
         }
         finally
         {
@@ -268,6 +325,7 @@ public sealed class MoaOptionsStoreTests
             var loaded = await new JsonMoaOptionsStore(path).LoadAsync();
             Assert.Equal(2, loaded.EnsembleSize);
             Assert.Null(loaded.MaxUsdPerTurn);
+            Assert.True(loaded.ToolsEnabled);
         }
         finally
         {
@@ -281,5 +339,81 @@ public sealed class MoaOptionsStoreTests
         var path = Path.Combine(Path.GetTempPath(), $"moa_options_{Guid.NewGuid():N}.json");
         var loaded = await new JsonMoaOptionsStore(path).LoadAsync();
         Assert.Equal(2, loaded.EnsembleSize);
+        Assert.True(loaded.ToolsEnabled);
+    }
+}
+
+/// <summary>
+/// MoaOptions 单例并发语义回归（Reviewer-A P1 修复哨兵）。
+/// </summary>
+public sealed class MoaOptionsConcurrencyTests
+{
+    [Fact]
+    public void MaxUsdPerTurn_ConcurrentReadWrite_NeverTorn()
+    {
+        // double? 是 hasValue+value 双字段：无锁时 UI 线程写与策略线程读交错
+        // 可撕裂出 hasValue=true + 陈旧 0.0，令 TurnBudget 构造抛异常。
+        // 写端在 null ↔ 0.75 间翻转；读端每次读取的值必须是"完整的 null"或
+        // "完整的 0.75"，并且直接构造 TurnBudget 不抛——即策略侧真实用法。
+        var options = new MoaOptions();
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+        var observed = new System.Collections.Concurrent.ConcurrentBag<double?>();
+
+        var writer = Task.Run(() =>
+        {
+            var flag = false;
+            while (!stop.IsCancellationRequested)
+            {
+                options.MaxUsdPerTurn = flag ? 0.75 : null;
+                flag = !flag;
+            }
+        });
+
+        var readers = Enumerable.Range(0, 3).Select(_ => Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                var v = options.MaxUsdPerTurn;
+                observed.Add(v);
+                // 策略侧真实消费路径：撕裂出的 0.0 会在这里抛 ArgumentOutOfRangeException。
+                var budget = new TurnBudget(v);
+                Assert.True(budget.HasBudget);
+            }
+        })).ToArray();
+
+        Task.WaitAll(readers.Append(writer).ToArray());
+
+        Assert.NotEmpty(observed);
+        foreach (var v in observed)
+        {
+            Assert.True(v is null || v == 0.75,
+                $"撕裂读：观察到非法中间态 {v}（只允许完整的 null 或 0.75）");
+        }
+    }
+
+    [SkippableFact]
+    public async Task Load_FileLockedByOtherProcess_FallsBackToDefaults_NotCrash()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"moa_options_{Guid.NewGuid():N}.json");
+        await new JsonMoaOptionsStore(path).SaveAsync(new MoaOptions { EnsembleSize = 4 });
+
+        // FileShare.None 的独占锁语义仅 Windows 生效；其他平台直接读不会 IOException，如实跳过。
+        using var lockStream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        bool directReadBlocked;
+        try
+        {
+            _ = File.ReadAllText(path);
+            directReadBlocked = false;
+        }
+        catch (IOException)
+        {
+            directReadBlocked = true;
+        }
+
+        Skip.If(!directReadBlocked, "当前平台不强制独占读锁，无法构造文件占用场景");
+
+        var loaded = await new JsonMoaOptionsStore(path).LoadAsync();
+        Assert.Equal(2, loaded.EnsembleSize); // 降级默认项而非抛异常炸启动
+        Assert.Null(loaded.MaxUsdPerTurn);
     }
 }

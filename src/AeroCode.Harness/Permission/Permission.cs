@@ -33,9 +33,11 @@ public sealed class ToolPermissionRule
 /// <summary>
 /// Permission policy store (OpenCode + DSH guard fusion).
 /// Holds per-tool rules + a user-override callback for "Ask" decisions.
+/// 线程安全：MOA 并行 worker 会并发 Check，UI 线程会并发写规则。
 /// </summary>
 public sealed class PermissionPolicy
 {
+    private readonly object _sync = new();
     private readonly Dictionary<string, ToolPermissionRule> _rules = new();
     private readonly EventBus.EventBus _eventBus;
 
@@ -47,27 +49,87 @@ public sealed class PermissionPolicy
     /// <summary>Register a default rule for a tool.</summary>
     public void SetRule(ToolPermissionRule rule)
     {
-        _rules[rule.ToolName] = rule;
+        lock (_sync)
+        {
+            _rules[rule.ToolName] = rule;
+        }
+    }
+
+    /// <summary>
+    /// 用户/持久化层对某工具的默认决策覆盖：规则已存在则改判定，不存在则新建。
+    /// 注意 Override（危险模式探测）保留不动——它只会在默认决策之上升级审慎度。
+    /// </summary>
+    public void SetDefaultDecision(string toolName, PermissionDecision decision)
+    {
+        lock (_sync)
+        {
+            if (_rules.TryGetValue(toolName, out var rule))
+            {
+                rule.DefaultDecision = decision;
+            }
+            else
+            {
+                _rules[toolName] = new ToolPermissionRule
+                {
+                    ToolName = toolName,
+                    DefaultDecision = decision,
+                    Notes = "user decision",
+                };
+            }
+        }
+    }
+
+    /// <summary>列出全部规则（权限管理 UI 用）。返回快照。</summary>
+    public IReadOnlyList<ToolPermissionRule> ListRules()
+    {
+        lock (_sync)
+        {
+            return _rules.Values
+                .OrderBy(r => r.ToolName, StringComparer.Ordinal)
+                .ToList();
+        }
     }
 
     /// <summary>Check permission for a tool call.</summary>
     public PermissionResult Check(string toolName, IReadOnlyDictionary<string, object?>? args = null)
     {
-        if (!_rules.TryGetValue(toolName, out var rule))
+        ToolPermissionRule? rule;
+        lock (_sync)
+        {
+            _rules.TryGetValue(toolName, out rule);
+        }
+
+        if (rule is null)
         {
             // Unknown tool: ask by default (safe).
             return new PermissionResult(PermissionDecision.Ask, $"Unknown tool '{toolName}'");
         }
 
+        // 显式 Deny 优先：用户/系统明确拒绝的工具不得被 Override（模式探测）翻成放行。
+        if (rule.DefaultDecision == PermissionDecision.Deny)
+        {
+            return new PermissionResult(PermissionDecision.Deny, "Explicitly denied");
+        }
+
         if (rule.Override is not null)
         {
             var d = rule.Override(args);
-            if (d != rule.DefaultDecision)
+            // Override 只允许升级审慎度（Allow→Ask→Deny），绝不降级：
+            // 用户把默认决策设为 Ask 后，模式探测不得把它悄悄放行为 Allow。
+            if (PrudenceRank(d) > PrudenceRank(rule.DefaultDecision))
                 return new PermissionResult(d, "Rule override");
         }
 
         return new PermissionResult(rule.DefaultDecision);
     }
+
+    /// <summary>审慎度阶梯：Allow(0) &lt; Ask(1) &lt; Deny(2)。Override 只许向上走。</summary>
+    private static int PrudenceRank(PermissionDecision d) => d switch
+    {
+        PermissionDecision.Allow => 0,
+        PermissionDecision.Ask => 1,
+        _ => 2,
+    };
 
     /// <summary>Default safe policy matching the documented table in V3_INTEGRATION_PLAN.md §3.4.</summary>
     public static PermissionPolicy CreateDefault(EventBus.EventBus bus)

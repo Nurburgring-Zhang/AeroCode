@@ -7,6 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ApplicationTitle>AeroCode</ApplicationTitle>
     <ApplicationId>com.AeroCode.app</ApplicationId>
     <ApplicationVersion>1</ApplicationVersion>
@@ -33,6 +34,7 @@
     <ProjectReference Include="..\AeroCode.AI\AeroCode.AI.csproj" />
     <ProjectReference Include="..\AeroAgent.Conversation\AeroAgent.Conversation.csproj" />
     <ProjectReference Include="..\AeroAgent.Moa\AeroAgent.Moa.csproj" />
+    <ProjectReference Include="..\AeroCode.Mcp\AeroCode.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

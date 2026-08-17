@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
@@ -140,5 +141,147 @@ public class HistoryMapperTests
         var mapped = HistoryMapper.ToProviderMessages(history);
         Assert.Single(mapped);
         Assert.Equal("用户消息", mapped[0].Content);
+    }
+
+    private static string ToolCallsJson(string callId, string toolName, string argsJson = "{}")
+        => JsonSerializer.Serialize(new List<ToolCall>
+        {
+            new() { Id = callId, Type = "function", FunctionName = toolName, ArgumentsJson = argsJson },
+        });
+
+    [Fact]
+    public void ToolSequence_PairedTurnAndResult_BothReplayed()
+    {
+        // 工具循环产物：助手 tool_calls 轮虽然 IsFinal==false 且正文为空，
+        // 但必须与紧随的 tool 结果一起回灌，否则严格 API 直接报消息序列错误。
+        var history = new List<ChatMessage>
+        {
+            new() { Role = ChatRole.User, Content = "读笔记", Status = MessageStatus.Completed },
+            new()
+            {
+                Role = ChatRole.Assistant,
+                Content = string.Empty,
+                ToolCallsJson = ToolCallsJson("call-1", "get_note", "{\"id\":\"n1\"}"),
+                IsFinal = false,
+                Status = MessageStatus.Completed,
+            },
+            new()
+            {
+                Role = ChatRole.Tool,
+                Content = "笔记正文",
+                Name = "get_note",
+                ToolCallId = "call-1",
+                IsFinal = false,
+                Status = MessageStatus.Completed,
+            },
+            new() { Role = ChatRole.Assistant, Content = "最终答复", IsFinal = true, Status = MessageStatus.Completed },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        Assert.Equal(4, mapped.Count);
+        Assert.Equal("user", mapped[0].Role);
+
+        Assert.Equal("assistant", mapped[1].Role);
+        var call = Assert.Single(mapped[1].ToolCalls!);
+        Assert.Equal("call-1", call.Id);
+        Assert.Equal("get_note", call.FunctionName);
+        Assert.Equal("{\"id\":\"n1\"}", call.ArgumentsJson);
+
+        Assert.Equal("tool", mapped[2].Role);
+        Assert.Equal("笔记正文", mapped[2].Content);
+        Assert.Equal("get_note", mapped[2].Name);
+        Assert.Equal("call-1", mapped[2].ToolCallId);
+
+        Assert.Equal("最终答复", mapped[3].Content);
+    }
+
+    [Fact]
+    public void OrphanToolResult_Dropped()
+    {
+        // 没有对应助手 tool_calls 轮的 tool 结果是孤儿（脏数据/被过滤），
+        // 必须丢弃——严格角色交替 API 不允许凭空出现 tool 消息。
+        var history = new List<ChatMessage>
+        {
+            new() { Role = ChatRole.User, Content = "问题", Status = MessageStatus.Completed },
+            new()
+            {
+                Role = ChatRole.Tool,
+                Content = "孤儿结果",
+                Name = "get_note",
+                ToolCallId = "call-missing",
+                IsFinal = false,
+                Status = MessageStatus.Completed,
+            },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        var only = Assert.Single(mapped);
+        Assert.Equal("user", only.Role);
+    }
+
+    [Fact]
+    public void CorruptedToolCallsJson_HonestDegradation()
+    {
+        // 损坏的 ToolCallsJson：助手轮正文为空则整轮丢弃，其孤儿 tool 结果一并丢弃。
+        var history = new List<ChatMessage>
+        {
+            new()
+            {
+                Role = ChatRole.Assistant,
+                Content = string.Empty,
+                ToolCallsJson = "{这不是JSON",
+                IsFinal = false,
+                Status = MessageStatus.Completed,
+            },
+            new()
+            {
+                Role = ChatRole.Tool,
+                Content = "结果",
+                Name = "get_note",
+                ToolCallId = "call-x",
+                IsFinal = false,
+                Status = MessageStatus.Completed,
+            },
+            new() { Role = ChatRole.User, Content = "下一问", Status = MessageStatus.Completed },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        var only = Assert.Single(mapped);
+        Assert.Equal("下一问", only.Content);
+    }
+
+    [Fact]
+    public void FailedToolResult_Skipped_ButTurnKept()
+    {
+        // 失败的 tool 结果内容不完整不进上下文；助手轮本身保留。
+        var history = new List<ChatMessage>
+        {
+            new()
+            {
+                Role = ChatRole.Assistant,
+                Content = string.Empty,
+                ToolCallsJson = ToolCallsJson("call-f", "get_note"),
+                IsFinal = false,
+                Status = MessageStatus.Completed,
+            },
+            new()
+            {
+                Role = ChatRole.Tool,
+                Content = "半截输出",
+                Name = "get_note",
+                ToolCallId = "call-f",
+                IsFinal = false,
+                Status = MessageStatus.Failed,
+            },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        var only = Assert.Single(mapped);
+        Assert.Equal("assistant", only.Role);
+        Assert.NotNull(only.ToolCalls);
     }
 }

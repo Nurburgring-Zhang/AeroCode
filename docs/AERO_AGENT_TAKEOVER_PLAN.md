@@ -18,7 +18,7 @@
 | Harness：ReAct Agent、EventBus（9 事件）、TaskGraph（DAG 拓扑执行）、Compactor、PermissionPolicy、PatchEngine | `src/AeroCode.Harness/` | 复用为 MOA worker 的工具执行引擎 |
 | Skills：3 方言解析器、3 级渐进加载、调用学习环 | `src/AeroCode.Skills/` | 原样复用 |
 | Core：`Result<T>`、EF Core SQLite、FTS5 | `src/AeroCode.Core/` | 复用；扩展会话/消息实体 |
-| MCP Server（笔记工具 11 个） | `src/AeroCode.Mcp/` | 保留；另建 MCP **Client** 接外部工具 |
+| MCP Server（笔记工具 12 个） | `src/AeroCode.Mcp/` | 保留；另建 MCP **Client** 接外部工具 |
 | DI 组合根、SettingsService、AppDataPaths | `src/AeroCode.App/` | 重构为双平台生命周期 |
 
 ### 必须新建（目标缺口）

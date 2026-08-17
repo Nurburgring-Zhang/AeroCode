@@ -70,6 +70,9 @@ public sealed class SessionService : ISessionService, IDisposable
         ParentMessageId = m.ParentMessageId,
         Label = m.Label,
         IsFinal = m.IsFinal,
+        ToolCallsJson = m.ToolCallsJson,
+        ToolCallId = m.ToolCallId,
+        Name = m.Name,
         Status = m.Status,
         Error = m.Error,
         TokensIn = m.TokensIn,
@@ -254,7 +257,10 @@ public sealed class SessionService : ISessionService, IDisposable
 
             var messages = await _db.Messages.AsNoTracking()
                 .Where(m => m.SessionId == sessionId)
+                // 平序键：CreatedAtUtc 毫秒级，工具循环连续追加可能同戳；
+                // SQLite 对等值键不保证顺序，次级键 Id 保证跨加载排序稳定。
                 .OrderBy(m => m.CreatedAtUtc)
+                .ThenBy(m => m.Id)
                 .ToListAsync();
             return Result<IReadOnlyList<ChatMessage>>.Ok(
                 messages.Select(Detach).ToList());

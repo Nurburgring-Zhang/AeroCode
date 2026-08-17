@@ -22,11 +22,20 @@ public class AppDataPaths
     /// <summary>MOA 编排选项（角色绑定/集成规模/单轮预算）。</summary>
     public string MoaOptionsFile { get; }
 
+    /// <summary>工具授权决策（用户"记住选择"/设置页修改的持久化）。</summary>
+    public string PermissionsFile { get; }
+
     public AppDataPaths()
-    {
-        RootDirectory = Path.Combine(
+        : this(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "AeroCode");
+            "AeroCode"))
+    {
+    }
+
+    /// <summary>指定根目录构造（测试/隔离环境：指向临时目录，不触碰用户真实数据）。</summary>
+    public AppDataPaths(string rootDirectory)
+    {
+        RootDirectory = rootDirectory;
         DatabaseFile = Path.Combine(RootDirectory, "AeroCode.db");
         // 统一对话独立库，避免与笔记库两个 EF 上下文互相干扰。
         ConversationDatabaseFile = Path.Combine(RootDirectory, "AeroCode.Conversations.db");
@@ -35,6 +44,7 @@ public class AppDataPaths
         SettingsFile = Path.Combine(RootDirectory, "settings.json");
         MoaProfilesFile = Path.Combine(RootDirectory, "moa-profiles.json");
         MoaOptionsFile = Path.Combine(RootDirectory, "moa-options.json");
+        PermissionsFile = Path.Combine(RootDirectory, "permissions.json");
     }
 
     public void EnsureAll()
