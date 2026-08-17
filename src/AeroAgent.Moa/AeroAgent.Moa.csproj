@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <AssemblyName>AeroAgent.Moa</AssemblyName>
+    <RootNamespace>AeroAgent.Moa</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
+    <PackageReference Include="System.Text.Json" Version="9.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 内部确定性辅助（路由启发式/分类解析）供测试直接验证 -->
+    <InternalsVisibleTo Include="AeroCode.Tests" />
+  </ItemGroup>
+
+  <!--
+    依赖方向说明（依赖倒置）：
+    Moa 实现 Conversation 定义的 IOrchestrationStrategy 契约并消费 ISessionService，
+    因此编译期 Moa → Conversation → AI/Core；运行期由 App 组合根把 Moa 策略
+    注入 ChatOrchestrationFacade（Conversation 不引用 Moa，无循环）。
+    Decompose 策略复用 Harness 的 TaskGraph（DAG 拓扑并行执行）。
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\AeroCode.Core\AeroCode.Core.csproj" />
+    <ProjectReference Include="..\AeroCode.AI\AeroCode.AI.csproj" />
+    <ProjectReference Include="..\AeroCode.Harness\AeroCode.Harness.csproj" />
+    <ProjectReference Include="..\AeroAgent.Conversation\AeroAgent.Conversation.csproj" />
+  </ItemGroup>
+
+</Project>

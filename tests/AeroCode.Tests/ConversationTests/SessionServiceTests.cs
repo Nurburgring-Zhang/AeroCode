@@ -44,7 +44,8 @@ public sealed class SessionServiceTests : IDisposable
         _db.Dispose();
         _keepAlive.Dispose();
         // EF Core 会池化 SQLite 连接；不清池则文件仍被占用无法删除。
-        SqliteConnection.ClearAllPools();
+        // 只清本连接串的池，避免干扰 xUnit 并行运行的其他测试类。
+        SqliteConnection.ClearPool(_keepAlive);
         if (File.Exists(_dbPath))
         {
             File.Delete(_dbPath);

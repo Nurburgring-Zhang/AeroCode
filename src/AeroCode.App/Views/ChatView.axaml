@@ -80,17 +80,30 @@
                                                Foreground="{StaticResource ChatFg}" FontSize="14" />
                                 </Border>
 
-                                <!-- 助手消息靠左 -->
+                                <!-- 助手消息靠左；MOA 归属树按父级深度缩进 -->
                                 <StackPanel Grid.Column="0" IsVisible="{Binding IsAssistant}"
+                                            Margin="{Binding IndentMargin}"
                                             MaxWidth="680" HorizontalAlignment="Left" Spacing="4">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Border Background="{StaticResource ChatAccent}" CornerRadius="6"
                                                 Padding="6,2" IsVisible="{Binding !!AttributionBadge}">
                                             <TextBlock Text="{Binding AttributionBadge}" FontSize="10"
                                                        Foreground="White" />
                                         </Border>
-                                        <TextBlock Text="…" IsVisible="{Binding !!ErrorText}"
-                                                   Foreground="{StaticResource ChatRed}" FontSize="11" />
+                                        <Border Background="{StaticResource ChatCyan}" CornerRadius="6"
+                                                Padding="6,2" IsVisible="{Binding !!Label}">
+                                            <TextBlock Text="{Binding Label}" FontSize="10"
+                                                       Foreground="#04121A" />
+                                        </Border>
+                                        <TextBlock Text="{Binding StatusGlyph}" IsVisible="{Binding !!StatusGlyph}"
+                                                   Foreground="{StaticResource ChatRed}" FontSize="10"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding UsageBadge}" IsVisible="{Binding !!UsageBadge}"
+                                                   Foreground="{StaticResource ChatMuted}" FontSize="10"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding CostBadge}" IsVisible="{Binding !!CostBadge}"
+                                                   Foreground="{StaticResource ChatMuted}" FontSize="10"
+                                                   VerticalAlignment="Center" />
                                     </StackPanel>
                                     <Border Background="{StaticResource ChatAiBubble}"
                                             CornerRadius="2,12,12,12" Padding="12,8"
@@ -129,6 +142,7 @@
                                        FontSize="11" VerticalAlignment="Center" />
                             <ComboBox ItemsSource="{Binding Strategies}"
                                       SelectedItem="{Binding SelectedStrategy, Mode=TwoWay}"
+                                      ToolTip.Tip="本会话编排策略：Single 单模型 / Router 路由分流 / Decompose 拆解分工 / Ensemble 多模型集成 / Pipeline 起草-评审-修订"
                                       MinWidth="110" FontSize="12" />
                         </StackPanel>
                         <TextBlock Grid.Column="3" Text="{Binding StatusText}"

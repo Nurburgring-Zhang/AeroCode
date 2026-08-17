@@ -103,4 +103,42 @@ public class HistoryMapperTests
         var mapped = HistoryMapper.ToProviderMessages(history);
         Assert.Single(mapped);
     }
+
+    [Fact]
+    public void Intermediates_FilteredOut_FinalAndLegacyKept()
+    {
+        // P1-1 回归：编排中间产物（IsFinal==false）绝不回灌模型上下文；
+        // 最终答复（true）与早期数据（null）保留。
+        var history = new List<ChatMessage>
+        {
+            new() { Role = ChatRole.User, Content = "第一问", Status = MessageStatus.Completed },
+            new() { Role = ChatRole.Assistant, Content = "路由分类JSON", Status = MessageStatus.Completed, IsFinal = false },
+            new() { Role = ChatRole.Assistant, Content = "候选A", Status = MessageStatus.Completed, IsFinal = false },
+            new() { Role = ChatRole.Assistant, Content = "规划JSON", Status = MessageStatus.Completed, IsFinal = false },
+            new() { Role = ChatRole.Assistant, Content = "最终答复", Status = MessageStatus.Completed, IsFinal = true },
+            new() { Role = ChatRole.Assistant, Content = "旧版本消息", Status = MessageStatus.Completed, IsFinal = null },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        Assert.Equal(3, mapped.Count);
+        Assert.Equal("第一问", mapped[0].Content);
+        Assert.Equal("最终答复", mapped[1].Content);
+        Assert.Equal("旧版本消息", mapped[2].Content);
+        Assert.DoesNotContain(mapped, m => m.Content.Contains("JSON") || m.Content == "候选A");
+    }
+
+    [Fact]
+    public void IntermediatesFlag_OnNonAssistantRoles_NotFiltered()
+    {
+        // IsFinal 语义只约束助手消息；用户消息永远进上下文。
+        var history = new List<ChatMessage>
+        {
+            new() { Role = ChatRole.User, Content = "用户消息", Status = MessageStatus.Completed, IsFinal = false },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+        Assert.Single(mapped);
+        Assert.Equal("用户消息", mapped[0].Content);
+    }
 }

@@ -32,6 +32,11 @@
     <ProjectReference Include="..\AeroCode.Harness\AeroCode.Harness.csproj" />
     <ProjectReference Include="..\AeroCode.AI\AeroCode.AI.csproj" />
     <ProjectReference Include="..\AeroAgent.Conversation\AeroAgent.Conversation.csproj" />
+    <ProjectReference Include="..\AeroAgent.Moa\AeroAgent.Moa.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AeroCode.Tests" />
   </ItemGroup>
 
 </Project>

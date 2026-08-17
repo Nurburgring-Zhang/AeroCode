@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
@@ -127,10 +128,11 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
 
         // ---- 手动枚举策略流：异常收容在 MoveNextAsync 周围，
         //      yield 位于 try 之外（C# 禁止在带 catch 的 try 内 yield）。
+        // MOA 并行编排（Ensemble/Decompose）同时有多条消息在途：
+        // 逐消息跟踪累积内容与在途集合，异常收容时各归各位，绝不串行混淆。
         var totalMessages = 0;
         var totalCost = 0.0;
-        string? currentMessageId = null;
-        var accumulated = new System.Text.StringBuilder();
+        var inFlight = new Dictionary<string, StringBuilder>();
 
         var enumerator = strategy.ExecuteAsync(context).GetAsyncEnumerator(ct);
         try
@@ -150,36 +152,28 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
                 }
                 catch (OperationCanceledException)
                 {
-                    if (currentMessageId is not null)
-                    {
-                        await MarkTerminalAsync(
-                            sessionId, currentMessageId,
-                            MessageStatus.Cancelled, "cancelled by user",
-                            accumulated.ToString());
-                    }
+                    await MarkInFlightTerminalAsync(
+                        sessionId, inFlight,
+                        MessageStatus.Cancelled, "cancelled by user");
 
                     terminalFromException = new MessageCancelledEvent
                     {
                         SessionId = sessionId,
-                        MessageId = currentMessageId ?? string.Empty,
+                        MessageId = string.Empty, // 轮级取消：在途消息已各自落库为 Cancelled
                     };
                     moved = false;
                 }
                 catch (Exception ex)
                 {
-                    if (currentMessageId is not null)
-                    {
-                        await MarkTerminalAsync(
-                            sessionId, currentMessageId,
-                            MessageStatus.Failed, ex.Message,
-                            accumulated.ToString());
-                    }
+                    await MarkInFlightTerminalAsync(
+                        sessionId, inFlight,
+                        MessageStatus.Failed, ex.Message);
 
                     terminalFromException = new MessageFailedEvent
                     {
                         SessionId = sessionId,
-                        MessageId = currentMessageId ?? string.Empty,
-                        Error = ex.Message,
+                        MessageId = string.Empty, // 轮级失败：在途消息已各自落库为 Failed
+                        Error = ErrorText.Truncate(ex.Message) ?? ex.Message,
                     };
                     moved = false;
                 }
@@ -196,21 +190,29 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
                 }
 
                 var current = ev!;
-                if (current is AssistantMessageStarted started)
+                switch (current)
                 {
-                    currentMessageId = started.MessageId;
-                    totalMessages++;
-                    accumulated.Clear();
-                }
+                    case AssistantMessageStarted started:
+                        inFlight[started.MessageId] = new StringBuilder();
+                        totalMessages++;
+                        break;
+                    case TextDeltaEvent delta:
+                        if (inFlight.TryGetValue(delta.MessageId, out var sb))
+                        {
+                            sb.Append(delta.Delta);
+                        }
 
-                if (current is TextDeltaEvent delta)
-                {
-                    accumulated.Append(delta.Delta);
-                }
-
-                if (current is MessageCompletedEvent completed)
-                {
-                    totalCost += completed.CostUsd;
+                        break;
+                    case MessageCompletedEvent completed:
+                        inFlight.Remove(completed.MessageId);
+                        totalCost += completed.CostUsd;
+                        break;
+                    case MessageFailedEvent failed:
+                        inFlight.Remove(failed.MessageId);
+                        break;
+                    case MessageCancelledEvent cancelled:
+                        inFlight.Remove(cancelled.MessageId);
+                        break;
                 }
 
                 yield return current;
@@ -231,40 +233,56 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         };
     }
 
-    /// <summary>把进行中的助手消息落为终态（失败/取消），并保留已流出的部分内容。尽力而为，不抛出。</summary>
-    private async Task MarkTerminalAsync(
-        string sessionId, string messageId, MessageStatus status, string? error,
-        string partialContent)
+    /// <summary>
+    /// 把异常时刻所有在途消息各自落为终态，保留各自已流出的部分内容。
+    /// 会话消息只加载一次（在途消息可能多条，逐条加载是 O(N²)）。尽力而为，不抛出。
+    /// </summary>
+    private async Task MarkInFlightTerminalAsync(
+        string sessionId,
+        Dictionary<string, StringBuilder> inFlight,
+        MessageStatus status,
+        string error)
     {
+        if (inFlight.Count == 0)
+        {
+            return;
+        }
+
+        var truncated = ErrorText.Truncate(error);
         try
         {
             var messages = await _sessions.GetMessagesAsync(sessionId);
-            if (!messages.IsSuccess || messages.Value is null)
+            if (messages.IsSuccess && messages.Value is not null)
             {
-                return;
-            }
+                foreach (var (messageId, accumulated) in inFlight)
+                {
+                    var target = messages.Value.FirstOrDefault(m => m.Id == messageId);
+                    if (target is null)
+                    {
+                        continue;
+                    }
 
-            var target = messages.Value.FirstOrDefault(m => m.Id == messageId);
-            if (target is null)
-            {
-                return;
-            }
+                    target.Status = status;
+                    target.Error = truncated;
+                    if (accumulated.Length > 0)
+                    {
+                        target.Content = accumulated.ToString();
+                    }
 
-            target.Status = status;
-            target.Error = error;
-            if (partialContent.Length > 0)
-            {
-                target.Content = partialContent;
+                    await _sessions.UpdateMessageAsync(target);
+                }
             }
-
-            await _sessions.UpdateMessageAsync(target);
         }
         catch (Exception ex)
         {
             // 收尾落库失败不应覆盖原始异常语义，但必须可见。
             _logger.LogWarning(
-                "failed to persist terminal status {Status} for message {MessageId}: {Error}",
-                status, messageId, ex.Message);
+                "failed to persist terminal status {Status} for in-flight messages: {Error}",
+                status, ex.Message);
+        }
+        finally
+        {
+            inFlight.Clear();
         }
     }
 }

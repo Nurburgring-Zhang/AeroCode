@@ -25,7 +25,7 @@ namespace AeroCode.Tests.ConversationTests;
 /// 测试用 provider：可编程的流式/非流式行为（正常/抛错/慢速），
 /// 用于验证编排层的事件流与持久化逻辑。
 /// </summary>
-internal sealed class ScriptedProvider : IAiProvider
+public sealed class ScriptedProvider : IAiProvider
 {
     public string ProviderId { get; init; } = "scripted";
     public string DisplayName => "Scripted";
@@ -41,14 +41,26 @@ internal sealed class ScriptedProvider : IAiProvider
     public UsageInfo? NonStreamUsage { get; set; }
     public List<AiChatMessage>? LastRequestMessages { get; private set; }
 
+    /// <summary>按调用次序出队的非流式响应（MOA 多阶段测试用）；空则回退 NonStreamContent。</summary>
+    public Queue<string> ChatQueue { get; } = new();
+
+    /// <summary>ChatAsync（非流式）抛出的异常。</summary>
+    public Exception? ThrowDuringChat { get; set; }
+
     public Task<ChatResponse> ChatAsync(ChatRequest request, CancellationToken ct = default)
     {
         LastRequestMessages = request.Messages.ToList();
+        if (ThrowDuringChat is not null)
+        {
+            throw ThrowDuringChat;
+        }
+
+        var content = ChatQueue.Count > 0 ? ChatQueue.Dequeue() : NonStreamContent;
         return Task.FromResult(new ChatResponse
         {
             Id = "resp-1",
             Model = request.Model,
-            Content = NonStreamContent,
+            Content = content,
             FinishReason = "stop",
             Usage = NonStreamUsage,
         });
@@ -82,7 +94,7 @@ internal sealed class ScriptedProvider : IAiProvider
 }
 
 /// <summary>绕过 ProviderFactory 的测试桩：按 id 返回注入的 provider。</summary>
-internal sealed class TestProviderRegistry : IProviderRegistry
+public sealed class TestProviderRegistry : IProviderRegistry
 {
     private readonly Dictionary<string, IAiProvider> _providers = new();
     public string DefaultProviderId { get; set; } = "scripted";
@@ -142,7 +154,9 @@ public sealed class OrchestrationTests : IDisposable
         _db.Dispose();
         _keepAlive.Dispose();
         // EF Core 会池化 SQLite 连接；不清池则文件仍被占用无法删除。
-        SqliteConnection.ClearAllPools();
+        // 只清本测试连接串的池——ClearAllPools 是全局操作，
+        // xUnit 并行跑其他测试类时会把别人在用的池一并清掉（偶发失败根因）。
+        SqliteConnection.ClearPool(_keepAlive);
         if (File.Exists(_dbPath))
         {
             File.Delete(_dbPath);

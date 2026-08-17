@@ -39,6 +39,12 @@ public class ChatMessage
     /// </summary>
     public string? ParentMessageId { get; set; }
 
+    /// <summary>
+    /// 可读标签。MOA 子任务消息携带 planner 分配的任务名，调度面板据此展示
+    /// "哪个模型在做什么"；普通消息为 null。
+    /// </summary>
+    public string? Label { get; set; }
+
     /// <summary>处理状态（流式进行中/完成/失败/取消/降级）。</summary>
     public MessageStatus Status { get; set; } = MessageStatus.Pending;
 
@@ -54,8 +60,16 @@ public class ChatMessage
     /// <summary>本条消息成本（USD，按画像费率核算；未知为 0）。</summary>
     public double CostUsd { get; set; }
 
-    /// <summary>首 token 延迟（毫秒）。</summary>
+    /// <summary>本条消息的调用耗时（毫秒，全程计时）。</summary>
     public int LatencyMs { get; set; }
+
+    /// <summary>
+    /// 是否为面向用户的最终答复。MOA 编排中的中间产物（路由分类、规划 JSON、
+    /// 子任务产出、候选答案、评审意见）为 false，不进入后续轮次的模型上下文；
+    /// 最终答复（Single 回复 / Router 专家答复 / 集成裁决 / 分工合成 / 管线修订稿）
+    /// 为 true。null = 早期版本数据（无此列时代），按最终答复对待以保持多轮连续性。
+    /// </summary>
+    public bool? IsFinal { get; set; }
 
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

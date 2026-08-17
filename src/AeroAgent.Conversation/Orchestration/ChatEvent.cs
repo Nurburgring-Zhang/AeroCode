@@ -18,6 +18,9 @@ public sealed record AssistantMessageStarted : ChatEvent
     public required string ModelId { get; init; }
     public required StrategyRole OrchestrationRole { get; init; }
     public string? ParentMessageId { get; init; }
+
+    /// <summary>编排子任务标签（如"候选 A"），无标签为 null。</summary>
+    public string? Label { get; init; }
 }
 
 /// <summary>文本增量（流式打字机）。</summary>

@@ -117,7 +117,8 @@ public sealed class RealHttpIntegrationTests : IDisposable
 
         _db.Dispose();
         _keepAlive.Dispose();
-        SqliteConnection.ClearAllPools();
+        // 只清本连接串的池，避免干扰 xUnit 并行运行的其他测试类。
+        SqliteConnection.ClearPool(_keepAlive);
         if (File.Exists(_dbPath))
         {
             File.Delete(_dbPath);

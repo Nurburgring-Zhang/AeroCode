@@ -1,3 +1,6 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,6 +18,56 @@ public class ConversationDbContext : DbContext
 
     public DbSet<ChatSession> Sessions => Set<ChatSession>();
     public DbSet<ChatMessage> Messages => Set<ChatMessage>();
+
+    /// <summary>
+    /// 既有数据库的兼容升级。EnsureCreated 不会给已存在的库补列：
+    /// Phase 1 的库没有 chat_messages.Label（Phase 2 MOA 子任务标签）
+    /// 与 chat_messages.IsFinal（历史回灌过滤标记）。
+    /// 此处用 PRAGMA table_info 检测缺列并以 ALTER TABLE 补齐（幂等）。
+    /// 注意：列名必须与 EF 实际映射名一致（本模型未配置 snake_case 约定，
+    /// 列名即属性名）——写成 is_final 会让存量库升级后 EF 查询报 no such column。
+    /// </summary>
+    public static async Task EnsureSchemaAsync(ConversationDbContext db, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        await db.Database.OpenConnectionAsync(ct);
+        var conn = db.Database.GetDbConnection();
+
+        var hasLabel = false;
+        var hasIsFinal = false;
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA table_info(chat_messages);";
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                // PRAGMA table_info 第 1 列（0 基）是列名。
+                var columnName = reader.GetString(1);
+                if (string.Equals(columnName, "Label", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasLabel = true;
+                }
+                else if (string.Equals(columnName, "IsFinal", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasIsFinal = true;
+                }
+            }
+        }
+
+        if (!hasLabel)
+        {
+            await using var alter = conn.CreateCommand();
+            alter.CommandText = "ALTER TABLE chat_messages ADD COLUMN \"Label\" TEXT NULL;";
+            await alter.ExecuteNonQueryAsync(ct);
+        }
+
+        if (!hasIsFinal)
+        {
+            await using var alter = conn.CreateCommand();
+            alter.CommandText = "ALTER TABLE chat_messages ADD COLUMN \"IsFinal\" INTEGER NULL;";
+            await alter.ExecuteNonQueryAsync(ct);
+        }
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -47,6 +100,8 @@ public class ConversationDbContext : DbContext
             e.Property(m => m.ProviderId).HasMaxLength(128);
             e.Property(m => m.ModelId).HasMaxLength(256);
             e.Property(m => m.ParentMessageId).HasMaxLength(32);
+            e.Property(m => m.Label).HasMaxLength(500);
+            e.Property(m => m.IsFinal).HasColumnType("INTEGER");
             e.Property(m => m.Error).HasColumnType("TEXT");
             e.HasIndex(m => m.SessionId);
             e.HasIndex(m => m.CreatedAtUtc);

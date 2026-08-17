@@ -16,6 +16,12 @@ public class AppDataPaths
     public string ExportDirectory { get; }
     public string SettingsFile { get; }
 
+    /// <summary>MOA 模型画像存储（强项/费率/自学习统计）。</summary>
+    public string MoaProfilesFile { get; }
+
+    /// <summary>MOA 编排选项（角色绑定/集成规模/单轮预算）。</summary>
+    public string MoaOptionsFile { get; }
+
     public AppDataPaths()
     {
         RootDirectory = Path.Combine(
@@ -27,6 +33,8 @@ public class AppDataPaths
         LogDirectory = Path.Combine(RootDirectory, "logs");
         ExportDirectory = Path.Combine(RootDirectory, "exports");
         SettingsFile = Path.Combine(RootDirectory, "settings.json");
+        MoaProfilesFile = Path.Combine(RootDirectory, "moa-profiles.json");
+        MoaOptionsFile = Path.Combine(RootDirectory, "moa-options.json");
     }
 
     public void EnsureAll()

@@ -4,6 +4,11 @@ using System.Threading.Tasks;
 using AeroAgent.Conversation.Data;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
+using AeroAgent.Moa.Aggregation;
+using AeroAgent.Moa.Assignment;
+using AeroAgent.Moa.Planning;
+using AeroAgent.Moa.Profiles;
+using AeroAgent.Moa.Strategies;
 using AeroCode.AI.Embedding;
 using AeroCode.AI.Providers;
 using AeroCode.AI.Telemetry;
@@ -133,7 +138,8 @@ public partial class App : Application
         sc.AddDbContext<AeroCodeDbContext>(opt => opt.UseSqlite($"Data Source={dbPath}"));
 
         // 3b. 统一对话（AeroAgent.Conversation）。独立 SQLite 库，单例匹配本应用
-        //     既有约定（笔记服务亦为单例）；对话操作按用户顺序执行，无并发上下文复用。
+        //     既有约定（笔记服务亦为单例）；SessionService 内部以互斥锁串行化
+        //     DbContext 操作，MOA 并行 worker 的并发持久化由该锁保证。
         var convPath = paths.ConversationDatabaseFile;
         Directory.CreateDirectory(Path.GetDirectoryName(convPath)!);
         var convOptions = new DbContextOptionsBuilder<ConversationDbContext>()
@@ -141,9 +147,33 @@ public partial class App : Application
             .Options;
         var convDb = new ConversationDbContext(convOptions);
         convDb.Database.EnsureCreated();
+        // 既有库补列（如 Phase 1 库缺 chat_messages.Label / IsFinal）——幂等。
+        ConversationDbContext.EnsureSchemaAsync(convDb).GetAwaiter().GetResult();
         sc.AddSingleton(convDb);
         sc.AddSingleton<ISessionService, SessionService>();
+
+        // 3c. MOA 编排（AeroAgent.Moa）。画像目录：文件覆盖内建种子；
+        //     编排选项：缺失/损坏时回退默认（JsonMoaOptionsStore 自带容错）。
+        var profileCatalog = new ModelProfileCatalog(new JsonFileProfileStore(paths.MoaProfilesFile));
+        profileCatalog.LoadAsync(BuiltInProfiles.Seed()).GetAwaiter().GetResult();
+        sc.AddSingleton<IModelProfileCatalog>(profileCatalog);
+        sc.AddSingleton(profileCatalog);
+
+        var moaOptions = new JsonMoaOptionsStore(paths.MoaOptionsFile)
+            .LoadAsync().GetAwaiter().GetResult();
+        sc.AddSingleton(moaOptions);
+
+        sc.AddSingleton<WorkerRunner>();
+        sc.AddSingleton<ModelAssigner>();
+        sc.AddSingleton<ModelResolver>();
+        sc.AddSingleton<TaskPlanner>();
+        sc.AddSingleton<Synthesizer>();
+
         sc.AddSingleton<IOrchestrationStrategy, SingleStrategy>();
+        sc.AddSingleton<IOrchestrationStrategy, RouterStrategy>();
+        sc.AddSingleton<IOrchestrationStrategy, DecomposeStrategy>();
+        sc.AddSingleton<IOrchestrationStrategy, EnsembleStrategy>();
+        sc.AddSingleton<IOrchestrationStrategy, PipelineStrategy>();
         sc.AddSingleton<IChatOrchestrationFacade, ChatOrchestrationFacade>();
         sc.AddSingleton<ChatViewModel>();
 

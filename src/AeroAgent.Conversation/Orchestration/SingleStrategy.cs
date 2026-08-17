@@ -59,6 +59,7 @@ public sealed class SingleStrategy : IOrchestrationStrategy
             ProviderId = providerId,
             ModelId = model,
             OrchestrationRole = StrategyRole.None,
+            IsFinal = true,
             Status = MessageStatus.Streaming,
         };
         var appended = await _sessions.AppendMessageAsync(message);
@@ -158,7 +159,7 @@ public sealed class SingleStrategy : IOrchestrationStrategy
             MessageId = message.Id,
             TokensIn = tokensIn,
             TokensOut = tokensOut,
-            CostUsd = 0, // Phase 2 CostTracker 按画像核算
+            CostUsd = 0, // Single 暂不接入画像计价（MOA 各策略经 WorkerRunner 核算）；未计价如实为 0
             LatencyMs = message.LatencyMs,
         };
     }
