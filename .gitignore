@@ -1,0 +1,35 @@
+# Build artifacts
+bin/
+obj/
+out/
+*.dll
+*.exe
+*.pdb
+*.user
+*.suo
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+
+# Test results
+TestResults/
+coverage/
+*.coverage
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+appsettings.*.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/

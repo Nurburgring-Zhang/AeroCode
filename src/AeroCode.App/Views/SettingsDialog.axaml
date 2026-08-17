@@ -1,0 +1,174 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AeroCode.App.ViewModels"
+        xmlns:cfg="using:AeroCode.AI.Configuration"
+        x:Class="AeroCode.App.Views.SettingsDialog"
+        x:DataType="vm:SettingsViewModel"
+        Title="⚙️ AeroCode Settings"
+        Width="820" Height="640"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True" MinWidth="700" MinHeight="500">
+
+    <Window.Resources>
+        <SolidColorBrush x:Key="BgPanel" Color="#11141B" />
+        <SolidColorBrush x:Key="BgElev" Color="#161A23" />
+        <SolidColorBrush x:Key="Border" Color="#2A3142" />
+        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0" />
+        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6" />
+        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED" />
+        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4" />
+        <SolidColorBrush x:Key="AccentGreen" Color="#10B981" />
+        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B" />
+        <SolidColorBrush x:Key="AccentRed" Color="#EF4444" />
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+        <Border DockPanel.Dock="Top" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="20,14">
+            <StackPanel>
+                <TextBlock Text="⚙️ AeroCode 全局设置" FontSize="18" FontWeight="Bold" Foreground="{StaticResource AccentPurple}" />
+                <TextBlock Text="配置 AI Provider、UI 主题、内存上限等。所有变更持久化到 settings.json。"
+                           Foreground="{StaticResource FgMuted}" FontSize="11" Margin="0,4,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="20,12">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="{Binding StatusText}" Foreground="{StaticResource FgMuted}" FontSize="12" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="🏥 Health" Command="{Binding HealthCheckAllCommand}" Margin="0,0,8,0" />
+                <Button Grid.Column="2" Content="🔄 Reload" Command="{Binding ReloadCommand}" Margin="0,0,8,0" />
+                <Button Grid.Column="3" Content="❌ Cancel" Click="OnCancelClick" Margin="0,0,8,0" />
+                <Button Grid.Column="4" Content="💾 Save" Command="{Binding SaveCommand}" Background="{StaticResource AccentGreen}" Foreground="White" />
+            </Grid>
+        </Border>
+
+        <ScrollViewer Background="{StaticResource BgElev}">
+            <StackPanel Spacing="16" Margin="20">
+
+                <!-- ====================== UI 主题与外观 ====================== -->
+                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="🎨 UI 外观" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource AccentCyan}" />
+                        <Grid ColumnDefinitions="160,*" Margin="0,4,0,0">
+                            <TextBlock Grid.Column="0" Text="主题 (Theme)" Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding Themes}"
+                                      SelectedItem="{Binding SelectedTheme, Mode=TwoWay, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                      HorizontalAlignment="Stretch">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Display}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </Grid>
+                        <Grid ColumnDefinitions="160,*" Margin="0,8,0,0">
+                            <TextBlock Grid.Column="0" Text="字体大小 (pt)" Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                            <NumericUpDown Grid.Column="1" Value="{Binding FontSize, Mode=TwoWay}" Minimum="10" Maximum="22" Increment="1" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- ====================== AI Provider 默认 ====================== -->
+                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="🤖 AI Provider 默认值" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource AccentPurple}" />
+                        <Grid ColumnDefinitions="160,*" Margin="0,4,0,0">
+                            <TextBlock Grid.Column="0" Text="默认 Provider" Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding AvailableProviderIds}"
+                                      SelectedItem="{Binding DefaultProviderId, Mode=TwoWay}"
+                                      HorizontalAlignment="Stretch" />
+                        </Grid>
+                        <Grid ColumnDefinitions="160,*" Margin="0,8,0,0">
+                            <TextBlock Grid.Column="0" Text="默认模型" Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding DefaultModel, Mode=TwoWay}" Watermark="deepseek-v4-flash" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- ====================== Provider 列表 ====================== -->
+                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnDefinitions="*,Auto,Auto">
+                            <TextBlock Grid.Column="0" Text="📡 Provider 列表" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource AccentAmber}" />
+                            <Button Grid.Column="1" Content="➕ Add" Command="{Binding AddProviderCommand}" Margin="0,0,8,0" />
+                            <Button Grid.Column="2" Content="➖ Remove" Command="{Binding RemoveSelectedProviderCommand}" />
+                        </Grid>
+                        <ListBox ItemsSource="{Binding Providers}" SelectedItem="{Binding SelectedProvider, Mode=TwoWay}" Background="Transparent" MinHeight="100">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="cfg:ProviderConfig">
+                                    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,0">
+                                        <StackPanel Grid.Column="0" Margin="6,4,0,4">
+                                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                            <TextBlock FontSize="10" Foreground="{StaticResource FgMuted}">
+                                                <Run Text="{Binding Id}" /><Run Text=" · " /><Run Text="{Binding BaseUrl}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{Binding Kind}" Foreground="{StaticResource FgMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <!-- 编辑区 -->
+                        <Border IsVisible="{Binding SelectedProvider, Converter={x:Static ObjectConverters.IsNotNull}}" Background="{StaticResource BgElev}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="4" Padding="12">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="✏️ Provider 详情" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AccentCyan}" />
+                                <Grid ColumnDefinitions="120,*" Margin="0,4,0,0">
+                                    <TextBlock Grid.Column="0" Text="Id" VerticalAlignment="Center" />
+                                    <TextBox  Grid.Column="1" Text="{Binding SelectedProvider.Id, Mode=TwoWay}" />
+                                </Grid>
+                                <Grid ColumnDefinitions="120,*" Margin="0,6,0,0">
+                                    <TextBlock Grid.Column="0" Text="显示名" VerticalAlignment="Center" />
+                                    <TextBox  Grid.Column="1" Text="{Binding SelectedProvider.DisplayName, Mode=TwoWay}" />
+                                </Grid>
+                                <Grid ColumnDefinitions="120,*" Margin="0,6,0,0">
+                                    <TextBlock Grid.Column="0" Text="协议" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Column="1" SelectedItem="{Binding SelectedProvider.Kind, Mode=TwoWay}" HorizontalAlignment="Stretch">
+                                        <x:String>OpenAICompatible</x:String>
+                                        <x:String>AnthropicMessages</x:String>
+                                        <x:String>Custom</x:String>
+                                    </ComboBox>
+                                </Grid>
+                                <Grid ColumnDefinitions="120,*" Margin="0,6,0,0">
+                                    <TextBlock Grid.Column="0" Text="Base URL" VerticalAlignment="Center" />
+                                    <TextBox  Grid.Column="1" Text="{Binding SelectedProvider.BaseUrl, Mode=TwoWay}" />
+                                </Grid>
+                                <Grid ColumnDefinitions="120,*" Margin="0,6,0,0">
+                                    <TextBlock Grid.Column="0" Text="默认模型" VerticalAlignment="Center" />
+                                    <TextBox  Grid.Column="1" Text="{Binding SelectedProvider.DefaultModel, Mode=TwoWay}" />
+                                </Grid>
+                                <Grid ColumnDefinitions="120,*" Margin="0,6,0,0">
+                                    <TextBlock Grid.Column="0" Text="API Key Env" VerticalAlignment="Center" />
+                                    <TextBox  Grid.Column="1" Text="{Binding SelectedProvider.ApiKeyEnvVar, Mode=TwoWay}" Watermark="DEEPSEEK_API_KEY" />
+                                </Grid>
+                                <Grid ColumnDefinitions="120,*" Margin="0,6,0,0">
+                                    <TextBlock Grid.Column="0" Text="超时 (s)" VerticalAlignment="Center" />
+                                    <NumericUpDown Grid.Column="1" Value="{Binding SelectedProvider.TimeoutSeconds, Mode=TwoWay}" Minimum="5" Maximum="600" Increment="5" />
+                                </Grid>
+                                <CheckBox Margin="0,8,0,0" IsChecked="{Binding SelectedProvider.RequiresApiKey, Mode=TwoWay}" Content="需要从环境变量读 API Key" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- ====================== Memory 上限 ====================== -->
+                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="🧠 Memory 容量" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource AccentAmber}" />
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                                   Text="MEMORY.md / USER.md 是 Hermes 风格 agent 长期记忆。超过上限会被截断,默认 2200 / 1375 (Hermes 推荐值)。" />
+                        <Grid ColumnDefinitions="160,*" Margin="0,4,0,0">
+                            <TextBlock Grid.Column="0" Text="MEMORY.md 上限" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <NumericUpDown Grid.Column="1" Value="{Binding MemoryMaxChars, Mode=TwoWay}" Minimum="200" Maximum="20000" Increment="100" />
+                        </Grid>
+                        <Grid ColumnDefinitions="160,*" Margin="0,8,0,0">
+                            <TextBlock Grid.Column="0" Text="USER.md 上限" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <NumericUpDown Grid.Column="1" Value="{Binding UserProfileMaxChars, Mode=TwoWay}" Minimum="200" Maximum="10000" Increment="100" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

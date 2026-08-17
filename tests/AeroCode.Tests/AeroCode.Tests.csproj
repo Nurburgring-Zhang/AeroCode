@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />
+    <PackageReference Include="Avalonia" Version="11.2.2" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AeroCode.Core\AeroCode.Core.csproj" />
+    <ProjectReference Include="..\..\src\AeroCode.AI\AeroCode.AI.csproj" />
+    <ProjectReference Include="..\..\src\AeroCode.Skills\AeroCode.Skills.csproj" />
+    <ProjectReference Include="..\..\src\AeroCode.Harness\AeroCode.Harness.csproj" />
+    <ProjectReference Include="..\..\src\AeroCode.App\AeroCode.App.csproj" />
+    <ProjectReference Include="..\..\src\AeroCode.Mcp\AeroCode.Mcp.csproj" />
+  </ItemGroup>
+
+</Project>

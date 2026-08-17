@@ -1,0 +1,163 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AeroCode.App.ViewModels"
+             xmlns:models="clr-namespace:AeroCode.AI.Models;assembly=AeroCode.AI"
+             x:Class="AeroCode.App.Views.AIAssistantView"
+             x:DataType="vm:AIAssistantViewModel">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="BgDeep" Color="#0B0D12"/>
+        <SolidColorBrush x:Key="BgPanel" Color="#11141B"/>
+        <SolidColorBrush x:Key="BgElevated" Color="#161A23"/>
+        <SolidColorBrush x:Key="Border" Color="#2A3142"/>
+        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0"/>
+        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6"/>
+        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED"/>
+        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4"/>
+        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
+        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B"/>
+        <SolidColorBrush x:Key="AccentPink" Color="#EC4899"/>
+        <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
+    </UserControl.Resources>
+
+    <Grid RowDefinitions="Auto,*,Auto,Auto" Background="{StaticResource BgDeep}">
+
+        <!-- ============ 顶部工具栏: Provider + Model + Skill 选择 ============ -->
+        <Border Grid.Row="0" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="🤖 AI 助手" FontSize="15" FontWeight="Bold"
+                           Foreground="{StaticResource AccentPurple}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding StatusText}"
+                           Foreground="{StaticResource FgMuted}" FontSize="12"
+                           VerticalAlignment="Center" Margin="14,0" TextTrimming="CharacterEllipsis"/>
+                <ComboBox Grid.Column="2" Width="160"
+                          ItemsSource="{Binding AvailableProviders}"
+                          SelectedItem="{Binding SelectedProviderId, Mode=TwoWay}"
+                          ToolTip.Tip="选择 AI Provider" />
+                <ComboBox Grid.Column="3" Width="180" Margin="6,0,0,0"
+                          ItemsSource="{Binding AvailableModels}"
+                          SelectedItem="{Binding SelectedModel, Mode=TwoWay}"
+                          ToolTip.Tip="选择模型 (留空用 provider 默认)" />
+                <ComboBox Grid.Column="4" Width="200" Margin="6,0,0,0"
+                          ItemsSource="{Binding AvailableSkills}"
+                          SelectedItem="{Binding SelectedSkill, Mode=TwoWay}"
+                          ToolTip.Tip="选择 V3 Skill (Hermes/Matt Pocock skills)">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate DataType="vm:SkillSummary">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="{Binding Name}" />
+                                <TextBlock Text="{Binding Category}" Foreground="{StaticResource FgMuted}" FontSize="11"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <Button Grid.Column="5" Margin="6,0,0,0" Content="🗑️ 清空"
+                        Command="{Binding ClearHistoryCommand}" />
+            </Grid>
+        </Border>
+
+        <!-- ============ 中部: 对话历史 ============ -->
+        <ScrollViewer Grid.Row="1" Padding="16" Background="{StaticResource BgDeep}">
+            <StackPanel Spacing="8">
+                <ItemsControl ItemsSource="{Binding History}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="models:ChatMessage">
+                            <Border Padding="12,10" Margin="0,4" CornerRadius="8"
+                                    Background="{StaticResource BgPanel}"
+                                    BorderBrush="{StaticResource Border}" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock FontSize="11" Foreground="{StaticResource AccentCyan}"
+                                               FontWeight="SemiBold">
+                                        <Run Text="{Binding Role}" />
+                                        <Run Text=" · " />
+                                        <Run Text="{Binding Name, FallbackValue=''}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                               Foreground="{StaticResource FgPrimary}"
+                                               FontSize="13" Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Border IsVisible="{Binding IsStreaming}" Padding="12,10"
+                        Background="{StaticResource BgElevated}"
+                        BorderBrush="{StaticResource AccentGreen}" BorderThickness="1"
+                        CornerRadius="8">
+                    <StackPanel>
+                        <TextBlock Text="✨ 实时生成中..." Foreground="{StaticResource AccentGreen}"
+                                   FontWeight="SemiBold" FontSize="12" />
+                        <TextBlock Text="{Binding AssistantReply}" TextWrapping="Wrap"
+                                   Foreground="{StaticResource FgPrimary}" FontSize="13"
+                                   FontFamily="Consolas,JetBrains Mono,monospace" Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ============ 第二工具栏: 6 Capability 按钮 + 消息操作 ============ -->
+        <Border Grid.Row="2" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,1" Padding="14,8">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*">
+                <!-- Capability 1-6 (主行) -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6">
+                    <Button Content="📝 摘要" Command="{Binding SummarizeLastCommand}"
+                            ToolTip.Tip="压缩最后一条用户消息" Background="{StaticResource AccentCyan}" />
+                    <Button Content="🌐 翻译" Command="{Binding TranslateCommand}"
+                            ToolTip.Tip="翻译下面的文本到目标语言" Background="{StaticResource AccentGreen}" />
+                    <Button Content="🏷️ 自动标签" Command="{Binding AutoTagLastCommand}"
+                            ToolTip.Tip="从最后内容提取 1-5 个标签" Background="{StaticResource AccentAmber}" />
+                    <Button Content="🔍 语义搜索" Command="{Binding SemanticSearchCommand}"
+                            ToolTip.Tip="基于查询从所有笔记找最相关 top-5" Background="{StaticResource AccentPink}" />
+                    <Button Content="✍️ 写作" Command="{Binding WriteCommand}"
+                            ToolTip.Tip="基于主题生成结构化内容" Background="{StaticResource AccentPurple}" />
+                    <Button Content="❓ 问答" Command="{Binding AnswerFromNotesCommand}"
+                            ToolTip.Tip="基于笔记 RAG 回答问题" Background="{StaticResource AccentRed}" />
+                </StackPanel>
+                <!-- 翻译输入区 -->
+                <Grid Grid.Row="1" ColumnDefinitions="*,180,Auto" Margin="0,8,0,0">
+                    <TextBox Grid.Column="0" Watermark="要翻译的文本..."
+                             Text="{Binding TranslateInput, Mode=TwoWay}"
+                             AcceptsReturn="False" />
+                    <ComboBox Grid.Column="1" Margin="6,0,0,0"
+                              ItemsSource="{Binding CommonLanguages}"
+                              SelectedItem="{Binding SelectedLanguage, Mode=TwoWay}" />
+                </Grid>
+                <!-- 写作输入区 -->
+                <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,6,0,0">
+                    <TextBox Grid.Column="0" Watermark="写作主题..."
+                             Text="{Binding WriteTopic, Mode=TwoWay}" />
+                </Grid>
+                <!-- 搜索/问答输入区 -->
+                <Grid Grid.Row="3" ColumnDefinitions="*,*,Auto,Auto" Margin="0,6,0,0">
+                    <TextBox Grid.Column="0" Watermark="🔍 语义搜索查询..."
+                             Text="{Binding SemanticQuery, Mode=TwoWay}" Margin="0,0,3,0" />
+                    <TextBox Grid.Column="1" Watermark="❓ 基于笔记问问题..."
+                             Text="{Binding QaQuestion, Mode=TwoWay}" Margin="3,0,0,0" />
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- ============ 底部: 用户输入 + 发送 + Skill + 消息操作 ============ -->
+        <Border Grid.Row="3" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="14,10">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+                <TextBox Grid.Column="0"
+                         Watermark="输入问题,Enter 发送 (Shift+Enter 换行)"
+                         Text="{Binding UserInput, Mode=TwoWay}"
+                         AcceptsReturn="True" TextWrapping="Wrap"
+                         MinHeight="44" MaxHeight="120" />
+                <Button Grid.Column="1" Margin="6,0,0,0" Content="🎯 跑 Skill"
+                        Command="{Binding RunSelectedSkillCommand}"
+                        ToolTip.Tip="执行选中的 V3 Skill" />
+                <Button Grid.Column="2" Margin="6,0,0,0" Content="📋 复制"
+                        Command="{Binding CopyLastCommand}" />
+                <Button Grid.Column="3" Margin="6,0,0,0" Content="🔁 重新生成"
+                        Command="{Binding RegenerateCommand}" />
+                <Button Grid.Column="4" Margin="6,0,0,0" Content="📤 发送"
+                        Command="{Binding SendCommand}"
+                        Background="{StaticResource AccentPurple}" />
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

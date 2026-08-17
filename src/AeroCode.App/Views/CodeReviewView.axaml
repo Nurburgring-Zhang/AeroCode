@@ -1,0 +1,64 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AeroCode.App.ViewModels"
+             x:Class="AeroCode.App.Views.CodeReviewView"
+             x:DataType="vm:CodeReviewViewModel">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="BgDeep" Color="#0B0D12"/>
+        <SolidColorBrush x:Key="BgPanel" Color="#11141B"/>
+        <SolidColorBrush x:Key="BgElevated" Color="#161A23"/>
+        <SolidColorBrush x:Key="Border" Color="#2A3142"/>
+        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0"/>
+        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6"/>
+        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED"/>
+        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4"/>
+        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
+        <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
+        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B"/>
+    </UserControl.Resources>
+
+    <Grid RowDefinitions="Auto,*" ColumnDefinitions="*,6,*" Background="{StaticResource BgDeep}">
+        <!-- Toolbar -->
+        <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="🔍 V3 Code Review" FontSize="15" FontWeight="Bold"
+                           Foreground="{StaticResource AccentCyan}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding StatusText}"
+                           Foreground="{StaticResource FgMuted}" FontSize="12" VerticalAlignment="Center" Margin="14,0" />
+                <Button Grid.Column="2" Content="📂 选文件" Command="{Binding PickFileCommand}" />
+                <Button Grid.Column="3" Content="▶ Review" Margin="6,0,0,0"
+                        Command="{Binding ReviewCommand}" Background="{StaticResource AccentPurple}" />
+                <Button Grid.Column="4" Content="🗑️ 清空" Margin="6,0,0,0"
+                        Command="{Binding ClearCommand}" />
+            </Grid>
+        </Border>
+
+        <!-- Source code panel -->
+        <DockPanel Grid.Row="1" Grid.Column="0">
+            <TextBlock DockPanel.Dock="Top" Text="📄 源代码" Padding="14,10,14,4"
+                       Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" />
+            <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedFilePath}"
+                       Padding="14,0,14,6" Foreground="{StaticResource FgMuted}" FontSize="11" />
+            <TextBox Text="{Binding SourceCode, Mode=TwoWay}"
+                     FontFamily="Consolas,JetBrains Mono,monospace" FontSize="12"
+                     AcceptsReturn="True" TextWrapping="NoWrap"
+                     Background="{StaticResource BgPanel}" Foreground="{StaticResource FgPrimary}"
+                     Padding="14" />
+        </DockPanel>
+
+        <GridSplitter Grid.Row="1" Grid.Column="1" Width="6"
+                       Background="{StaticResource Border}" ResizeDirection="Columns" />
+
+        <!-- Report panel -->
+        <DockPanel Grid.Row="1" Grid.Column="2">
+            <TextBlock DockPanel.Dock="Top" Text="📊 8 维度 Review 报告" Padding="14,10,14,4"
+                       Foreground="{StaticResource AccentGreen}" FontWeight="SemiBold" />
+            <ScrollViewer Padding="14" Background="{StaticResource BgPanel}">
+                <TextBlock Text="{Binding ReportText}" TextWrapping="Wrap"
+                           Foreground="{StaticResource FgPrimary}" FontSize="13"
+                           FontFamily="Consolas,JetBrains Mono,monospace" />
+            </ScrollViewer>
+        </DockPanel>
+    </Grid>
+</UserControl>

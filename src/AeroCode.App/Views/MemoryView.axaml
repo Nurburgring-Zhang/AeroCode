@@ -1,0 +1,83 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AeroCode.App.ViewModels"
+             x:Class="AeroCode.App.Views.MemoryView"
+             x:DataType="vm:MemoryViewModel">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="BgDeep" Color="#0B0D12"/>
+        <SolidColorBrush x:Key="BgPanel" Color="#11141B"/>
+        <SolidColorBrush x:Key="BgElevated" Color="#161A23"/>
+        <SolidColorBrush x:Key="Border" Color="#2A3142"/>
+        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0"/>
+        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6"/>
+        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED"/>
+        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4"/>
+        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
+        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B"/>
+        <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
+    </UserControl.Resources>
+
+    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="*,6,*" Background="{StaticResource BgDeep}">
+        <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="🧠 V3 Memory" FontSize="15" FontWeight="Bold"
+                           Foreground="{StaticResource AccentAmber}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding StatusText}"
+                           Foreground="{StaticResource FgMuted}" FontSize="12" VerticalAlignment="Center" Margin="14,0" />
+                <TextBlock Grid.Column="2" Text="(Hermes 4 层记忆 · 温层)" FontSize="11"
+                           Foreground="{StaticResource FgMuted}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <Button Grid.Column="3" Content="🔄 加载" Command="{Binding LoadCommand}" />
+                <Button Grid.Column="4" Content="💾 保存" Margin="6,0,0,0"
+                        Command="{Binding SaveCommand}" Background="{StaticResource AccentGreen}" />
+            </Grid>
+        </Border>
+
+        <DockPanel Grid.Row="1" Grid.Column="0">
+            <Border DockPanel.Dock="Top" Padding="14,10,14,4">
+                <StackPanel>
+                    <TextBlock Text="📝 MEMORY.md (Agent 记忆)" Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" />
+                    <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                        <TextBlock Grid.Column="0" Text="{Binding MemoryContent.Length, StringFormat='{}{0} 字符'}"
+                                   Foreground="{StaticResource FgMuted}" FontSize="11" />
+                        <TextBlock Grid.Column="1" Text="上限 2200 字符 (Hermes hard rule)"
+                                   Foreground="{StaticResource FgMuted}" FontSize="11" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+            <TextBox Text="{Binding MemoryContent, Mode=TwoWay}"
+                     FontFamily="Consolas,JetBrains Mono,monospace" FontSize="12"
+                     AcceptsReturn="True" TextWrapping="Wrap"
+                     Background="{StaticResource BgPanel}" Foreground="{StaticResource FgPrimary}"
+                     Padding="14" />
+        </DockPanel>
+
+        <GridSplitter Grid.Row="1" Grid.Column="1" Width="6"
+                       Background="{StaticResource Border}" ResizeDirection="Columns" />
+
+        <DockPanel Grid.Row="1" Grid.Column="2">
+            <Border DockPanel.Dock="Top" Padding="14,10,14,4">
+                <StackPanel>
+                    <TextBlock Text="👤 USER.md (用户画像)" Foreground="{StaticResource AccentGreen}" FontWeight="SemiBold" />
+                    <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                        <TextBlock Grid.Column="0" Text="{Binding UserContent.Length, StringFormat='{}{0} 字符'}"
+                                   Foreground="{StaticResource FgMuted}" FontSize="11" />
+                        <TextBlock Grid.Column="1" Text="上限 1375 字符 (Hermes hard rule)"
+                                   Foreground="{StaticResource FgMuted}" FontSize="11" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+            <TextBox Text="{Binding UserContent, Mode=TwoWay}"
+                     FontFamily="Consolas,JetBrains Mono,monospace" FontSize="12"
+                     AcceptsReturn="True" TextWrapping="Wrap"
+                     Background="{StaticResource BgPanel}" Foreground="{StaticResource FgPrimary}"
+                     Padding="14" />
+        </DockPanel>
+
+        <Border Grid.Row="2" Grid.ColumnSpan="3" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="14,8">
+            <TextBlock Text="💡 这两个文件会在每次 Agent 启动时自动注入到 system prompt (Hermes 冻结快照模式), 实现跨对话长期记忆。保存后立即生效。"
+                       Foreground="{StaticResource FgMuted}" FontSize="11" TextWrapping="Wrap" />
+        </Border>
+    </Grid>
+</UserControl>
