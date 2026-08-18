@@ -8,6 +8,17 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- .NET 9 SDK 默认把引用方的 RuntimeIdentifier 传染给可执行被引用工程
+         （IsRidAgnostic=false），导致 Android 头项目构建时本工程被迫按
+         net9.0/android-* 还原运行时包而 NETSDK1047。显式声明 RID 无关：
+         P2P 构建时保持 portable net9.0；直接构建 / dotnet publish -r win-x64 不受影响。 -->
+    <IsRidAgnostic>true</IsRidAgnostic>
+    <!-- NETSDK1150 豁免：自包含 publish（指定 RID win-x64 与 self contained）时，
+         IsRidAgnostic 的 AeroCode.Mcp 按非自包含 portable 编译，
+         SDK 校验「自包含 exe 不得引用非自包含 exe」。本工程只把 Mcp
+         当库消费并将其 portable 输出复制进发布目录（app-local hostfxr
+         可复用同目录运行时），与 SDK 对测试项目的豁免同理。 -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <ApplicationTitle>AeroCode</ApplicationTitle>
     <ApplicationId>com.AeroCode.app</ApplicationId>
     <ApplicationVersion>1</ApplicationVersion>
@@ -24,7 +35,9 @@
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" />
     <PackageReference Include="Markdig" Version="0.37.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.10.0" />
+    <!-- 注：OTel 埋点在 AeroCode.AI（Http + Runtime instrumentation，Android 兼容）。
+         不引 OpenTelemetry.Instrumentation.AspNetCore：本客户端从不托管 ASP.NET，
+         且其 Microsoft.AspNetCore.App FrameworkReference 无 android 运行时包（NETSDK1082）。 -->
   </ItemGroup>
 
   <ItemGroup>

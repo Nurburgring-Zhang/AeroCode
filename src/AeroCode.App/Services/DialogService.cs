@@ -1,6 +1,10 @@
-﻿using System.Threading.Tasks;
+using System;
+using System.Threading.Tasks;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Media;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AeroCode.App.Services;
 
@@ -10,10 +14,33 @@ public interface IDialogService
     Task<bool> ConfirmAsync(string title, string message);
 }
 
+/// <summary>
+/// 消息/确认对话框：桌面 = 模态 Window（历史行为）；single-view（Android）= OverlayService 覆盖层。
+/// </summary>
 public class DialogService : IDialogService
 {
+    private static readonly SolidColorBrush CardBg = new(Color.FromRgb(0x16, 0x1A, 0x23));
+    private static readonly SolidColorBrush CardBorder = new(Color.FromRgb(0x2A, 0x31, 0x42));
+    private static readonly SolidColorBrush FgPrimary = new(Color.FromRgb(0xE5, 0xE9, 0xF0));
+    private static readonly SolidColorBrush FgMuted = new(Color.FromRgb(0x8A, 0x93, 0xA6));
+
     public async Task ShowMessageAsync(string title, string message)
     {
+        if (TryGetOverlay(out var overlay))
+        {
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var okBtn = new Button { Content = "确定", HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right };
+            var card = BuildCard(title, message, okBtn);
+            okBtn.Click += (_, _) =>
+            {
+                overlay.CloseOverlay(card);
+                tcs.TrySetResult();
+            };
+            await overlay.ShowAsync(card);
+            await tcs.Task;
+            return;
+        }
+
         var dlg = new Window
         {
             Title = title,
@@ -22,8 +49,8 @@ public class DialogService : IDialogService
             CanResize = false,
             WindowStartupLocation = WindowStartupLocation.CenterOwner
         };
-        var okBtn = new Button { Content = "确定", HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right };
-        okBtn.Click += (_, _) => dlg.Close();
+        var okBtn2 = new Button { Content = "确定", HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right };
+        okBtn2.Click += (_, _) => dlg.Close();
         dlg.Content = new StackPanel
         {
             Margin = new Avalonia.Thickness(20),
@@ -31,7 +58,7 @@ public class DialogService : IDialogService
             Children =
             {
                 new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap },
-                okBtn
+                okBtn2
             }
         };
         if (TryGetOwner(out var owner)) await dlg.ShowDialog(owner);
@@ -40,6 +67,33 @@ public class DialogService : IDialogService
 
     public async Task<bool> ConfirmAsync(string title, string message)
     {
+        if (TryGetOverlay(out var overlay))
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var okBtn = new Button { Content = "确定" };
+            var cancelBtn = new Button { Content = "取消" };
+            var card = BuildCard(title, message,
+                new StackPanel
+                {
+                    Orientation = Avalonia.Layout.Orientation.Horizontal,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                    Spacing = 8,
+                    Children = { cancelBtn, okBtn }
+                });
+            okBtn.Click += (_, _) =>
+            {
+                overlay.CloseOverlay(card);
+                tcs.TrySetResult(true);
+            };
+            cancelBtn.Click += (_, _) =>
+            {
+                overlay.CloseOverlay(card);
+                tcs.TrySetResult(false);
+            };
+            await overlay.ShowAsync(card);
+            return await tcs.Task;
+        }
+
         bool result = false;
         var dlg = new Window
         {
@@ -49,10 +103,10 @@ public class DialogService : IDialogService
             CanResize = false,
             WindowStartupLocation = WindowStartupLocation.CenterOwner
         };
-        var okBtn = new Button { Content = "确定" };
-        var cancelBtn = new Button { Content = "取消" };
-        okBtn.Click += (_, _) => { result = true; dlg.Close(); };
-        cancelBtn.Click += (_, _) => dlg.Close();
+        var okBtn2 = new Button { Content = "确定" };
+        var cancelBtn2 = new Button { Content = "取消" };
+        okBtn2.Click += (_, _) => { result = true; dlg.Close(); };
+        cancelBtn2.Click += (_, _) => dlg.Close();
         dlg.Content = new StackPanel
         {
             Margin = new Avalonia.Thickness(20),
@@ -65,7 +119,7 @@ public class DialogService : IDialogService
                     Orientation = Avalonia.Layout.Orientation.Horizontal,
                     HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
                     Spacing = 8,
-                    Children = { cancelBtn, okBtn }
+                    Children = { cancelBtn2, okBtn2 }
                 }
             }
         };
@@ -74,10 +128,54 @@ public class DialogService : IDialogService
         return result;
     }
 
+    /// <summary>覆盖层卡片（与设置/授权弹层同一视觉语言）。</summary>
+    private static Border BuildCard(string title, string message, Control actions)
+    {
+        return new Border
+        {
+            Background = CardBg,
+            BorderBrush = CardBorder,
+            BorderThickness = new Avalonia.Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            MaxWidth = 440,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Padding = new Avalonia.Thickness(20),
+            Child = new StackPanel
+            {
+                Spacing = 12,
+                Children =
+                {
+                    new TextBlock { Text = title, FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = FgPrimary },
+                    new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, Foreground = FgMuted },
+                    actions
+                }
+            }
+        };
+    }
+
     private static bool TryGetOwner(out Window owner)
     {
         var lifetime = Avalonia.Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
         owner = lifetime?.MainWindow!;
         return owner is not null;
+    }
+
+    /// <summary>仅当运行在无 Window 的 single-view 生命周期且覆盖层宿主已挂载时返回 true。</summary>
+    private static bool TryGetOverlay(out OverlayService overlay)
+    {
+        overlay = null!;
+        if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime)
+        {
+            return false;
+        }
+        try
+        {
+            overlay = App.Services.GetRequiredService<OverlayService>();
+            return overlay.HasHost;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

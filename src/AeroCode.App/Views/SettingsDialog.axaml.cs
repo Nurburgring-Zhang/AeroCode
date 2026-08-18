@@ -1,19 +1,19 @@
 using Avalonia.Controls;
-using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 
 namespace AeroCode.App.Views;
 
+/// <summary>桌面设置窗口薄壳：内容在 SettingsView（与 Android 覆盖层共享同一视图）。</summary>
 public partial class SettingsDialog : Window
 {
     public SettingsDialog()
     {
         InitializeComponent();
+        var view = new SettingsView();
+        // DataContext 由 Window 向下自动流转到 SettingsView。
+        view.CloseRequested += () => Close();
+        Content = view;
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
-
-    // 保存成功与否由 SettingsViewModel.SaveAsync 的真实落盘与 StatusText 如实反映；
-    // 此处不再维护一个恒假的 Saved 标志（无消费方，属误导性死代码）。
-    private void OnCancelClick(object? sender, RoutedEventArgs e) => Close();
 }

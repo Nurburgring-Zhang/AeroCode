@@ -356,17 +356,24 @@ public sealed class MoaOptionsConcurrencyTests
         // 写端在 null ↔ 0.75 间翻转；读端每次读取的值必须是"完整的 null"或
         // "完整的 0.75"，并且直接构造 TurnBudget 不抛——即策略侧真实用法。
         var options = new MoaOptions();
-        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
         var observed = new System.Collections.Concurrent.ConcurrentBag<double?>();
+        // 自适应停止：采够样本即止，2s 为兜底上限。
+        // 历史 flaky：固定 400ms 窗口在机器重负载（并行构建）下会被 Task.Run
+        // 的调度延迟整体吃掉，读端一轮都没跑 → observed 为空而假失败；
+        // 按采样数停止则只要线程被调度就必然产生样本，断言语义不变。
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var stop = new CancellationTokenSource();
+        bool StopRequested() => observed.Count >= 2000 || sw.ElapsedMilliseconds >= 2000;
 
         var writer = Task.Run(() =>
         {
             var flag = false;
-            while (!stop.IsCancellationRequested)
+            while (!StopRequested())
             {
                 options.MaxUsdPerTurn = flag ? 0.75 : null;
                 flag = !flag;
             }
+            stop.Cancel();
         });
 
         var readers = Enumerable.Range(0, 3).Select(_ => Task.Run(() =>

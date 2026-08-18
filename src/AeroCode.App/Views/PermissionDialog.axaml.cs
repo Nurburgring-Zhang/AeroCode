@@ -1,5 +1,6 @@
 // Copyright (c) AeroCode V3.0
-// PermissionDialog — real Avalonia authorization window (allow / deny / remember).
+// PermissionDialog — 桌面授权窗口薄壳。内容在 PermissionDialogView（与 Android 覆盖层共享）。
+using System;
 using AeroCode.App.Services;
 using Avalonia.Controls;
 
@@ -7,31 +8,36 @@ namespace AeroCode.App.Views;
 
 public partial class PermissionDialog : Window
 {
+    private readonly PermissionDialogView _view = new();
+
     public PermissionDialog()
     {
         InitializeComponent();
+        _view.Completed += result =>
+        {
+            try
+            {
+                Close(result);
+            }
+            catch (InvalidOperationException)
+            {
+                // 窗口已关闭（决定与取消竞态）：首个决定已随 ShowDialog 返回，忽略后续。
+            }
+        };
+        Content = _view;
     }
 
     public PermissionDialog(PermissionPrompt prompt) : this()
     {
-        ToolNameText.Text = prompt.ToolName;
-        ArgsText.Text = string.IsNullOrWhiteSpace(prompt.ArgumentsPreview)
-            ? "(无参数)"
-            : prompt.ArgumentsPreview;
+        _view.ApplyPrompt(prompt);
     }
-
-    private void OnAllowClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        => Close(new PermissionDialogResult(Approved: true, Remember: RememberBox.IsChecked == true));
-
-    private void OnDenyClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        => Close(new PermissionDialogResult(Approved: false, Remember: RememberBox.IsChecked == true));
 
     /// <summary>对话轮取消时由 presenter 调用：关闭且不产生决定（broker 按拒绝处理）。</summary>
     public void CloseByCancellation()
     {
         try
         {
-            Close(null);
+            _view.CancelByRequest();
         }
         catch (InvalidOperationException)
         {

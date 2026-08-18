@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" android:installLocation="auto">
+	<!-- AI Provider 走 HTTPS API，需要网络权限；无任何存储权限（数据全在 app 私有目录） -->
+	<uses-permission android:name="android.permission.INTERNET" />
+	<application android:label="AeroCode" android:icon="@drawable/icon" />
+</manifest>

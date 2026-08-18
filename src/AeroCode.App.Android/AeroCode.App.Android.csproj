@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ApplicationId>com.aerocode.app</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <!-- Debug/快速迭代不启用 profiled AOT；release 打包参数见 docs/ANDROID_BUILD.md -->
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+    <!-- NETSDK1150 豁免：Android 应用是自包含可执行文件，SDK 默认禁止自包含 exe
+         引用非自包含 exe（AeroCode.App=WinExe、AeroCode.Mcp=Exe，均 IsRidAgnostic）。
+         本头项目实际只把它们的程序集当库消费（与 SDK 对测试项目的豁免同理），
+         其 NuGet 依赖照常流入本工程闭包，故关闭该校验。 -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Android" Version="11.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- RID 传染由 AeroCode.App 侧 <IsRidAgnostic>true</IsRidAgnostic> 阻断
+         （.NET 9 SDK 机制：IsRidAgnostic 的可执行被引用工程不接收
+         RuntimeIdentifier/SelfContained 全局属性），此处保持普通引用即可。 -->
+    <ProjectReference Include="..\AeroCode.App\AeroCode.App.csproj" />
+  </ItemGroup>
+
+</Project>

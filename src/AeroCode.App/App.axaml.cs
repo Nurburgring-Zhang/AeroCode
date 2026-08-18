@@ -68,6 +68,32 @@ public partial class App : Application
                 throw;
             }
         }
+        else if (ApplicationLifetime is ISingleViewApplicationLifetime singleView)
+        {
+            // PHASE 4：Android（single-view）——同一套服务，主视图直接挂 MainView（无 Window）。
+            try
+            {
+                _services = BuildServices();
+                ApplyMigrations(_services);
+
+                var main = new MainView
+                {
+                    DataContext = _services.GetRequiredService<MainWindowViewModel>()
+                };
+                singleView.MainView = main;
+
+                // Eagerly initialize V3 VMs so they subscribe to EventBus
+                _services.GetRequiredService<SkillsViewModel>();
+                _services.GetRequiredService<DiagnosticsViewModel>();
+                _services.GetRequiredService<MemoryViewModel>();
+                _services.GetRequiredService<CodeReviewViewModel>();
+            }
+            catch (Exception ex)
+            {
+                LogToFile("FATAL", $"初始化失败(single-view): {ex}");
+                throw;
+            }
+        }
         base.OnFrameworkInitializationCompleted();
     }
 
@@ -218,6 +244,8 @@ public partial class App : Application
 
         // 5. App services
         sc.AddSingleton<IDialogService, DialogService>();
+        // single-view 平台（Android）的对话框覆盖层宿主；桌面不消费但注册保持容器一致。
+        sc.AddSingleton<OverlayService>();
 
         // 6. V3 Skills engine
         var skillsRoot = Path.Combine(paths.RootDirectory, "skills");

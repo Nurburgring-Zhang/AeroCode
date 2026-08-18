@@ -33,3 +33,10 @@ desktop.ini
 # Logs
 *.log
 logs/
+
+# Signing keys / secrets（发布签名密钥与凭据，绝不入库）
+*.keystore
+*.jks
+*.pem
+*.p12
+*.pfx

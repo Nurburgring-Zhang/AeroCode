@@ -10,6 +10,9 @@
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- 与 AeroCode.App 同理：显式 RID 无关，阻止 Android 头项目构建时
+         RuntimeIdentifier 传染进本 exe 工程（否则 NETSDK1047）。 -->
+    <IsRidAgnostic>true</IsRidAgnostic>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,10 +20,6 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Reference Include="System.Runtime" />
   </ItemGroup>
 
   <ItemGroup>

@@ -25,10 +25,17 @@ public class AppDataPaths
     /// <summary>工具授权决策（用户"记住选择"/设置页修改的持久化）。</summary>
     public string PermissionsFile { get; }
 
+    /// <summary>
+    /// 平台数据根覆盖：Android 头项目在应用服务构建前设置为 app 私有内部存储路径
+    /// （Context.FilesDir/AeroCode，免任何存储权限）。null = 走默认 LocalApplicationData。
+    /// </summary>
+    public static string? RootDirectoryOverride { get; set; }
+
     public AppDataPaths()
-        : this(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "AeroCode"))
+        : this(RootDirectoryOverride
+            ?? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AeroCode"))
     {
     }
 

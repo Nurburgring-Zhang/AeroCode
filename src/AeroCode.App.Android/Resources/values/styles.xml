@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<resources>
+  <!-- Avalonia 全屏渲染，不要系统 ActionBar/标题栏 -->
+  <style name="MyTheme" parent="android:Theme.Material.NoActionBar">
+    <item name="android:windowBackground">@android:color/black</item>
+  </style>
+  <style name="MyTheme.NoActionBar">
+    <item name="android:windowActionBar">false</item>
+    <item name="android:windowNoTitle">true</item>
+  </style>
+</resources>
