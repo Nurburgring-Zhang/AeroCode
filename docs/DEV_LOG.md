@@ -163,3 +163,66 @@ S10 不做新功能，只做质量收口：全量重建双轮绿 + 零虚假 gre
 ### 收口数字
 
 测试：540 → 550（新增 10 例：AXAML 资源闭包 1、撕裂读/文件锁 2、失败记账 2、孤儿运行期 1、Id 门/损坏回退/原子写 4），全量双轮绿：550 总 / 535 过 / 15 网络跳过 / 0 失败 ×2。零虚假 grep：src 命中全部为分析器 Skill 的检测规则字符串与"禁止 mock"纪律注释，无真实占位。PHASE 3 随本条目后的提交入库。
+
+## 2026-08-18 · PHASE 4 Android 双平台 + 脱敏 + GitHub 发布（结论）
+
+### 交付结论
+
+- **双平台生命周期**：从 MainWindow/SettingsDialog/PermissionDialog 三个 Window 抽出平台无关的 MainView / SettingsView / PermissionDialogView（UserControl），桌面保持模态 Window 壳，Android 走 OverlayService 全屏覆盖层承载同一批视图文件；App.axaml.cs 增加 ISingleViewApplicationLifetime 分支（同一 DI 图 + 同一 MainWindowViewModel），AppDataPaths.RootDirectoryOverride 在 MainActivity.CustomizeAppBuilder 指向 Context.FilesDir/AeroCode（app 私有内部存储，零存储权限；网络权限仅 INTERNET 一条，供 AI Provider API）。
+- **AeroCode.App.Android 头项目**：net9.0-android + Avalonia.Android 11.2.2，AvaloniaMainActivity<App>，minSdk 26 / targetSdk 35，AndroidPackageFormat=apk，PIL 生成 192px 启动图标。`dotnet build` 0 错通过，`-t:SignAndroidPackage` 产 debug 签名 APK。
+- **构建三连关（NETSDK1082 → NETSDK1047 → NETSDK1150）**：① 删 OpenTelemetry.Instrumentation.AspNetCore（其 AspNetCore FrameworkReference 无 android 运行时包；OTel 埋点实际在 AeroCode.AI，零代码使用）；② .NET 9 SDK 默认把引用方 RID 传染给可执行被引用工程（IsRidAgnostic=false），android-arm64/x64 流入 net9.0 的 exe 工程致 NETSDK1047——App 与 Mcp 显式 `<IsRidAgnostic>true</IsRidAgnostic>` 恒按 portable 编译；③ 自包含 exe 不得引用非自包含 exe（NETSDK1150），两处引用方（App、Android 头）实际都把被引用 exe 当库消费，按 SDK 对测试项目的同款豁免设 `ValidateExecutableReferencesMatchSelfContained=false`。顺带删 Mcp 的裸 `<Reference Include="System.Runtime"/>`（MSB3245 噪音，SDK 工程本就自带）。
+- **APK 验证**：aapt2 dump badging 确认 com.aerocode.app / versionName 1.0.0 / minSdk 26 / targetSdk 35 / 仅 INTERNET 权限 / label AeroCode；apksigner verify 通过（CN=Android Debug，SHA-256 2053dd38…d5c6）。XA0141（SkiaSharp/HarfBuzz 未按 16KB 页对齐）为上游对 Android 16 的前瞻提示，不阻塞。Release 签名（keytool + AndroidKeyStore 参数）全流程文档化于 docs/ANDROID_BUILD.md（含本节三连关的架构备注）。
+- **Windows publish**：App 自包含 win-x64（131MB 目录）；portable aerocode-mcp.exe 实测无法复用同目录运行时（"You must install .NET"，app-local hostfxr 对框架依赖 apphost 不生效），改以自包含 win-x64 单独 publish 后合并，aerocode-mcp.exe 独立启动冒烟通过（stdiod 等待，超时杀死，无报错）。发行 zip 剔除 .pdb（内含本机构建路径）：328 文件 / 55,731,089 字节。
+- **脱敏审计**（三层）：git 全历史 + 工作区按 token/key/pem/JWT/AWS/GitHub PAT 模式扫描，命中仅为秘密检测技能的检测正则与两处显式 FAKE 测试值（sk-1234567890* / hunter2 梗值，属该技能测试夹具）；本次会话 PAT 片段全仓零命中；跟踪的 md 文档零个人路径/凭据；发行物仅 deps.json/runtimeconfig.json 构建元数据。README 重写为真实 V3/PHASE1-4 状态（旧版还停留在 17 用例时代）。
+- **发布**：公开仓库 Nurburgring-Zhang/AeroCode（REST API 建库，6 提交含 BASELINE→PHASE 4 全史）；token 一次性内嵌 URL 推送后立即 set-url 清除；Release v1.0.0（ID 372100734）双资产上传，**双向端到端验证**：从 release 下载回 APK 与 zip，SHA256 与本地逐一相同（APK 0ace8c8d…3db3 / zip 0baaac7c…cfa9，校验和写入 Release Notes）。
+- **flaky 加固**：MaxUsdPerTurn 撕裂读回归测试的固定 400ms 窗口在重负载（并行构建）下会被 Task.Run 调度延迟整体吃掉→读端零轮→假失败；改自适应停止（采够 2000 样本或 2s 上限），断言语义不变。
+
+### 收口数字
+
+测试：550 总 / 535 过 / 15 网络跳过 / 0 失败（全量第 2、3 轮双绿；撕裂读专项 20/20 稳定）。产物：APK 19,468,555 B（debug 签名）、win-x64 zip 55,731,089 B（自包含 + aerocode-mcp，无 pdb）。
+
+### 已知限制（如实标注，不粉饰）
+
+- APK 为 debug 签名、**未经真机/模拟器实测**（本机无设备），验收以 aapt2 元数据为准；Release 签名流程已文档化待有发布需要时执行。
+- Android 上 MCP stdio 子进程、剪贴板复制、Code Review 文件选择器受限：启动期/UI 如实 [DEGRADED] 降级提示，无静默假成功。
+- XA0141 16KB 页对齐为上游 NuGet 问题，待 SkiaSharp/HarfBuzz 上游修复。
+- aerocode-mcp 自包含合并使发行包体积增加约一倍运行时内容，换取零前置依赖。
+
+### 教训
+
+- bash 下 `-p:Prop=D:\path` 不加引号时反斜杠被当转义符吃掉（SDK 报"找不到目录"，属性值变 D:WORKSPACE…）——MSBuild 属性传参必须加引号。
+- .NET 9 P2P 的 RID/SelfContained 传染与 NETSDK1150 校验是 exe 互引结构的硬约束，正解是 IsRidAgnostic + 消费侧豁免，而非逐引用 UndefineProperties 打补丁。
+- 自包含 exe 的发布目录里，框架依赖 apphost 不会 app-local 复用运行时——附带 exe 必须各自自包含或文档化运行时前置。
+
+## 2026-08-19 · PHASE 4 修订轮：双 AI 互审修复 + 发布资产替换
+
+### 交付结论
+
+- **双 AI 互审收口**：两位 Reviewer 独立复审 PHASE 4 交付，无 P0；P1/P2 全部修复并回归：
+  ① OverlayService 重写为打开栈结构（HasOpenOverlays / TryCloseTop / CloseOverlay 返回 bool 并带 GetVisualDescendants 子树兜底；AttachHost 重挂先收尾旧覆盖层 Task——ShowAsync 的 Task 绝不永挂）；
+  ② AvaloniaPermissionDialogPresenter 与 DialogService 的覆盖层路径在 await ShowAsync 之后幂等补结果（返回键关闭 → 诚实拒绝/取消），single-view 无宿主时 [DEGRADED] 降级跳过/按取消，不再误走 Window 路径；
+  ③ Android 返回键：TopLevel.BackRequested 是 Avalonia 11.3+ API，11.2.2 不存在（程序集二进制 grep 零命中）→ 改 MainActivity.OnBackPressed 覆写（CA1422 显式豁免并注释理由：框架默认 OnBackInvokedCallback 仍委托到它，minSdk 26 需覆盖 API 26-32），逐层关覆盖层；
+  ④ MainActivity 补 Name="com.aerocode.app.MainActivity"（与文档 am start 组件名一致）+ 全量 ConfigurationChanges（Activity 重建会撕裂 Avalonia 视图树）；
+  ⑤ AppDataPaths.RootDirectoryOverride 改 set-once（防进程内重入改数据根）；
+  ⑥ RegisterToolboxes 在 single-view 平台跳过 MCP stdio 注册（[DEGRADED] 显式记录，避免阻塞启动线程 ANR）；
+  ⑦ 设置覆盖层重入守卫 + DataContext 换绑先解绑旧 VM；
+  ⑧ App.csproj NETSDK1150 豁免注释改写（旧注释指向已证伪的 app-local hostfxr 路线）；AndroidTargetSdkVersion=35 显式钉住；sln 两处 `Build.0 = ?` 损坏行修复；.gitignore 补 *.apk/*.aab/*.zip。
+- **首发 APK 结构缺陷发现与修正**：Debug 配置 SignAndroidPackage 默认不嵌入托管程序集（EmbedAssembliesIntoApk=False，快速部署语义）——旧 APK 473 条目中无任何程序集条目，真机安装必然启动失败，aapt2 元数据检查发现不了。以 `-p:EmbedAssembliesIntoApk=true` 重打并三重验证：包内 lib_<程序集>.dll.so 与 bin 产物字节级一致（含修复代码符号）、aapt2 badging（minSdk 26 / targetSdk 35 / 双 ABI / launchable-activity 与代码 Name 属性一致）、apksigner（同一 debug 证书 2053dd38…）。体积 19.4MB→126.1MB 是程序集按双 ABI 嵌入的诚实代价。
+- **Release 资产替换**：DELETE 旧资产（ID 518964907 / 518965550）→ 上传重建产物 → Release Notes 更新 SHA256 与替换说明 → **双向端到端验证**（从 Release 回下两份资产，SHA256 与本地逐一相同）。
+- **复验**：全方案 Release 构建 0 错；全量测试重跑 550 总 / 535 过 / 15 网络跳过 / 0 失败；aerocode-mcp.exe 合并产物独立启动（DB 初始化 + stdio transport 完整走通，EXIT=0）。
+
+### 收口数字
+
+新产物：APK 126,104,920 B（SHA256 e13f0ba4…ded48，debug 签名，程序集已嵌入）；win-x64 zip 55,732,120 B / 328 文件（SHA256 0c5bbd84…3598b，自包含 + aerocode-mcp，无 pdb）。仓库含本收尾提交共 7 提交。
+
+### 已知限制（补遗）
+
+- APK 仍为 debug 签名、**未经真机实测**（新包结构上可启动：程序集已嵌入；验收口径 = badging + 嵌入校验）。
+- APK 权限为 INTERNET + 工具链自动添加的 DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION（自定义签名级，targetSdk 34+ 行为，不申请用户资源）。
+- Release 配置默认 AOT 会产 100MB+ 包；本轮按 Debug 族复现基线包，Release 签名 + AOT 流程已文档化待发布需要时执行。
+
+### 教训
+
+- APK 验收不能止于 badging/签名：Debug 快速部署默认不嵌入程序集，该盲区让首发包带着"装不上真机"的缺陷通过了验收——"包内程序集条目检查"从此列为必验项。
+- API 使用前先验证所引版本实际存在（grep 程序集二进制/查 XML 文档），不凭新版本 API 的记忆写代码（TopLevel.BackRequested 属 11.3+，11.2.2 没有）。
+- 复现基线产物必须对齐配置族：Release 默认 AOT 把包从 19MB 涨到 109MB，配置差异靠体积对比才暴露。

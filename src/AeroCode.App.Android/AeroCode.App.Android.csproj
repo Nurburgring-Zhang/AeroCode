@@ -11,6 +11,9 @@
     <ApplicationId>com.aerocode.app</ApplicationId>
     <ApplicationVersion>1</ApplicationVersion>
     <ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion>
+    <!-- 显式钉住目标 SDK：与本机 android-env/sdk 的 platform android-35 / build-tools 35.0.0 对齐，
+         不随 SDK 默认值漂移（CI/新机器复现依赖该钉值）。 -->
+    <AndroidTargetSdkVersion>35</AndroidTargetSdkVersion>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
     <!-- Debug/快速迭代不启用 profiled AOT；release 打包参数见 docs/ANDROID_BUILD.md -->
     <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>

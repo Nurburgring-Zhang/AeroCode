@@ -30,9 +30,13 @@ setx ANDROID_HOME "D:\path\to\sdk"
 dotnet build src/AeroCode.App.Android -c Debug
 
 # Debug + 打包（产出调试签名 APK，日常用这条）
-dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage
+# 注意：Debug 默认走"快速部署"，不嵌入托管程序集——那样的 APK 侧载安装将无法启动。
+# 必须显式 -p:EmbedAssembliesIntoApk=true 才是可安装的完整包。
+dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage -p:EmbedAssembliesIntoApk=true
 
 # Release（未签名包，需第三节的显式签名参数才可安装）
+# Release 默认嵌入程序集，但默认启用 AOT（产物 100MB+）；
+# 不需要 AOT 时加 -p:RunAOTCompilation=false。
 dotnet build src/AeroCode.App.Android -c Release -t:SignAndroidPackage
 ```
 
@@ -48,7 +52,8 @@ dotnet build src/AeroCode.App.Android -c Release -t:SignAndroidPackage
 ### Debug 签名（开发/内测，开箱即用）
 
 ```powershell
-dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage
+# EmbedAssembliesIntoApk=true：Debug 默认不嵌入托管程序集（快速部署），缺了它 APK 装不上真机
+dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage -p:EmbedAssembliesIntoApk=true
 ```
 
 ### Release 签名（对外发布，一次性生成 keystore 后长期复用）
@@ -75,9 +80,16 @@ dotnet build src/AeroCode.App.Android -c Release -t:SignAndroidPackage ^
 ### 产物校验
 
 ```powershell
-"%ANDROID_HOME%\build-tools\35.0.0\aapt2.bat" dump badging <apk路径>
-# 关注：package name=com.aerocode.app / versionName / sdkVersion=26 / targetSdk=35
-#       uses-permission: INTERNET（且仅 INTERNET）
+"%ANDROID_HOME%\build-tools\35.0.0\aapt2.exe" dump badging <apk路径>
+# 关注：package name=com.aerocode.app / versionName / minSdkVersion=26 / targetSdkVersion=35
+#       uses-permission: INTERNET（另含 targetSdk 34+ 工具链自动添加的
+#       <包名>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION——自定义签名级，不申请用户资源）
+#       launchable-activity: com.aerocode.app.MainActivity
+
+# 托管程序集嵌入校验（badging 看不到的盲区）：
+# Debug 快速部署包没有这些条目，侧载安装将无法启动。
+python -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); print(sum(1 for n in z.namelist() if '/lib_' in n and n.endswith('.dll.so')))" <apk路径>
+# 期望输出 > 0（每个 ABI 一份 lib_<程序集>.dll.so）
 ```
 
 ## 四、安装验证

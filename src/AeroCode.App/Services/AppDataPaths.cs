@@ -25,11 +25,26 @@ public class AppDataPaths
     /// <summary>工具授权决策（用户"记住选择"/设置页修改的持久化）。</summary>
     public string PermissionsFile { get; }
 
+    private static string? _rootDirectoryOverride;
+
     /// <summary>
     /// 平台数据根覆盖：Android 头项目在应用服务构建前设置为 app 私有内部存储路径
     /// （Context.FilesDir/AeroCode，免任何存储权限）。null = 走默认 LocalApplicationData。
+    /// set-once 语义：一经设置，后续写入忽略——防止进程内重入（Activity 重建、
+    /// AppBuilder 二次构造）把数据根改到别处造成双根分裂。
     /// </summary>
-    public static string? RootDirectoryOverride { get; set; }
+    public static string? RootDirectoryOverride
+    {
+        get => _rootDirectoryOverride;
+        set
+        {
+            if (_rootDirectoryOverride is not null)
+            {
+                return;
+            }
+            _rootDirectoryOverride = value;
+        }
+    }
 
     public AppDataPaths()
         : this(RootDirectoryOverride

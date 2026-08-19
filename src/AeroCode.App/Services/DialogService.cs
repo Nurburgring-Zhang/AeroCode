@@ -37,7 +37,18 @@ public class DialogService : IDialogService
                 tcs.TrySetResult();
             };
             await overlay.ShowAsync(card);
+            // ShowAsync 返回 = 覆盖层已移除（含系统返回键直接关闭）：
+            // 幂等补齐结果，避免 tcs.Task 永挂。
+            tcs.TrySetResult();
             await tcs.Task;
+            return;
+        }
+
+        if (IsSingleViewLifetime())
+        {
+            // [DEGRADED] single-view 生命周期但覆盖层宿主未挂载（MainView 尚未加载完成）：
+            // 无 Window 可用，降级跳过弹窗，不让主流程崩溃。
+            Console.Error.WriteLine($"[DEGRADED] ShowMessageAsync 无可用呈现路径，跳过: {title} - {message}");
             return;
         }
 
@@ -91,7 +102,18 @@ public class DialogService : IDialogService
                 tcs.TrySetResult(false);
             };
             await overlay.ShowAsync(card);
+            // ShowAsync 返回 = 覆盖层已移除（含系统返回键直接关闭）：
+            // 幂等补齐结果（无明确确认 → false），避免 tcs.Task 永挂。
+            tcs.TrySetResult(false);
             return await tcs.Task;
+        }
+
+        if (IsSingleViewLifetime())
+        {
+            // [DEGRADED] single-view 生命周期但覆盖层宿主未挂载：
+            // 无 Window 可用，降级按"取消"处理（不做破坏性默认确认）。
+            Console.Error.WriteLine($"[DEGRADED] ConfirmAsync 无可用呈现路径，按取消处理: {title} - {message}");
+            return false;
         }
 
         bool result = false;
@@ -159,6 +181,10 @@ public class DialogService : IDialogService
         owner = lifetime?.MainWindow!;
         return owner is not null;
     }
+
+    /// <summary>是否运行在无 Window 的 single-view 生命周期（Android）。</summary>
+    private static bool IsSingleViewLifetime()
+        => Avalonia.Application.Current?.ApplicationLifetime is ISingleViewApplicationLifetime;
 
     /// <summary>仅当运行在无 Window 的 single-view 生命周期且覆盖层宿主已挂载时返回 true。</summary>
     private static bool TryGetOverlay(out OverlayService overlay)

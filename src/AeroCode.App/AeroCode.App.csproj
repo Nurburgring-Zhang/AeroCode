@@ -15,9 +15,11 @@
     <IsRidAgnostic>true</IsRidAgnostic>
     <!-- NETSDK1150 豁免：自包含 publish（指定 RID win-x64 与 self contained）时，
          IsRidAgnostic 的 AeroCode.Mcp 按非自包含 portable 编译，
-         SDK 校验「自包含 exe 不得引用非自包含 exe」。本工程只把 Mcp
-         当库消费并将其 portable 输出复制进发布目录（app-local hostfxr
-         可复用同目录运行时），与 SDK 对测试项目的豁免同理。 -->
+         SDK 校验「自包含 exe 不得引用非自包含 exe」。本工程只把 Mcp 当库消费，
+         其可执行产物另行单独 publish（自包含 win-x64）后合并进发布目录——
+         已实测证伪 app-local hostfxr 复用同目录运行时的路线
+         （框架依赖 apphost 报 "You must install or update .NET"，EXIT=150），
+         故 Mcp sidecar 必须自身自包含。完整推导见 docs/ANDROID_BUILD.md §六。 -->
     <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <ApplicationTitle>AeroCode</ApplicationTitle>
     <ApplicationId>com.AeroCode.app</ApplicationId>

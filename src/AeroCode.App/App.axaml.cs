@@ -352,6 +352,21 @@ public partial class App : Application
             permission.SetDefaultDecision(def.Name, PermissionDecision.Allow);
         }
 
+        // single-view 生命周期（Android）：MCP 的 stdio 传输依赖启动桌面式子进程，
+        // Android 上不可用；且 DiscoverAsync().GetAwaiter().GetResult() 阻塞启动线程
+        // 会造成 ANR。→ 跳过 MCP 工具箱注册，内建笔记/技能工具箱不受影响，
+        // 有启用配置时如实降级记录（绝不静默）。
+        if (Application.Current?.ApplicationLifetime is ISingleViewApplicationLifetime)
+        {
+            if (settings.Current.McpServers.Any(c => c.Enabled))
+            {
+                logger.LogWarning(
+                    "[DEGRADED] Android（single-view）平台不支持 stdio 子进程 MCP 传输，已跳过 {Count} 个 MCP 服务器注册",
+                    settings.Current.McpServers.Count(c => c.Enabled));
+            }
+            return;
+        }
+
         var mcpConfigs = settings.Current.McpServers.Where(c => c.Enabled).ToList();
         if (mcpConfigs.Count == 0)
         {

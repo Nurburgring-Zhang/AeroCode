@@ -103,6 +103,11 @@ public sealed class AvaloniaPermissionDialogPresenter : IPermissionDialogPresent
             try
             {
                 await overlay.ShowAsync(card);
+                // ShowAsync 返回 = 覆盖层已移除（含系统返回键经 TryCloseTop 关闭、
+                // 未经过 view.Completed 的情况）。此时若视图尚未产生决定，
+                // 补 null → broker 按拒绝收尾，避免 Task 永挂。
+                // TrySetResult 幂等：用户已作出决定时此调用为 no-op。
+                resultTcs.TrySetResult(null);
                 return await resultTcs.Task;
             }
             catch (InvalidOperationException)

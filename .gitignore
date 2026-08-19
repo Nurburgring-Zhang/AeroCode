@@ -40,3 +40,8 @@ logs/
 *.pem
 *.p12
 *.pfx
+
+# Packaging artifacts（发布包走 GitHub Releases，不入库）
+*.apk
+*.aab
+*.zip

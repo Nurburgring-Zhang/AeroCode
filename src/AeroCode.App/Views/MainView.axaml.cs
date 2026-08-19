@@ -19,6 +19,7 @@ public partial class MainView : UserControl
     private static readonly SolidColorBrush CardBorder = new(Color.FromRgb(0x2A, 0x31, 0x42));
 
     private MainWindowViewModel? _vm;
+    private bool _settingsOpen;
 
     public MainView()
     {
@@ -42,6 +43,11 @@ public partial class MainView : UserControl
     {
         if (DataContext is MainWindowViewModel vm)
         {
+            // Activity 重建等场景可能换绑新 VM：先解绑旧的，避免双订阅。
+            if (_vm is not null && !ReferenceEquals(_vm, vm))
+            {
+                _vm.PropertyChanged -= OnVmPropertyChanged;
+            }
             _vm = vm;
             vm.PropertyChanged += OnVmPropertyChanged;
             await vm.InitializeAsync();
@@ -70,6 +76,13 @@ public partial class MainView : UserControl
 
     private async void OnOpenSettingsClick(object? sender, RoutedEventArgs e)
     {
+        // 重入守卫：Android 覆盖层路径非模态，快速连点会叠加两个共享单例
+        // SettingsViewModel 的设置层（RefreshFromSources 将重置编辑快照）。
+        if (_settingsOpen)
+        {
+            return;
+        }
+        _settingsOpen = true;
         try
         {
             var sp = App.Services;
@@ -112,6 +125,10 @@ public partial class MainView : UserControl
         catch (Exception ex)
         {
             Console.Error.WriteLine($"OpenSettings failed: {ex}");
+        }
+        finally
+        {
+            _settingsOpen = false;
         }
     }
 
