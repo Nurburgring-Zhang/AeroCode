@@ -210,10 +210,11 @@ S10 不做新功能，只做质量收口：全量重建双轮绿 + 零虚假 gre
 - **首发 APK 结构缺陷发现与修正**：Debug 配置 SignAndroidPackage 默认不嵌入托管程序集（EmbedAssembliesIntoApk=False，快速部署语义）——旧 APK 473 条目中无任何程序集条目，真机安装必然启动失败，aapt2 元数据检查发现不了。以 `-p:EmbedAssembliesIntoApk=true` 重打并三重验证：包内 lib_<程序集>.dll.so 与 bin 产物字节级一致（含修复代码符号）、aapt2 badging（minSdk 26 / targetSdk 35 / 双 ABI / launchable-activity 与代码 Name 属性一致）、apksigner（同一 debug 证书 2053dd38…）。体积 19.4MB→126.1MB 是程序集按双 ABI 嵌入的诚实代价。
 - **Release 资产替换**：DELETE 旧资产（ID 518964907 / 518965550）→ 上传重建产物 → Release Notes 更新 SHA256 与替换说明 → **双向端到端验证**（从 Release 回下两份资产，SHA256 与本地逐一相同）。
 - **复验**：全方案 Release 构建 0 错；全量测试重跑 550 总 / 535 过 / 15 网络跳过 / 0 失败；aerocode-mcp.exe 合并产物独立启动（DB 初始化 + stdio transport 完整走通，EXIT=0）。
+- **终审批修（第 8 提交，纯文档/注释，不改产物二进制）**：独立 Reviewer 终审（下载-哈希-解包-badging 四重核验资产、逐项核对 13 文件修复、脱敏抽查）结论无 P0，批修其 1 P1 + 2 P2：① README Android 构建命令补 `-p:EmbedAssembliesIntoApk=true`（否则照抄会打出装不上真机的包）；② README MOA 能力表"三策略"更正为实际注册的 Single/Router/Decompose/Ensemble/Pipeline 五策略；③ OverlayService.TryCloseTop 防御分支注释改写（旧注释声称该分支"让 Task 完成"与实现不符——按簿记不变式该分支不可达，注释如实说明）。
 
 ### 收口数字
 
-新产物：APK 126,104,920 B（SHA256 e13f0ba4…ded48，debug 签名，程序集已嵌入）；win-x64 zip 55,732,120 B / 328 文件（SHA256 0c5bbd84…3598b，自包含 + aerocode-mcp，无 pdb）。仓库含本收尾提交共 7 提交。
+新产物：APK 126,104,920 B（SHA256 e13f0ba4…ded48，debug 签名，程序集已嵌入）；win-x64 zip 55,732,120 B / 328 文件（SHA256 0c5bbd84…3598b，自包含 + aerocode-mcp，无 pdb）。仓库含终审批修提交共 8 提交（第 8 提交为纯文档/注释，资产二进制不变）。
 
 ### 已知限制（补遗）
 

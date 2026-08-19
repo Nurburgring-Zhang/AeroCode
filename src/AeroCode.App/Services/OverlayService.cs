@@ -122,7 +122,9 @@ public sealed class OverlayService
             remove();
             return true;
         }
-        // 簿记不一致的防御性清理：直接从宿主摘除并让对应 Task 完成。
+        // 簿记不变式防御：_open 与 _removers 在本类所有路径成对更新，
+        // 正常流程此分支不可达。万一触发（未来改动破坏不变式），只能从宿主摘除，
+        // 对应 ShowAsync 的 Task 无法在此收尾——故改动簿记结构必须保持两者同步。
         _open.RemoveAt(_open.Count - 1);
         _host?.Children.Remove(top);
         return true;

@@ -13,7 +13,7 @@
 | 📚 多级笔记本 / 🏷️ 标签 / 🔍 全文搜索 / 📌 置顶 / 🗑️ 软删除 | EF Core + SQLite，全部真实持久化 |
 | 🤖 AI 助手 | 多 Provider（OpenAI 兼容 / Anthropic Messages）、流式、深度思考档 |
 | 💬 统一对话 | 会话历史持久化（SQLite）、token 用量统计 |
-| 🧬 MOA 多模型编排 | Single / Decompose / Ensemble 三策略 + 模型画像 + 真实成本核算（未知不估算） |
+| 🧬 MOA 多模型编排 | Single / Router / Decompose / Ensemble / Pipeline 五策略 + 模型画像 + 真实成本核算（未知不估算） |
 | 🧰 工具系统 | 笔记工具箱（12 工具）+ Skills + MCP 外部进程工具 |
 | 🔐 工具权限 | 允许 / 拒绝 / 每次询问 + 危险模式探测不降级，持久化 permissions.json |
 | 🧠 Memory | 长期记忆存取 + 容量上限治理 |
@@ -56,7 +56,8 @@ dotnet run --project src/AeroCode.App    # 运行 Windows 桌面
 Android 头项目构建 / APK 打包 / 签名（需 android workload + JDK 17 + SDK 35）：
 
 ```powershell
-dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage
+# EmbedAssembliesIntoApk=true 必带：Debug 默认"快速部署"不嵌入托管程序集，缺了它 APK 装不上真机
+dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage -p:EmbedAssembliesIntoApk=true
 # 产物：src/AeroCode.App.Android/bin/Debug/net9.0-android/com.aerocode.app-Signed.apk
 ```
 
