@@ -153,7 +153,8 @@ public sealed class LoopRunner
                         next = await Strategies[idx](iter.Error!, history, ct);
                         if (next is not null) { appliedStrategy = $"#{idx}"; break; }
                     }
-                    catch { /* try next strategy */ }
+                    catch (OperationCanceledException) { throw; } // 取消如实上抛，绝不吞没
+                    catch { /* 单个修复策略失败被隔离，尝试下一个策略 */ }
                 }
                 iter.RepairApplied = appliedStrategy;
                 if (next is null)
@@ -161,8 +162,8 @@ public sealed class LoopRunner
                     return new LoopResult(false, history, $"Exhausted {Strategies.Count} repair strategies after {i + 1} iter", startedAt, cacheHits, cacheMisses);
                 }
             }
-            // No strategies → repeat the same step on the next iteration (mirrors "max iter without strategies").
-            current = next;
+            // No strategies (or none produced a replacement) → retry the SAME step next iteration.
+            current = next ?? current;
         }
         return new LoopResult(false, history, $"Hit max iterations ({MaxIterations}) without success", startedAt, cacheHits, cacheMisses);
     }
@@ -174,32 +175,4 @@ public sealed class LoopRunner
     }
 
     public CacheStats? CacheStats() => Cache?.Stats();
-}
-
-/// <summary>Built-in repair strategies (mirroring common patterns).</summary>
-public static class BuiltInRepairs
-{
-    /// <summary>Wait and retry (backoff). Useful for transient 5xx/429.</summary>
-    public static RepairStrategy BackoffRetry(TimeSpan delay, int maxAttempts)
-    {
-        var counter = 0;
-        return async (err, hist, ct) =>
-        {
-            if (counter >= maxAttempts) return null;
-            counter++;
-            await Task.Delay(delay, ct);
-            return ct2 => Task.FromResult<string?>(null); // signal: try the same step again
-        };
-    }
-
-    /// <summary>Strip transient wrapping (e.g. extra quotes) and return a no-op pass.
-    /// Real repair would actually mutate input — for now, the next attempt should re-derive.</summary>
-    public static RepairStrategy Annotate(string annotation)
-    {
-        return (err, hist, ct) =>
-        {
-            err = $"[{annotation}] {err}";
-            return Task.FromResult<StepAttempt?>(null); // doesn't actually produce a new attempt
-        };
-    }
 }

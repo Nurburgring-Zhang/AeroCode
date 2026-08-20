@@ -95,13 +95,31 @@ public sealed class SkillPatcher
     private static string Truncate(string s, int max)
         => s.Length <= max ? s : s.Substring(0, max - 3) + "...";
 
+    /// <summary>
+    /// Bump the minor segment of a semantic-ish version string (real increment, not a label).
+    /// "1.2.3" → "1.3.0"; "1.2" → "1.3"; single-segment or non-numeric input
+    /// conservatively gains a ".1" suffix (never loses information).
+    /// </summary>
+    public static string IncrementMinor(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return "0.1";
+        var parts = version.Trim().Split('.');
+        if (parts.Length >= 2 && int.TryParse(parts[0], out var major) && int.TryParse(parts[1], out var minor))
+        {
+            // Reset patch-level segments to 0 on a minor bump ("1.2.3" → "1.3.0").
+            var tail = parts.Length > 2 ? "." + string.Join('.', Enumerable.Repeat("0", parts.Length - 2)) : string.Empty;
+            return $"{major}.{minor + 1}{tail}";
+        }
+        return version.Trim() + ".1";
+    }
+
     private static string Serialize(Skill skill, string newBody)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("---");
         sb.AppendLine($"name: {skill.Name}");
         sb.AppendLine($"description: {skill.Description}");
-        sb.AppendLine($"version: IncrementMinor(skill.Version)");
+        sb.AppendLine($"version: {IncrementMinor(skill.Version)}");
         sb.AppendLine($"author: {skill.Author}");
         sb.AppendLine($"license: {skill.License}");
         if (skill.Tags.Count > 0)

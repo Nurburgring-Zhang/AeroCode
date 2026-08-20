@@ -27,7 +27,7 @@ public sealed class RoslynAnalyzerSkill : ISkill
 {
     public string Id => "analysis/roslyn";
     public string Name => "Roslyn Analyzer (real AST)";
-    public string Description => "真 Roslyn 静态分析: 解析 SyntaxTree + SemanticModel 拿真诊断, 5 条内置规则 (空 catch / NotImplemented / 大方法 / 长参数列表 / async void)";
+    public string Description => "真Roslyn静态分析:AST诊断+5条内置规则";
     public string Category => "analysis";
     public string Author => "AeroCode Team (human first, Hermes rule)";
     public string Version => "1.0.0";

@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\AeroCode.Mcp\AeroCode.Mcp.csproj" />
     <ProjectReference Include="..\..\src\AeroAgent.Conversation\AeroAgent.Conversation.csproj" />
     <ProjectReference Include="..\..\src\AeroAgent.Moa\AeroAgent.Moa.csproj" />
+    <ProjectReference Include="..\..\src\AeroAgent.Autonomy\AeroAgent.Autonomy.csproj" />
   </ItemGroup>
 
 </Project>

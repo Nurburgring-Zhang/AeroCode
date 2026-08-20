@@ -85,3 +85,19 @@
 - 构建纪律：Win 与 Android 构建**串行**；所有长命令输出落盘 txt 再核实。
 - 单文件不超 50KB，组件职责单一；新增测试与实现同提交。
 - 每 Phase 提交前：`grep -ri "stub\|mock\|placeholder\|TODO\|FIXME" src/` 生产代码零命中（测试工程豁免但须为合法双替身）。
+
+---
+
+## 第三部分：PHASE 5 完成状态（2026-08-20 登记）
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| P5-T1 自主内核 | ✅ 完成 | src/AeroAgent.Autonomy（19 生产文件）；状态机 E2E 落库测试；Autonomy 测试 67 例 |
+| P5-T2 Harness 接线 | ✅ 完成 | EngineeringLoop/QualityGate/DualAiArena/BlockadeResolver；死代码 LoopRunner/CreateAgent/PatchEngine/PluginLoader 全部接线；BuiltInRepairs 移除（语义缺陷）；Harness 新增测试 45 例 |
+| P5-T3 真实全网检索 | ✅ 完成 | Research 契约+3 provider+AcquireDeploy+13 技能注册+websearch 模式；SkillPatcher G11 修复；Skills 新增测试 79 例 |
+| 双 AI 对抗审查 | ✅ 闭环 | R1/R2 独立审查 PASS_WITH_FINDINGS；6 项 P1 全部修复并补回归测试 |
+| 全量测试 | ✅ 748 例 730 过/0 败/18 跳过 | 跳过全部为网络/环境门控（AEROCODE_RUN_NETWORK_TESTS 约定） |
+| Release 构建 | ✅ Win+Android 串行 | logs-release-build3.txt |
+
+遗留（如实）：构建机 IP 被 DDG 反爬质询拦截（配 BING/TAVILY key 即恢复）；PlanToGraphAsync 待 P6 编排器接线；App 组合根接线属 P8-1。
+

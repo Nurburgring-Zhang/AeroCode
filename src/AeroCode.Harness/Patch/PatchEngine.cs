@@ -164,10 +164,22 @@ public sealed class PatchEngine
         var skipped = 0;
         string? lastNewContent = null;
 
+        // Sandbox guard up front: every patch path must resolve INSIDE rootDir.
+        // Absolute paths escaping the root and ".." traversal are rejected outright.
+        foreach (var (relPath, _) in patches)
+        {
+            if (!TryResolveInsideRoot(rootDir, relPath, out _))
+            {
+                return new PatchResult(0, 0, patches.Count,
+                    new[] { $"Patch path escapes the working directory (sandbox violation): {relPath}" }, null);
+            }
+        }
+
         // Validate batch size (Google Small CLs).
         var totalLines = patches.Sum(p =>
         {
-            var content = ReadFile(Path.Combine(rootDir, p.path));
+            TryResolveInsideRoot(rootDir, p.path, out var resolved);
+            var content = ReadFile(resolved);
             return content?.Split('\n').Length ?? 0;
         });
         var (sizeOk, sizeReason) = ValidateSize("batch", totalLines, patches.Count);
@@ -178,7 +190,12 @@ public sealed class PatchEngine
         {
             foreach (var (relPath, patch) in patches)
             {
-                var absPath = Path.Combine(rootDir, relPath);
+                if (!TryResolveInsideRoot(rootDir, relPath, out var absPath))
+                {
+                    errors.Add($"Sandbox violation: {relPath}");
+                    failed++;
+                    continue;
+                }
                 var original = ReadFile(absPath);
                 if (original is null)
                 {
@@ -218,6 +235,34 @@ public sealed class PatchEngine
         }
 
         return new PatchResult(applied, failed, skipped, errors, lastNewContent);
+    }
+
+    /// <summary>
+    /// Resolve a patch path against the root directory, refusing any escape:
+    /// absolute paths outside the root and ".." traversal both return false.
+    /// </summary>
+    public static bool TryResolveInsideRoot(string rootDir, string patchPath, out string absolutePath)
+    {
+        absolutePath = string.Empty;
+        if (string.IsNullOrWhiteSpace(patchPath)) return false;
+
+        var fullRoot = Path.GetFullPath(rootDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                       + Path.DirectorySeparatorChar;
+        string candidate;
+        try
+        {
+            candidate = Path.GetFullPath(Path.IsPathRooted(patchPath)
+                ? patchPath
+                : Path.Combine(rootDir, patchPath));
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (!candidate.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) return false;
+        absolutePath = candidate;
+        return true;
     }
 
     private static string? ReadFile(string path)

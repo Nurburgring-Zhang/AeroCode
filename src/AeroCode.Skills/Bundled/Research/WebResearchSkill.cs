@@ -1,8 +1,10 @@
-// Copyright (c) AeroCode V3.0
+// Copyright (c) AeroCode V3.0 / V3.3
 // WebResearchSkill — deep web research + scraping + structured extraction.
 // Real HTTP via HttpClient + HTML parsing via HtmlAgilityPack. No mocks.
 //
 // Operations (selected via `mode` arg):
+//   websearch   — REAL open-web search via SearchService (DuckDuckGo HTML key-free;
+//                 Bing/Tavily when keys configured), then fetch top-N pages → findings
 //   fetch       — single URL → cleaned text
 //   search      — find links matching query in base_url, fetch top-1
 //   crawl       — fetch URL + follow N internal links, all in parallel
@@ -18,6 +20,8 @@
 //   max_chars=<int>            default 8000
 //   max_concurrency=<int>      default 4
 //   max_pages=<int>            default 10 (for crawl/sitemap)
+//   max_results=<int>          default 5 (websearch hits)
+//   fetch_top=<int>            default 2 (websearch pages fetched in full)
 //   respect_robots=<bool>      default true
 //   user_agent=<str>           default "AeroCode-WebResearch/1.0"
 using System;
@@ -33,6 +37,7 @@ using System.Web;
 using System.Xml;
 using AeroCode.Skills.Models;
 using AeroCode.Skills.Registry;
+using AeroCode.Skills.Research;
 using HtmlAgilityPack;
 
 namespace AeroCode.Skills.Bundled.Research;
@@ -41,16 +46,25 @@ public sealed class WebResearchSkill : ISkill
 {
     public string Id => "research/web_research";
     public string Name => "Web Research";
-    public string Description => "深度 web 检索 + 抓取 + 结构化提取 (JSON-LD/微数据/sitemap/robots/并发爬取)";
+    public string Description => "深度web检索+抓取+结构化提取(全网搜索/crawl/sitemap)";
     public string Category => "research";
     public string Author => "AeroCode Team (human first, Hermes rule)";
-    public string Version => "2.0.0";
-    public IReadOnlyList<string> Tags => new[] { "web", "http", "scrape", "research", "sitemap", "json-ld" };
+    public string Version => "2.1.0";
+    public IReadOnlyList<string> Tags => new[] { "web", "http", "scrape", "research", "search", "sitemap", "json-ld" };
     public bool IsAvailable() => true;
 
+    private readonly SearchService _searchService;
+
+    /// <summary>Create the skill. The search backend defaults to the environment-configured stack.</summary>
+    public WebResearchSkill(SearchService? searchService = null)
+    {
+        _searchService = searchService ?? SearchService.CreateDefault();
+    }
+
     public string GetSystemPrompt() =>
-        "# Web Research Skill v2 (deep)\n" +
+        "# Web Research Skill v2.1 (deep + real open-web search)\n" +
         "Real HTTP scraping + structured extraction. Operations:\n" +
+        "  mode=websearch query=<kw> max_results=<N> fetch_top=<M>  # REAL search-engine query → fetch top pages → findings\n" +
         "  mode=fetch url=<url>               # single URL → cleaned text\n" +
         "  mode=search base_url=<page> query=<kw>  # find link, fetch top-1\n" +
         "  mode=crawl url=<root> max_pages=<N> max_concurrency=<C>   # follow internal links\n" +
@@ -59,7 +73,8 @@ public sealed class WebResearchSkill : ISkill
         "  mode=structured url=<url>          # extract JSON-LD / microdata / OpenGraph\n" +
         "  mode=summary url=<url> sentences=<N>  # quick top-N sentence summary\n" +
         "Other args: max_chars, user_agent, respect_robots\n" +
-        "Always cite source URLs. Be respectful: respect_robots=true is the default.";
+        "Always cite source URLs. Be respectful: respect_robots=true is the default.\n" +
+        "websearch backends: DuckDuckGo HTML (key-free); Bing/Tavily only when API keys are configured.";
 
     private static readonly HttpClient SharedHttp = new()
     {
@@ -84,25 +99,29 @@ public sealed class WebResearchSkill : ISkill
         var query = args.TryGetValue("query", out var q) ? q as string : null;
         var baseUrl = args.TryGetValue("base_url", out var bu) ? bu as string : null;
 
-        // Override User-Agent for this call
-        var prevUA = SharedHttp.DefaultRequestHeaders.UserAgent.ToString();
+        // Per-call client: the shared instance keeps the default UA; a custom UA gets a
+        // dedicated client for this call only (no shared-header mutation → no races).
+        HttpClient? ownedHttp = null;
+        var http = SharedHttp;
+        if (userAgent != "AeroCode-WebResearch/2.0")
+        {
+            ownedHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            ownedHttp.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+            http = ownedHttp;
+        }
+
         try
         {
-            if (prevUA != userAgent)
-            {
-                SharedHttp.DefaultRequestHeaders.UserAgent.Clear();
-                SharedHttp.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
-            }
-
             return mode switch
             {
-                "fetch" => await Single(url, maxChars, respectRobots, ct),
-                "search" => await Search(baseUrl, query, maxChars, respectRobots, ct),
-                "crawl" => await CrawlAsync(url, maxPages, maxConcurrency, maxChars, respectRobots, ct),
-                "sitemap" => await SitemapAsync(url, maxPages, maxConcurrency, maxChars, respectRobots, ct),
-                "robots" => Robots(url),
-                "structured" => await StructuredAsync(url, maxChars, respectRobots, ct),
-                "summary" => await SummaryAsync(url, args, maxChars, respectRobots, ct),
+                "websearch" => await WebSearchAsync(query, args, maxChars, respectRobots, ct),
+                "fetch" => await Single(http, url, maxChars, respectRobots, ct),
+                "search" => await Search(http, baseUrl, query, maxChars, respectRobots, ct),
+                "crawl" => await CrawlAsync(http, url, maxPages, maxConcurrency, maxChars, respectRobots, ct),
+                "sitemap" => await SitemapAsync(http, url, maxPages, maxConcurrency, maxChars, respectRobots, ct),
+                "robots" => await RobotsAsync(http, url, ct),
+                "structured" => await StructuredAsync(http, url, maxChars, respectRobots, ct),
+                "summary" => await SummaryAsync(http, url, args, maxChars, respectRobots, ct),
                 _ => new SkillResult { Success = false, Text = $"Unknown mode: {mode}" }
             };
         }
@@ -112,33 +131,83 @@ public sealed class WebResearchSkill : ISkill
         }
         finally
         {
-            if (prevUA != userAgent)
-            {
-                SharedHttp.DefaultRequestHeaders.UserAgent.Clear();
-                SharedHttp.DefaultRequestHeaders.UserAgent.ParseAdd(prevUA);
-            }
+            ownedHttp?.Dispose();
         }
     }
 
     // ============== ops ===============
 
-    private static async Task<SkillResult> Single(string? url, int maxChars, bool respectRobots, CancellationToken ct)
+    /// <summary>
+    /// Real open-web search: query the configured search backends, then fetch the top
+    /// pages and return structured findings with citations. Empty results are reported
+    /// honestly (e.g. bot-challenge or no backend available) — never fabricated.
+    /// </summary>
+    private async Task<SkillResult> WebSearchAsync(string? query, IReadOnlyDictionary<string, object?> args, int maxChars, bool respectRobots, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return new SkillResult { Success = false, Text = "websearch 模式需要 'query' 参数" };
+        var maxResults = args.TryGetValue("max_results", out var mr) && mr is not null ? Math.Max(1, Convert.ToInt32(mr)) : 5;
+        var fetchTop = args.TryGetValue("fetch_top", out var ft) && ft is not null ? Math.Max(0, Convert.ToInt32(ft)) : 2;
+
+        var hits = await _searchService.SearchAsync(query, maxResults, ct);
+        if (hits.Count == 0)
+        {
+            return new SkillResult
+            {
+                Success = false,
+                Text = $"全网搜索无结果（query=\"{query}\"）。可能原因：搜索后端被反爬质询拦截、网络受限或无可用 provider。未伪造任何结果。"
+            };
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# 全网搜索: \"{query}\" ({hits.Count} 条真实结果)");
+        sb.AppendLine();
+        var fetched = 0;
+        foreach (var hit in hits)
+        {
+            sb.AppendLine($"## {hit.Title}");
+            sb.AppendLine($"- URL: {hit.Url}");
+            sb.AppendLine($"- Source: {hit.Source}");
+            if (!string.IsNullOrWhiteSpace(hit.Snippet))
+                sb.AppendLine($"- Snippet: {hit.Snippet}");
+
+            if (fetched < fetchTop && IsAllowed(hit.Url, respectRobots))
+            {
+                try
+                {
+                    var text = await FetchAndExtractAsync(SharedHttp, hit.Url, ct);
+                    sb.AppendLine("- 正文摘录:");
+                    sb.AppendLine(Truncate(text, Math.Max(500, maxChars / Math.Max(1, fetchTop))));
+                    fetched++;
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"- 正文抓取失败（如实记录）: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+            sb.AppendLine();
+        }
+        return new SkillResult { Success = true, Text = Truncate(sb.ToString(), maxChars * 2), Data = hits };
+    }
+
+
+    private static async Task<SkillResult> Single(HttpClient http, string? url, int maxChars, bool respectRobots, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(url)) return new SkillResult { Success = false, Text = "需要 'url' 参数" };
         if (!IsAllowed(url, respectRobots)) return new SkillResult { Success = false, Text = $"Disallowed by robots.txt: {url}" };
-        var text = await FetchAndExtractAsync(url, ct);
+        var text = await FetchAndExtractAsync(http, url, ct);
         return new SkillResult { Success = true, Text = $"# {url}\n\n{Truncate(text, maxChars)}" };
     }
 
-    private static async Task<SkillResult> Search(string? baseUrl, string? query, int maxChars, bool respectRobots, CancellationToken ct)
+    private static async Task<SkillResult> Search(HttpClient http, string? baseUrl, string? query, int maxChars, bool respectRobots, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(query))
             return new SkillResult { Success = false, Text = "search 模式需要 base_url + query" };
-        var links = await FindLinksAsync(baseUrl!, query, respectRobots, ct);
+        var links = await FindLinksAsync(http, baseUrl!, query, respectRobots, ct);
         if (links.Count == 0)
             return new SkillResult { Success = false, Text = $"在 {baseUrl} 中未找到含 \"{query}\" 的链接" };
         var first = links[0];
-        var text = await FetchAndExtractAsync(first, ct);
+        var text = await FetchAndExtractAsync(http, first, ct);
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"# 搜索结果: 在 {baseUrl} 中找到 {links.Count} 个匹配链接");
         sb.AppendLine($"## 主结果: {first}");
@@ -153,61 +222,48 @@ public sealed class WebResearchSkill : ISkill
         return new SkillResult { Success = true, Text = sb.ToString() };
     }
 
-    private static async Task<SkillResult> CrawlAsync(string? root, int maxPages, int maxConcurrency, int maxChars, bool respectRobots, CancellationToken ct)
+    private static async Task<SkillResult> CrawlAsync(HttpClient http, string? root, int maxPages, int maxConcurrency, int maxChars, bool respectRobots, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(root)) return new SkillResult { Success = false, Text = "crawl 模式需要 url=<root>" };
         if (!IsAllowed(root, respectRobots)) return new SkillResult { Success = false, Text = $"Disallowed by robots.txt: {root}" };
         Uri.TryCreate(root, UriKind.Absolute, out var rootUri);
         if (rootUri is null) return new SkillResult { Success = false, Text = "Invalid URL" };
 
-        var seen = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
-        var queue = new ConcurrentQueue<string>();
-        queue.Enqueue(root);
-        seen[root] = 1;
-
+        // Level-synchronous BFS: fetch the current frontier concurrently, collect newly
+        // discovered same-origin links at the end of each level, then descend. The old
+        // queue-loop exited the moment the queue was transiently empty (depth stuck at 1).
+        var seen = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase) { [root] = 1 };
         var results = new ConcurrentBag<(string url, string text)>();
-        var sem = new SemaphoreSlim(maxConcurrency);
+        var frontier = new List<string> { root };
+        var sem = new SemaphoreSlim(Math.Max(1, maxConcurrency));
 
-        var tasks = new List<Task>();
-        while (!queue.IsEmpty && results.Count < maxPages)
+        while (frontier.Count > 0 && results.Count < maxPages)
         {
-            if (!queue.TryDequeue(out var current)) break;
-            if (!IsAllowed(current, respectRobots)) continue;
-            await sem.WaitAsync(ct);
-            var t = Task.Run(async () =>
+            ct.ThrowIfCancellationRequested();
+            var batch = frontier.Take(maxPages - results.Count).ToList();
+            frontier.Clear();
+
+            var tasks = batch.Select(async url =>
             {
+                if (!IsAllowed(url, respectRobots)) return new List<string>();
+                await sem.WaitAsync(ct);
                 try
                 {
-                    var html = await SharedHttp.GetStringAsync(current, ct);
-                    var text = ExtractText(html);
-                    results.Add((current, text));
-                    if (results.Count >= maxPages) return;
-                    // Enqueue internal links (BFS)
-                    var doc = new HtmlDocument();
-                    doc.LoadHtml(html);
-                    foreach (var a in doc.DocumentNode.SelectNodes("//a[@href]") ?? Enumerable.Empty<HtmlNode>())
-                    {
-                        if (results.Count >= maxPages) return;
-                        var href = a.GetAttributeValue("href", "");
-                        if (string.IsNullOrEmpty(href) || href.StartsWith("#") || href.StartsWith("javascript:")) continue;
-                        string? abs = null;
-                        if (Uri.TryCreate(href, UriKind.Absolute, out var absUri)) abs = absUri.ToString();
-                        else if (Uri.TryCreate(rootUri, href, out var rel)) abs = rel.ToString();
-                        if (abs is null) continue;
-                        // Only same-origin (internal) crawl
-                        if (abs.StartsWith(rootUri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase) &&
-                            seen.TryAdd(abs, 1))
-                        {
-                            queue.Enqueue(abs);
-                        }
-                    }
+                    var html = await http.GetStringAsync(url, ct);
+                    results.Add((url, ExtractText(html)));
+                    return ExtractInternalLinks(html, rootUri, seen);
                 }
-                catch { /* skip broken links */ }
+                catch (Exception) { return new List<string>(); } // skip broken links
                 finally { sem.Release(); }
-            }, ct);
-            tasks.Add(t);
+            }).ToList();
+
+            var linkSets = await Task.WhenAll(tasks);
+            foreach (var links in linkSets)
+            {
+                if (results.Count >= maxPages) break;
+                frontier.AddRange(links);
+            }
         }
-        await Task.WhenAll(tasks);
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"# Crawl of {root} ({results.Count} pages, max_concurrency={maxConcurrency})");
@@ -220,10 +276,33 @@ public sealed class WebResearchSkill : ISkill
         return new SkillResult { Success = true, Text = sb.ToString() };
     }
 
-    private static async Task<SkillResult> SitemapAsync(string? sitemapUrl, int maxPages, int maxConcurrency, int maxChars, bool respectRobots, CancellationToken ct)
+    /// <summary>Extract same-origin links not yet seen (atomic mark via TryAdd).</summary>
+    private static List<string> ExtractInternalLinks(string html, Uri rootUri, ConcurrentDictionary<string, byte> seen)
+    {
+        var found = new List<string>();
+        var doc = new HtmlDocument();
+        doc.LoadHtml(html);
+        foreach (var a in doc.DocumentNode.SelectNodes("//a[@href]") ?? Enumerable.Empty<HtmlNode>())
+        {
+            var href = a.GetAttributeValue("href", "");
+            if (string.IsNullOrEmpty(href) || href.StartsWith("#") || href.StartsWith("javascript:")) continue;
+            string? abs = null;
+            if (Uri.TryCreate(href, UriKind.Absolute, out var absUri)) abs = absUri.ToString();
+            else if (Uri.TryCreate(rootUri, href, out var rel)) abs = rel.ToString();
+            if (abs is null) continue;
+            if (abs.StartsWith(rootUri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase)
+                && seen.TryAdd(abs, 1))
+            {
+                found.Add(abs);
+            }
+        }
+        return found;
+    }
+
+    private static async Task<SkillResult> SitemapAsync(HttpClient http, string? sitemapUrl, int maxPages, int maxConcurrency, int maxChars, bool respectRobots, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(sitemapUrl)) return new SkillResult { Success = false, Text = "sitemap 模式需要 url=<sitemap.xml>" };
-        var urls = await ParseSitemapAsync(sitemapUrl, ct);
+        var urls = await ParseSitemapAsync(http, sitemapUrl, ct);
         if (urls.Count == 0) return new SkillResult { Success = false, Text = $"No <loc> entries found in {sitemapUrl}" };
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"# Sitemap: {sitemapUrl}");
@@ -240,7 +319,7 @@ public sealed class WebResearchSkill : ISkill
             {
                 try
                 {
-                    var text = await FetchAndExtractAsync(u, ct);
+                    var text = await FetchAndExtractAsync(http, u, ct);
                     fetched.Add((u, text));
                 }
                 catch { /* skip */ }
@@ -261,14 +340,14 @@ public sealed class WebResearchSkill : ISkill
         return new SkillResult { Success = true, Text = sb.ToString() };
     }
 
-    private static SkillResult Robots(string? siteRoot)
+    private static async Task<SkillResult> RobotsAsync(HttpClient http, string? siteRoot, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(siteRoot)) return new SkillResult { Success = false, Text = "robots 模式需要 url=<site-root>" };
         if (!Uri.TryCreate(siteRoot, UriKind.Absolute, out var uri)) return new SkillResult { Success = false, Text = "Invalid URL" };
         var robotsUrl = new Uri(uri, "/robots.txt").ToString();
         try
         {
-            var text = SharedHttp.GetStringAsync(robotsUrl).GetAwaiter().GetResult();
+            var text = await http.GetStringAsync(robotsUrl, ct);
             var disallow = new List<string>(); var allow = new List<string>();
             var currentUA = "*";
             foreach (var line in text.Split('\n'))
@@ -299,11 +378,11 @@ public sealed class WebResearchSkill : ISkill
         }
     }
 
-    private static async Task<SkillResult> StructuredAsync(string? url, int maxChars, bool respectRobots, CancellationToken ct)
+    private static async Task<SkillResult> StructuredAsync(HttpClient http, string? url, int maxChars, bool respectRobots, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(url)) return new SkillResult { Success = false, Text = "structured 模式需要 url" };
         if (!IsAllowed(url, respectRobots)) return new SkillResult { Success = false, Text = $"Disallowed: {url}" };
-        var html = await SharedHttp.GetStringAsync(url, ct);
+        var html = await http.GetStringAsync(url, ct);
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
 
@@ -358,12 +437,12 @@ public sealed class WebResearchSkill : ISkill
         return new SkillResult { Success = true, Text = Truncate(sb.ToString(), maxChars) };
     }
 
-    private static async Task<SkillResult> SummaryAsync(string? url, IReadOnlyDictionary<string, object?> args, int maxChars, bool respectRobots, CancellationToken ct)
+    private static async Task<SkillResult> SummaryAsync(HttpClient http, string? url, IReadOnlyDictionary<string, object?> args, int maxChars, bool respectRobots, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(url)) return new SkillResult { Success = false, Text = "summary 模式需要 url" };
         if (!IsAllowed(url, respectRobots)) return new SkillResult { Success = false, Text = $"Disallowed: {url}" };
         var sentences = args.TryGetValue("sentences", out var s) && s is not null ? Convert.ToInt32(s) : 5;
-        var text = await FetchAndExtractAsync(url, ct);
+        var text = await FetchAndExtractAsync(http, url, ct);
         // crude sentence splitter
         var parts = Regex.Split(text, @"(?<=[\.!?])\s+").Where(p => !string.IsNullOrWhiteSpace(p)).Take(sentences);
         var sb = new System.Text.StringBuilder();
@@ -375,17 +454,17 @@ public sealed class WebResearchSkill : ISkill
 
     // ============== helpers ===============
 
-    private static async Task<string> FetchAndExtractAsync(string url, CancellationToken ct)
+    private static async Task<string> FetchAndExtractAsync(HttpClient http, string url, CancellationToken ct)
     {
-        using var resp = await SharedHttp.GetAsync(url, ct);
+        using var resp = await http.GetAsync(url, ct);
         resp.EnsureSuccessStatusCode();
         var html = await resp.Content.ReadAsStringAsync(ct);
         return ExtractText(html);
     }
 
-    private static async Task<List<string>> FindLinksAsync(string baseUrl, string query, bool respectRobots, CancellationToken ct)
+    private static async Task<List<string>> FindLinksAsync(HttpClient http, string baseUrl, string query, bool respectRobots, CancellationToken ct)
     {
-        var html = await SharedHttp.GetStringAsync(baseUrl, ct);
+        var html = await http.GetStringAsync(baseUrl, ct);
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
         var matches = new List<(int score, string url)>();
@@ -415,9 +494,13 @@ public sealed class WebResearchSkill : ISkill
     }
 
     /// <summary>Parse a sitemap.xml — supports both sitemap index and urlset.</summary>
-    public static async Task<List<string>> ParseSitemapAsync(string sitemapUrl, CancellationToken ct)
+    public static Task<List<string>> ParseSitemapAsync(string sitemapUrl, CancellationToken ct)
+        => ParseSitemapAsync(SharedHttp, sitemapUrl, ct);
+
+    /// <summary>Parse a sitemap.xml with an explicit HTTP client (per-call UA support).</summary>
+    public static async Task<List<string>> ParseSitemapAsync(HttpClient http, string sitemapUrl, CancellationToken ct)
     {
-        using var resp = await SharedHttp.GetAsync(sitemapUrl, ct);
+        using var resp = await http.GetAsync(sitemapUrl, ct);
         resp.EnsureSuccessStatusCode();
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
         return await ParseSitemapXmlAsync(stream, ct);

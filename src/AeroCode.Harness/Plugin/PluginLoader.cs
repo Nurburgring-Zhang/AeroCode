@@ -24,6 +24,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace AeroCode.Harness.Plugin;
 
@@ -67,6 +68,7 @@ public sealed class PluginLoader : IDisposable
     private readonly FileSystemWatcher? _watcher;
     private readonly ConcurrentDictionary<string /*dllPath*/, LoadedPlugin> _loaded = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
+    private readonly ILogger? _logger;
     private bool _disposed;
 
     public event EventHandler<LoadedPlugin>? PluginLoaded;
@@ -80,8 +82,9 @@ public sealed class PluginLoader : IDisposable
 
     public string PluginsDirectory => _pluginsDir;
 
-    public PluginLoader(string? pluginsDir = null)
+    public PluginLoader(string? pluginsDir = null, ILogger? logger = null)
     {
+        _logger = logger;
         _pluginsDir = pluginsDir ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "AeroCode", "plugins");
@@ -120,6 +123,21 @@ public sealed class PluginLoader : IDisposable
     public Task<bool> LoadPluginAsync(string dllPath, CancellationToken ct = default)
     {
         if (!File.Exists(dllPath)) return Task.FromResult(false);
+
+        // Directory whitelist: only DLLs physically inside the plugins directory may load.
+        var fullDll = Path.GetFullPath(dllPath);
+        var fullRoot = Path.GetFullPath(_pluginsDir);
+        if (!fullDll.StartsWith(fullRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                ? fullRoot
+                : fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            var blocked = new UnauthorizedAccessException(
+                $"Plugin '{fullDll}' is outside the whitelisted plugins directory '{fullRoot}' — load blocked.");
+            _logger?.LogWarning("[DEGRADED] Plugin load blocked by directory whitelist: {Path} (whitelist: {Root})", fullDll, fullRoot);
+            LoadFailed?.Invoke(this, blocked);
+            return Task.FromResult(false);
+        }
+
         try
         {
             // If already loaded, unload first to free the file lock.
@@ -132,7 +150,9 @@ public sealed class PluginLoader : IDisposable
                 .FirstOrDefault(t => typeof(IPlugin).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract);
             if (pluginType is null)
             {
-                LoadFailed?.Invoke(this, new InvalidOperationException($"No IPlugin implementation in {dllPath}"));
+                var missing = new InvalidOperationException($"No IPlugin implementation in {dllPath}");
+                _logger?.LogWarning("[DEGRADED] Plugin '{Path}' has no IPlugin implementation — skipped, other plugins unaffected.", dllPath);
+                LoadFailed?.Invoke(this, missing);
                 return Task.FromResult(false);
             }
             var inst = (IPlugin)Activator.CreateInstance(pluginType)!;
@@ -151,6 +171,8 @@ public sealed class PluginLoader : IDisposable
         }
         catch (Exception ex)
         {
+            // Failure isolation: this plugin is dropped, remaining plugins keep loading.
+            _logger?.LogWarning("[DEGRADED] Plugin load failed for '{Path}': {Error} — isolated, other plugins unaffected.", dllPath, ex.Message);
             LoadFailed?.Invoke(this, ex);
             return Task.FromResult(false);
         }

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <AssemblyName>AeroAgent.Autonomy</AssemblyName>
+    <RootNamespace>AeroAgent.Autonomy</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
+    <PackageReference Include="System.Text.Json" Version="9.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 测试工程可直接验证内部确定性启发式（与 AeroAgent.Moa 同约定） -->
+    <InternalsVisibleTo Include="AeroCode.Tests" />
+  </ItemGroup>
+
+  <!--
+    依赖方向说明（单向，禁止反向引用）：
+    Autonomy → (Core, AI, Skills, Harness, Conversation, Moa)。
+    元控制器经 Conversation 的 IChatOrchestrationFacade 门面驱动 Moa 五策略真实执行；
+    持久化沿用 Core/Conversation 既有的 EF Core SQLite 技术栈（同一 SQLite 提供程序，
+    独立数据库文件），避免引入第二套 SQLite 依赖造成双轨。
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\AeroCode.Core\AeroCode.Core.csproj" />
+    <ProjectReference Include="..\AeroCode.AI\AeroCode.AI.csproj" />
+    <ProjectReference Include="..\AeroCode.Skills\AeroCode.Skills.csproj" />
+    <ProjectReference Include="..\AeroCode.Harness\AeroCode.Harness.csproj" />
+    <ProjectReference Include="..\AeroAgent.Conversation\AeroAgent.Conversation.csproj" />
+    <ProjectReference Include="..\AeroAgent.Moa\AeroAgent.Moa.csproj" />
+  </ItemGroup>
+
+</Project>

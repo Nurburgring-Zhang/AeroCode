@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AeroCode.Harness.Graph;
 using AeroCode.Harness.Loop;
+using Microsoft.Extensions.Logging;
 
 namespace AeroCode.Harness.Planner;
 
@@ -48,11 +49,16 @@ public delegate Task<Plan> PlanProducer(string goal, CancellationToken ct);
 public sealed class Planner
 {
     private readonly PlanProducer? _producer;
+    private readonly Microsoft.Extensions.Logging.ILogger? _logger;
 
-    public Planner(PlanProducer? producer = null)
+    public Planner(PlanProducer? producer = null, Microsoft.Extensions.Logging.ILogger? logger = null)
     {
         _producer = producer;
+        _logger = logger;
     }
+
+    /// <summary>True when an LLM plan producer is configured (planning will consume LLM calls).</summary>
+    public bool HasLlmProducer => _producer is not null;
 
     public async Task<TaskGraph> PlanToGraphAsync(Plan plan, CancellationToken ct = default)
     {
@@ -84,8 +90,11 @@ public sealed class Planner
             if (plan.Steps.Count == 0) return SingleStep(goal);
             return plan;
         }
+        catch (OperationCanceledException) { throw; }          // 取消如实上抛
+        catch (LoopBudgetExhaustedException) { throw; }        // 预算熔断绝不被静默吞没
         catch (Exception ex)
         {
+            _logger?.LogWarning("[DEGRADED] LLM planner failed ({Error}); falling back to a single-step plan.", ex.Message);
             return new Plan
             {
                 Goal = goal,

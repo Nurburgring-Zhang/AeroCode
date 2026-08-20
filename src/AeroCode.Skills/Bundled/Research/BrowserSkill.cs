@@ -38,7 +38,7 @@ public sealed class BrowserSkill : ISkill
 {
     public string Id => "research/browser";
     public string Name => "Browser (PuppeteerSharp)";
-    public string Description => "真启动 Chromium headless 浏览器抓 SPA/JS 渲染页面 + structured data + 截图 + PDF + JS eval";
+    public string Description => "真启动Chromium无头浏览器抓JS渲染页面+截图+PDF+eval";
     public string Category => "research";
     public string Author => "AeroCode Team (human first, Hermes rule)";
     public string Version => "1.0.0";

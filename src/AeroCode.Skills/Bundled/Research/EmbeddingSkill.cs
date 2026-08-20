@@ -26,7 +26,7 @@ public sealed class EmbeddingSkill : ISkill
 {
     public string Id => "research/embedding";
     public string Name => "Embedding (real HTTP)";
-    public string Description => "真 HTTP 调 Ollama/OpenAI-compatible /v1/embeddings 拿 384 维向量 + cosine top-K 检索";
+    public string Description => "真HTTP调Ollama/OpenAI嵌入拿向量+top-K检索";
     public string Category => "research";
     public string Author => "AeroCode Team (human first, Hermes rule)";
     public string Version => "1.0.0";
