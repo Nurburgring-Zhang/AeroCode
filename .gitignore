@@ -45,3 +45,9 @@ logs/
 *.apk
 *.aab
 *.zip
+
+# MOA gateway sidecar local artifacts（由 scripts/gateway/setup_gateway.ps1 生成）
+scripts/gateway/.venv/
+scripts/gateway/data/
+scripts/gateway/.admin_password
+scripts/gateway/gateway.pid

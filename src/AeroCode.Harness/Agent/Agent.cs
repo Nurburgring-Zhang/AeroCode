@@ -215,7 +215,9 @@ public sealed class Agent
         }
         catch (OperationCanceledException)
         {
-            return new AgentTurnResult { Text = "(cancelled)", Iterations = iterations };
+            // 取消必须如实标记：否则调用方（如 AgentExpertExecutor）会把
+            // "(cancelled)" 文本当作成功产出，取消语义被吞掉。
+            return new AgentTurnResult { Text = "(cancelled)", Iterations = iterations, Cancelled = true };
         }
     }
 
