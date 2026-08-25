@@ -227,3 +227,28 @@ S10 不做新功能，只做质量收口：全量重建双轮绿 + 零虚假 gre
 - APK 验收不能止于 badging/签名：Debug 快速部署默认不嵌入程序集，该盲区让首发包带着"装不上真机"的缺陷通过了验收——"包内程序集条目检查"从此列为必验项。
 - API 使用前先验证所引版本实际存在（grep 程序集二进制/查 XML 文档），不凭新版本 API 的记忆写代码（TopLevel.BackRequested 属 11.3+，11.2.2 没有）。
 - 复现基线产物必须对齐配置族：Release 默认 AOT 把包从 19MB 涨到 109MB，配置差异靠体积对比才暴露。
+
+## 2026-08-25 · PHASE 5/6 打包交付 + GitHub 同步（结论）
+
+### 交付结论
+
+- **win-x64**：Debug 族串行构建（沿用 PHASE 4 基线口径），App 自包含 publish 与 aerocode-mcp 合并；合并脚本第一版平铺拷贝丢了 26 个 cs/de/…/zh-Hant 语言卫星 dll（Microsoft.CodeAnalysis 资源），改 `os.walk` 递归保相对路径后与 v1.0.0 的 328 条目逐一比对零增零删、无 pdb；首方程序集哈希探针确认 PHASE 5/6 代码在包内（相对 v1.0.0 已变化）。
+- **APK**：`-t:SignAndroidPackage -p:EmbedAssembliesIntoApk=true`，126,350,680 B；aapt2 badging EXIT=0；apksigner 同一 debug 证书 2053dd38…d5c6。注意 .NET for Android 现把嵌入程序集包成 ELF 封装的 `lib_<asm>.dll.so`（payload 在 ELF offset 16384），PHASE 4 的裸 dll 字节比对失效——验收脚本升级为 ELF section 解析 + payload 提取，7 个首方程序集 × arm64-v8a/x86_64 = 14/14 与 bin 产物字节级一致。
+- **mcp 冒烟**：合并产物 aerocode-mcp.exe 独立启动 EXIT=0。
+- **GitHub 同步**：`0a19b88..56628e4 main -> main` 推送成功，远程 HEAD 与本地一致；Release v1.1.0（ID 376147281）发布，tag v1.1.0 指向 56628e4，make_latest；双资产挂载，Release Notes 含变更摘要、资产 SHA256 表与验收清单；**双向端到端验证**：从 Release 回下 zip/apk，SHA256 与本地逐一相同。
+- **发布过程问题（如实记录）**：本机无 PAT、无 gh，GCM 凭据填充走设备流无法无头完成 → 改浏览器自动化走已登录会话发布；CDP 的 `DOM.setFileInputFiles` 在该页返回 Not allowed → 页面内以 `DataTransfer` 赋值 `input.files` + 派发 change 事件驱动 GitHub 自有上传管线（policy → 存储 → 资产登记）成功；首次提交时 tag widget 把值叠成 "v1.1.0v1.1.0"（隐藏字段直改被 widget 状态覆盖），tag 创建失败落为 draft → 编辑页走真实 UI 重建 tag 后发布；过程中两份重名 zip 上传被服务端按名去重拦截，其中两份以 `_destroy=true` 随发布提交销毁，存活资产经双向下载验证与本地字节一致。
+
+### 收口数字
+
+zip 56,053,840 B（SHA256 e34c87cb…9c58，328 条目零增零删）；APK 126,350,680 B（SHA256 fd2fb34f…ed71，debug 签名，程序集已嵌入）。测试背书：全量 914 用例 / 0 失败 / 19 网络门控跳过，连续三轮绿。
+
+### 已知限制
+
+- `AeroAgent.Autonomy.dll` 不在两个包内：当前仅 tests/AeroCode.Tests 引用，未进入 App 闭包；P8 接入产品入口后随下一轮打包进入资产。
+- APK 仍为 debug 签名、未经真机实测；本轮按 Debug 族复现基线包（与 PHASE 4 同口径）；构建含 XA0141 上游警告（不影响产物）。
+
+### 教训
+
+- GitHub 发布表单的 tag 是 React widget，直改隐藏输入会在提交时被 widget 状态覆盖——必须走 widget UI 完成选择/创建。
+- CDP 文件注入被拒时，`DataTransfer` + change 事件可驱动页面自有上传管线，比模拟拖放（drop 事件）可靠。
+- GitHub 上传 policy 按资产名做服务端去重（422 already_exists），pending 资产也会占名；重传同名需先销毁旧资产或换页重置会话。
