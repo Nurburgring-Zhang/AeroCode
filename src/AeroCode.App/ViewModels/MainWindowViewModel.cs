@@ -160,7 +160,23 @@ public partial class MainWindowViewModel : ObservableObject
         if (r.IsSuccess) await LoadAllNotesAsync();
     }
 
-    partial void OnSearchQueryChanged(string value) => _ = RunSearchAsync();
+    partial void OnSearchQueryChanged(string value) => _ = ObserveAsync(RunSearchAsync());
+
+    /// <summary>
+    /// 观察后台任务异常：fire-and-forget 场景下把异常落到 StatusText，
+    /// 而不是成为 UnobservedTaskException 静默汇。
+    /// </summary>
+    private async Task ObserveAsync(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ {ex.Message}";
+        }
+    }
 
     [RelayCommand]
     private async Task RunSearchAsync()
@@ -179,7 +195,7 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    partial void OnSelectedNotebookChanged(Notebook? value) => _ = LoadByNotebookAsync(value);
+    partial void OnSelectedNotebookChanged(Notebook? value) => _ = ObserveAsync(LoadByNotebookAsync(value));
 
     private async Task LoadByNotebookAsync(Notebook? nb)
     {
@@ -193,7 +209,7 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    partial void OnSelectedTagChanged(Tag? value) => _ = LoadByTagAsync(value);
+    partial void OnSelectedTagChanged(Tag? value) => _ = ObserveAsync(LoadByTagAsync(value));
 
     private async Task LoadByTagAsync(Tag? tag)
     {

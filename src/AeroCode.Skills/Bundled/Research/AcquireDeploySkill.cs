@@ -89,7 +89,9 @@ public sealed class AcquireDeploySkill : ISkill
         "  max_mb=200 max_depth=12 method=auto|git|zip\n" +
         "Behavior: real git clone (depth 1) or HTTPS zip download → sandboxed extraction\n" +
         "(zip-slip protected, size/depth capped, dangerous extensions excluded from index)\n" +
-        "→ content index (file tree + key files). Full trace in aero-acquire.log.";
+        "→ content index (file tree + key files). Full trace in aero-acquire.log.\n" +
+        "Safety: only http/https/file URLs accepted (ssh/git/ext:: rejected);\n" +
+        "target_dir is confined to the workspace root.";
 
     public async Task<SkillResult> ExecuteAsync(SkillInput input, SkillContext ctx, CancellationToken ct = default)
     {
@@ -98,14 +100,34 @@ public sealed class AcquireDeploySkill : ISkill
         if (string.IsNullOrWhiteSpace(url)) return new SkillResult { Success = false, Text = "需要 'url' 参数" };
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return new SkillResult { Success = false, Text = $"Invalid URL: {url}" };
+        // 安全闸门：只允许 http/https（网络获取）与 file（本地归档）。
+        // ssh://、git://、ext:: 等协议可触发 git 远端助手执行任意命令，一律拒绝。
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeFile)
+        {
+            return new SkillResult { Success = false, Text = $"只允许 http/https/file 协议（收到 scheme={uri.Scheme}）" };
+        }
 
         var maxMb = args.TryGetValue("max_mb", out var mm) && mm is not null ? Convert.ToInt64(mm) : DefaultMaxMb;
         var maxDepth = args.TryGetValue("max_depth", out var md) && md is not null ? Convert.ToInt32(md) : DefaultMaxDepth;
         var method = ((args.TryGetValue("method", out var me) ? me as string : null) ?? "auto").ToLowerInvariant();
 
         var workspace = string.IsNullOrWhiteSpace(ctx.WorkspaceRoot) ? Path.GetTempPath() : ctx.WorkspaceRoot;
-        var targetDir = (args.TryGetValue("target_dir", out var td) ? td as string : null)
+        var workspaceFull = Path.GetFullPath(workspace);
+        var requestedTarget = (args.TryGetValue("target_dir", out var td) ? td as string : null)
             ?? Path.Combine(workspace, ".aero-acquired", MakeSlug(uri));
+        // 沙箱约束：target_dir 必须落在工作区内（相对路径按工作区解析；
+        // 绝对路径或 ../ 逃逸一律拒绝），防止模型控制的参数在任意位置写文件。
+        var targetDir = Path.GetFullPath(Path.IsPathRooted(requestedTarget)
+            ? requestedTarget
+            : Path.Combine(workspaceFull, requestedTarget));
+        var workspacePrefix = workspaceFull.EndsWith(Path.DirectorySeparatorChar)
+            ? workspaceFull
+            : workspaceFull + Path.DirectorySeparatorChar;
+        if (!targetDir.StartsWith(workspacePrefix, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(targetDir, workspaceFull, StringComparison.OrdinalIgnoreCase))
+        {
+            return new SkillResult { Success = false, Text = $"target_dir 必须位于工作区内（拒绝越界路径）: {requestedTarget}" };
+        }
 
         var logPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(targetDir)) ?? workspace, "aero-acquire.log");
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(targetDir))!);
@@ -272,7 +294,9 @@ public sealed class AcquireDeploySkill : ISkill
         var psi = new ProcessStartInfo
         {
             FileName = "git",
-            ArgumentList = { "clone", "--depth", "1", cloneUrl, targetDir },
+            // protocol.ext.allow=never：纵深防御——即便上层协议白名单被绕过，
+            // git 也不会通过 ext:: 远端助手执行任意命令。
+            ArgumentList = { "-c", "protocol.ext.allow=never", "-c", "core.fsmonitor=false", "clone", "--depth", "1", cloneUrl, targetDir },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,

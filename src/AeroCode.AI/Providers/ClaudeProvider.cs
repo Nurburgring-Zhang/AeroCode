@@ -28,7 +28,6 @@ public sealed class ClaudeProvider : IAiProvider
     private readonly ProviderConfig _config;
     private readonly ILogger<ClaudeProvider> _logger;
     private readonly AiResiliencePipeline? _resilience;
-    private readonly string? _apiKey;
     private const string MessagesPath = "/v1/messages";
     private const string AnthropicVersion = "2023-06-01";
 
@@ -44,9 +43,21 @@ public sealed class ClaudeProvider : IAiProvider
         _config = config;
         _logger = logger;
         _resilience = resilience;
-        if (!string.IsNullOrWhiteSpace(config.ApiKeyEnvVar))
-            _apiKey = Environment.GetEnvironmentVariable(config.ApiKeyEnvVar);
     }
+
+    /// <summary>
+    /// 每次请求时解析 API key（而非构造时缓存一次），使密钥轮换、
+    /// 测试注入等运行时环境变量变更无需重建 provider，与 OpenAICompatibleProvider 一致。
+    /// </summary>
+    private string? ResolveApiKey()
+    {
+        if (string.IsNullOrWhiteSpace(_config.ApiKeyEnvVar)) return null;
+        return Environment.GetEnvironmentVariable(_config.ApiKeyEnvVar);
+    }
+
+    /// <summary>SSE 流空闲看门狗时长：配置了 TimeoutSeconds 则沿用，否则默认 2 分钟。</summary>
+    private TimeSpan StreamIdleTimeout =>
+        _config.TimeoutSeconds > 0 ? TimeSpan.FromSeconds(_config.TimeoutSeconds) : TimeSpan.FromMinutes(2);
 
     public string ProviderId => _config.Id;
     public string DisplayName => _config.DisplayName;
@@ -115,10 +126,26 @@ public sealed class ClaudeProvider : IAiProvider
         }
         await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         using var reader = new StreamReader(stream, Encoding.UTF8);
-        while (!reader.EndOfStream)
+        // 空闲看门狗：SSE 长连接下服务器不关闭但停止发数据时，EndOfStream 会同步阻塞
+        // 且绕开取消令牌，因此改为逐行 ReadLineAsync + 可重置的空闲超时。
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        idleCts.CancelAfter(StreamIdleTimeout);
+        while (true)
         {
             ct.ThrowIfCancellationRequested();
-            var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync(idleCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // 调用方未取消而空闲超时触发：按网关超时语义上抛，可被上层重试/展示。
+                throw new AiProviderException(ProviderId, 504,
+                    $"stream idle timeout: no data for {(int)StreamIdleTimeout.TotalSeconds}s");
+            }
+            if (line is null) yield break; // EOF
+            idleCts.CancelAfter(StreamIdleTimeout); // 有数据到达，重置空闲计时
             if (string.IsNullOrEmpty(line)) continue;
             if (!line.StartsWith("data: ", StringComparison.Ordinal)) continue;
             var data = line[6..].Trim();
@@ -204,7 +231,7 @@ public sealed class ClaudeProvider : IAiProvider
         var json = JsonSerializer.Serialize(body, JsonOpts);
         var url = _config.BaseUrl.TrimEnd('/') + MessagesPath;
         var req = new HttpRequestMessage(HttpMethod.Post, url);
-        if (!string.IsNullOrEmpty(_apiKey)) req.Headers.Add("x-api-key", _apiKey);
+        if (ResolveApiKey() is { Length: > 0 } apiKey) req.Headers.Add("x-api-key", apiKey);
         req.Headers.Add("anthropic-version", AnthropicVersion);
         if (_config.ExtraHeaders is { Count: > 0 })
             foreach (var kv in _config.ExtraHeaders) req.Headers.TryAddWithoutValidation(kv.Key, kv.Value);

@@ -304,9 +304,10 @@ public partial class App : Application
 
     /// <summary>
     /// 容器构建后注册工具域：内建（笔记/技能）+ settings.json 中启用的 MCP 服务器。
-    /// 权限默认裁决：内建工具 = 用户在笔记 UI 本来就能做的操作 → Allow
+    /// 权限默认裁决：笔记工具 = 用户在笔记 UI 本来就能做的操作 → Allow
     /// （delete_note 的硬删除不可逆 → Override 升级为 Ask）；
-    /// MCP 工具来自外部进程、副作用任意 → 保持 Ask（S7 授权代理落地后向用户询问）。
+    /// 技能工具能分发任意技能（浏览器/进程/文件操作）→ 默认 Ask；
+    /// MCP 工具来自外部进程、副作用任意 → 保持 Ask。
     /// MCP 配置错误绝不阻塞启动：发现失败如实降级记录，应用照常可用。
     /// </summary>
     private static void RegisterToolboxes(
@@ -347,9 +348,13 @@ public partial class App : Application
                 : PermissionDecision.Allow,
         });
 
+        // 技能工具默认 Ask（而非 Allow）：run_skill 能分发任意技能——包括启动
+        // Chromium、克隆仓库、读写文件等重副作用操作—— blanket Allow 等于让模型
+        // 无确认直通整条技能链。Ask 规则同样进入设置页权限列表，用户可预先允许。
+        // 持久化决策在本方法之后应用（ApplyPersistedPermissions），用户记住的选择优先。
         foreach (var def in skillToolbox.Definitions)
         {
-            permission.SetDefaultDecision(def.Name, PermissionDecision.Allow);
+            permission.SetDefaultDecision(def.Name, PermissionDecision.Ask);
         }
 
         // single-view 生命周期（Android）：MCP 的 stdio 传输依赖启动桌面式子进程，

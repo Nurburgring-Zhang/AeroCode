@@ -18,11 +18,15 @@ using Xunit.Sdk;
 
 namespace AeroCode.Tests.RealLLM;
 
+/// <summary>真 LLM 集合定义：串行执行，避免并发打真实 API 触发限流。</summary>
+[CollectionDefinition("RealLLM", DisableParallelization = true)]
+public class RealLLMCollectionDefinition { }
+
 /// <summary>
 /// R-R1: 真 LLM 连接 — 1 个 chat completion, 验证 endpoint/key/model 工作。
 /// 如果 MINIMAX_API_KEY 未设置,整个 fixture 跳过 (Xunit skip via Assert.Skip)。
 /// </summary>
-[CollectionDefinition("RealLLM", DisableParallelization = true)]
+[Collection("RealLLM")]
 public class RealLLMSmoke
 {
     public static bool Enabled => !string.IsNullOrWhiteSpace(

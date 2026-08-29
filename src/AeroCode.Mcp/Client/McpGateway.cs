@@ -61,6 +61,15 @@ public sealed class McpGateway : IMcpGateway
         _logger = logger;
     }
 
+    /// <summary>握手（initialize）超时。可注入——测试无需等满 30 秒即可验证超时路径。</summary>
+    public TimeSpan InitializationTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// 单次工具调用/发现的无响应超时上限：远端工具挂死时不能永久占用串行化闸门，
+    /// 否则该服务器后续所有调用全部阻塞。超时抛 <see cref="TimeoutException"/>（诚实上抛）。
+    /// </summary>
+    public TimeSpan CallTimeout { get; init; } = TimeSpan.FromMinutes(2);
+
     public string ServerId => _config.Id;
 
     public async Task<IReadOnlyList<McpToolInfo>> ListToolsAsync(CancellationToken ct = default)
@@ -133,7 +142,7 @@ public sealed class McpGateway : IMcpGateway
             var client = await EnsureConnectedNoLockAsync(ct);
             try
             {
-                return await action(client, ct);
+                return await RunWithCallTimeoutAsync(action, client, ct);
             }
             catch (Exception ex) when (IsConnectionLoss(ex) && !ct.IsCancellationRequested)
             {
@@ -143,12 +152,34 @@ public sealed class McpGateway : IMcpGateway
                     ServerId, ex.Message);
                 await DisposeClientNoLockAsync();
                 client = await EnsureConnectedNoLockAsync(ct);
-                return await action(client, ct);
+                return await RunWithCallTimeoutAsync(action, client, ct);
             }
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 给单次调用套无响应看门狗：CallTimeout 内无结果即取消并抛 TimeoutException。
+    /// 调用方自己取消（ct）时保持 OperationCanceledException 语义，不混淆两种终止原因。
+    /// </summary>
+    private async Task<T> RunWithCallTimeoutAsync<T>(
+        Func<McpClient, CancellationToken, Task<T>> action,
+        McpClient client,
+        CancellationToken ct)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(CallTimeout);
+        try
+        {
+            return await action(client, cts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"MCP server '{ServerId}' call exceeded {CallTimeout.TotalSeconds:0}s no-response timeout (remote tool hang).");
         }
     }
 
@@ -164,7 +195,7 @@ public sealed class McpGateway : IMcpGateway
             Name = ServerId,
             Command = _config.Command,
             Arguments = _config.Arguments,
-            EnvironmentVariables = ToEnvironmentMap(_config.EnvironmentVariables),
+            EnvironmentVariables = ToEnvironmentMap(_config.EnvironmentVariables, _logger, ServerId),
             WorkingDirectory = _config.WorkingDirectory,
         });
 
@@ -172,7 +203,7 @@ public sealed class McpGateway : IMcpGateway
         {
             _client = await McpClient.CreateAsync(
                 transport,
-                new McpClientOptions { InitializationTimeout = TimeSpan.FromSeconds(30) },
+                new McpClientOptions { InitializationTimeout = InitializationTimeout },
                 loggerFactory: null,
                 cancellationToken: ct);
         }
@@ -219,7 +250,17 @@ public sealed class McpGateway : IMcpGateway
     private static string SchemaText(JsonElement schema) =>
         schema.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "{}" : schema.GetRawText();
 
-    private static IDictionary<string, string?>? ToEnvironmentMap(Dictionary<string, string>? source)
+    /// <summary>${ENV_NAME} 引用展开（整值引用才展开；字面量原样透传，向后兼容）。</summary>
+    private static readonly System.Text.RegularExpressions.Regex EnvRefRx =
+        new(@"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 子进程环境变量：值支持 ${ENV_NAME} 引用——从当前进程环境展开，
+    /// 让 settings.json 不必把 API key 等敏感值明文落盘；字面量继续透传（向后兼容）。
+    /// 引用未解析（变量未设置）时按"未设置"传给子进程（null）并大声 [DEGRADED] 记录。
+    /// </summary>
+    private static IDictionary<string, string?>? ToEnvironmentMap(
+        Dictionary<string, string>? source, ILogger? logger, string serverId)
     {
         if (source is null)
         {
@@ -229,7 +270,23 @@ public sealed class McpGateway : IMcpGateway
         var map = new Dictionary<string, string?>(source.Count, StringComparer.Ordinal);
         foreach (var kv in source)
         {
-            map[kv.Key] = kv.Value;
+            var match = kv.Value is null ? null : EnvRefRx.Match(kv.Value);
+            if (match is { Success: true })
+            {
+                var envName = match.Groups[1].Value;
+                var expanded = Environment.GetEnvironmentVariable(envName);
+                if (expanded is null)
+                {
+                    logger?.LogWarning(
+                        "[DEGRADED] MCP server '{ServerId}' 的 {Key} 引用 ${Var} 未设置，子进程该变量将为未设置",
+                        serverId, kv.Key, envName);
+                }
+                map[kv.Key] = expanded;
+            }
+            else
+            {
+                map[kv.Key] = kv.Value;
+            }
         }
 
         return map;

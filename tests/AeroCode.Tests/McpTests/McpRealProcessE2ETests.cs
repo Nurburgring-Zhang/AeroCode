@@ -354,10 +354,19 @@ public sealed class McpRealProcessE2ETests : IDisposable
         Skip.If(host is null, "未找到 dotnet 宿主或 aerocode-mcp.dll 构建产物，如实跳过 E2E");
 
         var config = McpE2E.MakeConfig(host!.Value.Dotnet, host.Value.Dll, DbPath, "aerocode");
-        await using var toolbox = new McpToolbox(new[] { new McpGateway(config) });
+        // 全量套件并发运行时机器负载高，dotnet 子进程冷启动可能超过默认 30s 握手窗口
+        // （2026-08-26 full3 实测：单独复跑 11s 通过，并发跑 37s 握手超时降级为 0 工具）。
+        // E2E 基础设施给足握手余量；握手超时语义本身由 McpGatewayStartupTests 专项覆盖。
+        await using var toolbox = new McpToolbox(new[]
+        {
+            new McpGateway(config) { InitializationTimeout = TimeSpan.FromSeconds(60) },
+        });
 
         await toolbox.DiscoverAsync();
 
+        // 发现降级先暴露真实原因（超时/启动失败等），不留"12 vs 0"的无解断言。
+        Assert.True(toolbox.DiscoveryWarnings.Count == 0,
+            "MCP 发现降级：" + string.Join(" | ", toolbox.DiscoveryWarnings));
         Assert.Equal(12, toolbox.Definitions.Count);
         Assert.All(toolbox.Definitions, d => Assert.StartsWith("aerocode_", d.Name, StringComparison.Ordinal));
         Assert.True(toolbox.TryGetRoute("aerocode_create_note", out var serverId, out var remoteName));

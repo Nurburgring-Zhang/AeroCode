@@ -25,7 +25,11 @@ public sealed class McpServerConfig
     [JsonPropertyName("arguments")]
     public List<string> Arguments { get; set; } = new();
 
-    /// <summary>子进程环境变量（合并到继承环境之上；API key 等敏感值建议用变量注入而非落盘）。</summary>
+    /// <summary>
+    /// 子进程环境变量（合并到继承环境之上）。值支持 <c>${ENV_NAME}</c> 引用——
+    /// 启动时从当前进程环境展开，API key 等敏感值因此不必明文写进 settings.json；
+    /// 字面量值继续原样传递（向后兼容）。引用未解析时子进程该变量为未设置并大声告警。
+    /// </summary>
     [JsonPropertyName("environmentVariables")]
     public Dictionary<string, string>? EnvironmentVariables { get; set; }
 

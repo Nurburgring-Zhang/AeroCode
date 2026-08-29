@@ -14,7 +14,7 @@ namespace AeroCode.AI.Providers;
 /// 不在代码里硬编码任何 API key / endpoint,只根据 config 装配。
 /// 支持 <see cref="Reload"/> 热重载：设置保存后无需重启即生效。
 /// </summary>
-public sealed class ProviderFactory : IProviderRegistry
+public sealed class ProviderFactory : IProviderRegistry, IDisposable
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly IHttpClientFactory? _httpFactory;
@@ -22,6 +22,8 @@ public sealed class ProviderFactory : IProviderRegistry
     private readonly object _sync = new();
     private readonly Dictionary<string, IAiProvider> _cache = new();
     private readonly Dictionary<string, AiResiliencePipeline> _pipelines = new();
+    private readonly Dictionary<string, HttpClient> _ownedHttp = new();
+    private HttpClient? _probeHttp;
     private AIOptions _options;
 
     /// <summary>配置热重载完成（provider 缓存已清空，UI 应刷新下拉列表等）。</summary>
@@ -38,18 +40,38 @@ public sealed class ProviderFactory : IProviderRegistry
     /// <summary>
     /// 热重载配置：替换选项并清空 provider/弹性管线缓存（下次 Get 按新配置重建）。
     /// 熔断器状态随管线一并重置——配置变更（如换了 endpoint）后旧熔断统计不再有意义。
+    /// 无 IHttpClientFactory 时自建的 HttpClient 一并释放，避免反复热重载泄漏套接字；
+    /// 被替换 provider 上的在途请求会如实失败（热重载语义）。
     /// </summary>
     public void Reload(AIOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        List<HttpClient> toDispose;
         lock (_sync)
         {
             _options = options;
             _cache.Clear();
             _pipelines.Clear();
+            toDispose = new List<HttpClient>(_ownedHttp.Values);
+            _ownedHttp.Clear();
         }
+        foreach (var client in toDispose) client.Dispose();
 
         ProvidersChanged?.Invoke();
+    }
+
+    /// <summary>释放自建 HttpClient（工厂提供的客户端由工厂管理，不在此释放）。</summary>
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            foreach (var client in _ownedHttp.Values) client.Dispose();
+            _ownedHttp.Clear();
+            _probeHttp?.Dispose();
+            _probeHttp = null;
+            _cache.Clear();
+            _pipelines.Clear();
+        }
     }
 
     public IAiProvider GetDefault() => Get(DefaultProviderId);
@@ -102,11 +124,19 @@ public sealed class ProviderFactory : IProviderRegistry
     /// 按给定配置（可以是未保存/编辑中的）构建一次性探针实例：
     /// 不进缓存、独立弹性管线——设置页单个 provider 连通性测试专用，
     /// 不干扰运行中编排使用的缓存实例，也不改变已加载配置。
+    /// 探针共用一个懒加载 HttpClient，避免每次点击泄漏客户端
+    /// （探针为一次性短请求；并发探测时 Timeout 以最后设置者为准）。
     /// </summary>
     public IAiProvider CreateProbe(ProviderConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        return Create(config, new AiResiliencePipeline(_resilienceOptions));
+        HttpClient probe;
+        lock (_sync)
+        {
+            _probeHttp ??= new HttpClient();
+            probe = _probeHttp;
+        }
+        return Create(config, new AiResiliencePipeline(_resilienceOptions), probe);
     }
 
     /// <summary>全局默认 provider 的 Id。</summary>
@@ -123,9 +153,13 @@ public sealed class ProviderFactory : IProviderRegistry
         return p;
     }
 
-    private IAiProvider Create(ProviderConfig config, AiResiliencePipeline pipeline)
+    private IAiProvider Create(ProviderConfig config, AiResiliencePipeline pipeline, HttpClient? httpOverride = null)
     {
-        var http = _httpFactory?.CreateClient($"ai-{config.Id}") ?? new HttpClient();
+        // 有 IHttpClientFactory 时客户端归工厂管理（不可自行释放）；
+        // 否则自建并登记，Reload/Dispose 时统一释放防套接字泄漏。
+        var http = httpOverride
+            ?? _httpFactory?.CreateClient($"ai-{config.Id}")
+            ?? NewOwnedHttp(config.Id);
         var logger = _loggerFactory.CreateLogger(config.Id);
         return config.Kind switch
         {
@@ -134,6 +168,13 @@ public sealed class ProviderFactory : IProviderRegistry
             "Custom" => new CustomProvider(http, config, CastLogger<CustomProvider>(logger), pipeline),
             _ => throw new NotSupportedException($"Unknown provider kind: {config.Kind}")
         };
+    }
+
+    private HttpClient NewOwnedHttp(string providerId)
+    {
+        var client = new HttpClient();
+        _ownedHttp[providerId] = client;
+        return client;
     }
 
     private IAiProvider CreateOpenAICompatible(ProviderConfig config, HttpClient http, ILogger logger, AiResiliencePipeline pipeline)

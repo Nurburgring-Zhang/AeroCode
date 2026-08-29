@@ -1,7 +1,7 @@
 # 📒 AeroCode
 
 > **本地优先的 Markdown 笔记 × 多模型 AI 助手 × Agent Harness —— 一套代码，Windows 与 Android 同源双端**
-> .NET 9 + Avalonia 11 · MIT · v1.1.0（PHASE 6 收口 · 全量 914 用例 / 0 失败 / 19 网络门控跳过）
+> .NET 9 + Avalonia 11 · MIT · v1.1.0（PHASE 6 收口 · 全量 982 用例 / 0 失败 / 19 网络门控跳过）
 
 <p>
   <img src="https://img.shields.io/github/v/release/Nurburgring-Zhang/AeroCode?label=Release" alt="Release" />
@@ -49,7 +49,7 @@ AeroCode/
 │   ├── AeroCode.App/             Avalonia 11 桌面端（WinExe）：MainView + 设置 + 授权 UI
 │   └── AeroCode.App.Android/     Android 头项目（net9.0-android + Avalonia.Android）
 ├── tests/
-│   └── AeroCode.Tests/           xUnit 914 用例（895 过 / 19 跳过：需真实网络/LLM/设备）
+│   └── AeroCode.Tests/           xUnit 982 用例（963 过 / 19 跳过：需真实网络/LLM/设备）
 └── docs/                         架构 / 各阶段计划与交付 / DEV_LOG / ANDROID_BUILD
 ```
 
@@ -63,7 +63,7 @@ Android 走 `ISingleViewApplicationLifetime` + `OverlayService` 全屏覆盖层�
 ```powershell
 dotnet restore AeroCode.sln
 dotnet build AeroCode.sln -c Debug
-dotnet test AeroCode.sln                 # 914 用例
+dotnet test AeroCode.sln                 # 982 用例
 dotnet run --project src/AeroCode.App    # 运行 Windows 桌面
 ```
 
@@ -103,7 +103,7 @@ dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage -p:EmbedAss
 | Markdown | Markdig | 0.37.0 |
 | MCP | ModelContextProtocol | 1.0.0 |
 | DI / Logging | Microsoft.Extensions.* | 9.0 |
-| Test | xUnit + Xunit.SkippableFact | 2.9 |
+| Test | xUnit + Xunit.SkippableFact | 2.9.2 / 1.4.13 |
 
 ## 🔗 相关项目（定位坐标与致敬）
 

@@ -277,11 +277,19 @@ public sealed class MoaGatewayClient : IDisposable
             string body;
             try
             {
-                body = await response.Content.ReadAsStringAsync(ct);
+                // 用联动超时令牌读响应体：仅用调用方 ct 时，慢速滴送服务器可让
+                // ReadAsStringAsync 超出请求超时上限仍不返回。
+                body = await response.Content.ReadAsStringAsync(timeoutCts.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                throw;
+                throw; // 调用方取消：如实向上抛。
+            }
+            catch (OperationCanceledException)
+            {
+                return GatewayResult<T>.Fail(
+                    $"gateway response body read timed out after {timeout.TotalSeconds:0.#}s",
+                    statusCode, isTimeout: true);
             }
             catch (Exception ex)
             {

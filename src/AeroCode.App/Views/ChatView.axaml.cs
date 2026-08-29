@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
@@ -48,7 +49,20 @@ public partial class ChatView : UserControl
 
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.PropertyChanged += OnVmPropertyChanged;
-        _ = _vm.InitializeAsync();
+        _ = ObserveInitializeAsync(_vm);
+    }
+
+    /// <summary>初始化失败不应静默：把异常落到 VM 状态栏，保持可见。</summary>
+    private static async Task ObserveInitializeAsync(ChatViewModel vm)
+    {
+        try
+        {
+            await vm.InitializeAsync();
+        }
+        catch (Exception ex)
+        {
+            vm.StatusText = $"✗ 初始化失败: {ex.Message}";
+        }
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)

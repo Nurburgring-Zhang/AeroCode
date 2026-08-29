@@ -12,6 +12,7 @@ namespace AeroCode.Tests.ServiceTests;
 /// 缓存清掉（同 Id 也按新配置重建）、默认 provider 切换、变更事件发出，
 /// 订阅方（画像目录/编排层/UI）据此响应。
 /// </summary>
+[Collection("EnvMutators")] // 多个用例改进程环境变量，禁止与其他改环境用例并行
 public sealed class ProviderFactoryReloadTests
 {
     private const string TestKeyEnvVar = "AERO_RELOAD_TEST_KEY";

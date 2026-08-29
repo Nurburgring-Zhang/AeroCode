@@ -1,5 +1,6 @@
 // Copyright (c) AeroCode V3.0
 // Permission system — OpenCode + DSH guard fusion.
+using System.Text.RegularExpressions;
 using AeroCode.Harness.EventBus;
 
 namespace AeroCode.Harness.Permission;
@@ -131,6 +132,62 @@ public sealed class PermissionPolicy
         _ => 2,
     };
 
+    /// <summary>
+    /// run_shell 危险模式探测：先规范化（剥离引号/反引号混淆、压缩空白）再匹配破坏性命令清单。
+    /// 命中即升级为 Ask——Override 语义只升不降（见 Check）。正则带 1 秒匹配超时，
+    /// 超时按可疑处理（宁升不降）。公开以便测试直接钉住探测边界。
+    /// </summary>
+    public static bool ShellCommandLooksDangerous(string command)
+    {
+        // 剥掉单双引号与反引号，防 r''m / r"m" / r`m` 之类的拆字混淆；再压缩空白。
+        var normalized = ObfuscationRx.Replace(command, string.Empty);
+        normalized = WhitespaceRx.Replace(normalized, " ");
+        foreach (var rx in DangerousShellPatterns)
+        {
+            try
+            {
+                if (rx.IsMatch(normalized)) return true;
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return true; // 匹配超时按可疑处理——宁升不降。
+            }
+        }
+        return false;
+    }
+
+    private static readonly Regex ObfuscationRx = new("['\"`]", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+    private static readonly Regex WhitespaceRx = new(@"\s+", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+
+    /// <summary>破坏性/提权/外泄类命令清单（全部 IgnoreCase + 1 秒超时）。</summary>
+    private static readonly Regex[] DangerousShellPatterns =
+    {
+        // rm 家族：任意顺序的 -r/-f/-R/-F 组合、--recursive/--force、以及裸 rm
+        new(@"\brm\s+(?:-[a-z]*\s+)*-[a-z]*[rf]", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        new(@"\brm\s+--(recursive|force)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        new(@"\brmdir\b|\bshred\b|\brm\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // Windows 删除/格式化家族
+        new(@"\b(del|erase|rd|remove-item|format|diskpart)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 提权
+        new(@"\b(sudo|doas|pkexec|runas|gsudo)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 权限放开
+        new(@"\bchmod\s+(-[a-z]+\s+)*[0-7]*777\b|\bicacls\b.*(/grant|/reset)|\btakeown\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 编码/间接执行
+        new(@"\bpowershell(\.exe)?\s+[^|;&]*-enc\w*\b|\bcmd(\.exe)?\s+/[crv]\b|\binvoke-expression\b|\biex\s*\(", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 管道喂 shell（curl|sh 等）
+        new(@"\b(curl|wget|invoke-webrequest|iwr)\b[^|;&]*\|\s*(sh|bash|zsh|dash|python3?|node|powershell)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 磁盘/设备级破坏
+        new(@"\bdd\s+if=|\bmkfs|\bfdisk\b|\bparted\b|>\s*/dev/(sd|nvme|hd|disk|xvd)", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 关键系统文件写
+        new(@"[>|]\s*/etc/(passwd|shadow|sudoers)", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 注册表改写
+        new(@"\breg\s+(delete|add)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 强制推送（历史不可恢复）
+        new(@"\bgit\s+push\s+[^|;&]*--force\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 关机/重启
+        new(@"\b(shutdown|reboot|halt|poweroff)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+    };
+
     /// <summary>Default safe policy matching the documented table in V3_INTEGRATION_PLAN.md §3.4.</summary>
     public static PermissionPolicy CreateDefault(EventBus.EventBus bus)
     {
@@ -150,21 +207,21 @@ public sealed class PermissionPolicy
         p.SetRule(new ToolPermissionRule { ToolName = "delete_file", DefaultDecision = PermissionDecision.Ask, Notes = "Removes from disk" });
 
         // shell: pattern-based
+        // 注意：应用当前未注册任何 run_shell 执行器（休眠规则）——默认 Allow 沿用
+        // 文档化契约（V3_INTEGRATION_PLAN §3.4 安全命令放行）；探测器保持强化状态，
+        // 执行器一旦接线立即受保护。接线执行器前应重新评估默认裁决（建议 Ask）。
         p.SetRule(new ToolPermissionRule
         {
             ToolName = "run_shell",
             DefaultDecision = PermissionDecision.Allow,
-            Notes = "Safe shell",
+            Notes = "Safe shell (dormant: no executor wired); dangerous patterns always escalate to Ask",
             Override = args =>
             {
-                if (args is null) return PermissionDecision.Allow;
+                if (args is null) return PermissionDecision.Ask;
                 var cmd = args.TryGetValue("command", out var c) ? c as string : null;
-                if (string.IsNullOrEmpty(cmd)) return PermissionDecision.Ask;
+                if (string.IsNullOrWhiteSpace(cmd)) return PermissionDecision.Ask;
                 // dangerous patterns -> ask
-                if (System.Text.RegularExpressions.Regex.IsMatch(cmd, @"\b(rm\s+-rf|sudo|format|dd\s+if=|mkfs|chmod\s+777)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                    return PermissionDecision.Ask;
-                if (System.Text.RegularExpressions.Regex.IsMatch(cmd, @"\b(rm|del|rd|Remove-Item)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                    return PermissionDecision.Ask;
+                if (ShellCommandLooksDangerous(cmd)) return PermissionDecision.Ask;
                 return PermissionDecision.Allow;
             }
         });

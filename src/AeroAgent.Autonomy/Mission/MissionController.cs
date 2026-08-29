@@ -207,8 +207,9 @@ public sealed class MissionController
             var context = new MissionExecutionContext(
                 record.Id, effectiveTaskText, injection.SystemPrompt, strategyDecision.Strategy, analysis);
 
-            record.State = MissionState.Executing;
-            await _store.UpsertMissionAsync(record, ct); // 执行前落库（执行可能耗时很久）
+            // 进入执行期也走 AdvanceAsync 留痕（执行前落库，执行可能耗时很久）；
+            // 直接赋值 State 会跳过迁移轨迹，已被 ValidateTransition 禁止。
+            await AdvanceAsync(record, MissionState.Executing, transitions, "进入执行期（执行前落库）", ct);
             outcome = await _executor.ExecuteAsync(context, ct);
 
             record.SessionId = outcome.SessionId;
@@ -456,15 +457,17 @@ public sealed class MissionController
         record.Error = error;
         record.Outcome = MissionOutcome.Failed;
 
-        // 失败也必达复盘（能评多少评多少）。
+        // 失败也必达复盘（能评多少评多少）。状态推进同样走 AdvanceAsync 留痕，
+        // 不直接赋值 State——直接赋值会让迁移轨迹断链（审计已修复项）。
         try
         {
             var retro = _retrospective.Evaluate(record, retroOutcome);
             record.RetrospectiveJson = JsonSerializer.Serialize(retro, JsonOpts);
-            record.State = MissionState.Retrospective;
+            await AdvanceAsync(record, MissionState.Retrospective, transitions, $"失败复盘: {retro.Summary}", ct);
             var lessons = _retrospective.BuildLessons(retro);
-            await _store.AddLessonsAsync(lessons, ct);
-            record.State = MissionState.ExperienceWritten;
+            var written = await _store.AddLessonsAsync(lessons, ct);
+            await AdvanceAsync(record, MissionState.ExperienceWritten, transitions,
+                $"失败路径经验 {written} 条已入库", ct);
         }
         catch (Exception ex)
         {
@@ -472,7 +475,8 @@ public sealed class MissionController
         }
 
         record.TransitionsJson = JsonSerializer.Serialize(transitions, JsonOpts);
-        return await _store.UpsertMissionAsync(record, ct);
+        // 终兜底落库不可取消：失败记录本身不能丢（与 CancelAsync 对称）。
+        return await _store.UpsertMissionAsync(record, CancellationToken.None);
     }
 
     private async Task<MissionRecord> CancelAsync(MissionRecord record, List<MissionTransition> transitions, CancellationToken ct)
@@ -488,10 +492,31 @@ public sealed class MissionController
         MissionRecord record, MissionState to, List<MissionTransition> transitions, string artifact, CancellationToken ct)
     {
         var from = record.State;
+        ValidateTransition(from, to, transitions);
         record.State = to;
         transitions.Add(new MissionTransition(from, to, DateTime.UtcNow, artifact));
         record.TransitionsJson = JsonSerializer.Serialize(transitions, JsonOpts);
         await _store.UpsertMissionAsync(record, ct);
+    }
+
+    /// <summary>
+    /// 状态迁移纪律守卫：只允许前进（含失败路径的阶段跳跃）或留痕自迁移（from==to），
+    /// 不允许回退；且 from 必须与轨迹末站首尾相接——任何绕过 AdvanceAsync 直接赋值
+    /// State 的行为都会在此断链并立即暴露。
+    /// </summary>
+    private static void ValidateTransition(MissionState from, MissionState to, List<MissionTransition> transitions)
+    {
+        if (to < from)
+        {
+            throw new InvalidOperationException(
+                $"非法状态回退: {from} → {to}（状态机只允许前进或留痕自迁移）");
+        }
+
+        if (transitions.Count > 0 && transitions[^1].To != from)
+        {
+            throw new InvalidOperationException(
+                $"状态链断裂: 轨迹末站 {transitions[^1].To} 与当前状态 {from} 不一致（疑似绕过 AdvanceAsync 直接赋值 State）");
+        }
     }
 
     private static string Truncate(string? s, int max)

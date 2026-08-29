@@ -70,6 +70,32 @@ internal sealed class ScriptedPresenter : IPermissionDialogPresenter
 }
 
 /// <summary>
+/// TCS 控制的对话框呈现层：ShowAsync 开窗后等待外部完成——刻意不观察 ct，
+/// 模拟"宿主不响应令牌、决定晚于取消到达"的场景，让测试能精确控制
+/// "对话轮取消"与"用户点击决定"的先后顺序，验证
+/// DialogPermissionBroker.cs:104-108 的中途取消契约（决定作废按 Deny 收尾）。
+/// </summary>
+internal sealed class TcsControlledPresenter : IPermissionDialogPresenter
+{
+    private readonly TaskCompletionSource<PermissionDialogResult?> _completion =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<PermissionPrompt> _shown =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>对话框已打开（收到提示词）时完成。</summary>
+    public Task<PermissionPrompt> Shown => _shown.Task;
+
+    /// <summary>模拟用户在对话框上点击（允许/拒绝/记住）或关闭（null）。</summary>
+    public void Complete(PermissionDialogResult? result) => _completion.TrySetResult(result);
+
+    public async Task<PermissionDialogResult?> ShowAsync(PermissionPrompt prompt, CancellationToken ct)
+    {
+        _shown.TrySetResult(prompt);
+        return await _completion.Task; // 不观察 ct：由测试显式决定完成时机
+    }
+}
+
+/// <summary>
 /// 授权代理行为纪律验证：拿不到决定一律 Deny；记住选择即时写策略 + 落盘；
 /// 并发授权请求串行弹窗且门内复检避免重复打扰；取消按拒绝收尾。
 /// </summary>
@@ -317,5 +343,163 @@ public sealed class DialogPermissionBrokerTests : IDisposable
             () => new DialogPermissionBroker(_policy, null!, _presenter));
         Assert.Throws<ArgumentNullException>(
             () => new DialogPermissionBroker(_policy, _store, null!));
+    }
+
+    // ============ 授权对话框中途取消/宿主关闭行为契约 ============
+    // 对应实现：DialogPermissionBroker.cs:104-108（取消后到达的决定作废按 Deny）、
+    // 110-115（宿主关闭 = null → Deny）、91-94/133-137（令牌取消 → Deny）。
+
+    /// <summary>
+    /// 中途取消（决定晚到路径）：对话轮先被取消，用户随后才点"允许并记住"——
+    /// 该决定必须作废、按 Deny 收尾（DialogPermissionBroker.cs:104-108），
+    /// 不得把 Allow 粘滞写入策略或落盘；ResolveAsync 的 Task 正常完成，无悬挂。
+    /// </summary>
+    [Fact]
+    public async Task MidDialogCancel_UserApprovesAfterCancellation_DecisionVoidedAsDeny()
+    {
+        var tcsPresenter = new TcsControlledPresenter();
+        var broker = new DialogPermissionBroker(_policy, _store, tcsPresenter);
+        using var cts = new CancellationTokenSource();
+
+        var resolveTask = broker.ResolveAsync("write_file", null, cts.Token).AsTask();
+
+        // 对话框确已打开（收到提示词）后才取消——复现"中途取消"
+        var prompt = await tcsPresenter.Shown.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("write_file", prompt.ToolName);
+
+        cts.Cancel(); // 对话轮先取消
+        tcsPresenter.Complete(new PermissionDialogResult(Approved: true, Remember: true)); // 决定晚到
+
+        var decision = await resolveTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(PermissionDecision.Deny, decision); // 决定作废 → 诚实拒绝，绝不放行
+        Assert.True(resolveTask.IsCompleted);            // 无悬挂 Task
+        Assert.Equal(PermissionDecision.Ask, _policy.Check("write_file").Decision); // 策略无粘滞 Allow
+        Assert.False(File.Exists(_permFile));            // "记住"也未落盘
+    }
+
+    /// <summary>
+    /// 中途取消（令牌被观察路径）：呈现层随 ct 等待，取消使 ShowAsync 抛
+    /// OperationCanceledException → broker 统一按 Deny 收尾
+    /// （DialogPermissionBroker.cs:91-94、133-137）；Task 完成不悬挂、无残留状态。
+    /// </summary>
+    [Fact]
+    public async Task CancelWhileDialogOpen_TokenObservedPath_DeniesWithoutDanglingTask()
+    {
+        _presenter.DelayMs = 10_000; // 对话框"一直等用户决定"
+        using var cts = new CancellationTokenSource();
+
+        var resolveTask = _broker.ResolveAsync("write_file", null, cts.Token).AsTask();
+
+        // 等到对话框真的打开再取消
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_presenter.Prompts.Count == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        Assert.Single(_presenter.Prompts);
+
+        cts.Cancel();
+
+        var decision = await resolveTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(PermissionDecision.Deny, decision);
+        Assert.True(resolveTask.IsCompleted);
+        Assert.Equal(PermissionDecision.Ask, _policy.Check("write_file").Decision);
+        Assert.False(File.Exists(_permFile));
+    }
+
+    /// <summary>
+    /// 取消后状态无粘滞：中途取消过一次之后，同一工具再次请求权限必须照常弹窗、
+    /// 新用户决定照常生效——取消路径正确释放信号量（不死锁）、不污染策略。
+    /// </summary>
+    [Fact]
+    public async Task AfterMidDialogCancel_NextRequestStillPrompts_NoStickyState()
+    {
+        // 第一次：弹窗中途取消 → Deny
+        _presenter.DelayMs = 10_000;
+        using var cts = new CancellationTokenSource();
+        var first = _broker.ResolveAsync("write_file", null, cts.Token).AsTask();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_presenter.Prompts.Count == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        Assert.Single(_presenter.Prompts);
+        cts.Cancel();
+        Assert.Equal(PermissionDecision.Deny, await first.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // 第二次：全新对话轮（未取消令牌）→ 照常弹窗，用户新决定生效
+        _presenter.DelayMs = 0;
+        _presenter.Enqueue(new PermissionDialogResult(Approved: true, Remember: false));
+
+        var second = await _broker.ResolveAsync("write_file", null, CancellationToken.None);
+
+        Assert.Equal(PermissionDecision.Allow, second); // 取消不产生粘滞拒绝
+        Assert.Equal(2, _presenter.Prompts.Count);      // 第二次弹窗确实发生（门未被取消卡死）
+        Assert.Equal(PermissionDecision.Ask, _policy.Check("write_file").Decision); // 未记住 → 策略如旧
+    }
+
+    /// <summary>
+    /// 对话框宿主中途关闭：presenter 按契约返回 null（关闭/无决定）→
+    /// broker 按 Deny 收尾（DialogPermissionBroker.cs:110-115）；
+    /// 宿主关闭同样不产生粘滞状态，后续请求照常弹窗。
+    /// 说明：实现中没有独立的"超时"分支——超时最终表现为令牌取消（OCE → Deny）
+    /// 或宿主返回 null（→ Deny），殊途同归。
+    /// </summary>
+    [Fact]
+    public async Task HostClosesDialog_MidFlow_Denies_AndNextRequestStillPrompts()
+    {
+        _presenter.Enqueue(null); // 用户直接关掉对话框窗口 → 未产生决定
+
+        var decision = await _broker.ResolveAsync("write_file", null, CancellationToken.None);
+
+        Assert.Equal(PermissionDecision.Deny, decision);
+        Assert.Equal(PermissionDecision.Ask, _policy.Check("write_file").Decision);
+        Assert.False(File.Exists(_permFile));
+
+        // 宿主关闭不是终态：下一次授权请求照常弹窗且决定生效
+        _presenter.Enqueue(new PermissionDialogResult(Approved: true, Remember: false));
+        var second = await _broker.ResolveAsync("write_file", null, CancellationToken.None);
+
+        Assert.Equal(PermissionDecision.Allow, second);
+        Assert.Equal(2, _presenter.Prompts.Count);
+    }
+
+    /// <summary>
+    /// 中途取消端到端（ToolRouter 链路）：授权对话框弹出期间取消对话轮 →
+    /// 该次工具调用如实 Deny，且工具本体绝不执行（"后续工具调用未被放行"）。
+    /// </summary>
+    [Fact]
+    public async Task MidDialogCancel_EndToEnd_ToolCallDeniedAndNeverExecuted()
+    {
+        var box = new ScriptedToolbox("demo",
+            new ToolDefinition { Name = "danger_tool", Description = "高风险操作" });
+        box.SetResult("danger_tool", ToolInvokeResult.Ok("EXECUTED"));
+        var registry = new ToolboxRegistry();
+        registry.Register(box);
+        var router = new ToolRouter(registry, _policy, _broker);
+
+        _presenter.DelayMs = 10_000;
+        using var cts = new CancellationTokenSource();
+
+        var invokeTask = router.InvokeAsync("danger_tool", "{}", cts.Token);
+
+        // 等对话框弹出后再取消：复现"授权进行到一半，用户取消了整轮对话"
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_presenter.Prompts.Count == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        Assert.Single(_presenter.Prompts);
+        cts.Cancel();
+
+        var result = await invokeTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(result.Denied); // 拿不到有效决定 → 诚实拒绝
+        Assert.Contains("Permission denied", result.Output);
+        Assert.Empty(box.Invocations); // 工具从未被执行
+        Assert.Equal(PermissionDecision.Ask, _policy.Check("danger_tool").Decision); // 未记住任何决定
     }
 }

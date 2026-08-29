@@ -252,3 +252,45 @@ zip 56,053,840 B（SHA256 e34c87cb…9c58，328 条目零增零删）；APK 126,
 - GitHub 发布表单的 tag 是 React widget，直改隐藏输入会在提交时被 widget 状态覆盖——必须走 widget UI 完成选择/创建。
 - CDP 文件注入被拒时，`DataTransfer` + change 事件可驱动页面自有上传管线，比模拟拖放（drop 事件）可靠。
 - GitHub 上传 policy 按资产名做服务端去重（422 already_exists），pending 资产也会占名；重传同名需先销毁旧资产或换页重置会话。
+## 2026-08-26 · 第一轮 + 第二轮对抗审核-修复循环收口（结论）
+
+### 交付结论
+
+- **两轮循环全部收口，测试从基线 914 增至 982，四轮全绿**（914/895/19 → 947/928/19 → 982/963/19，19 跳过全为网络门控：真实 LLM / Wikipedia / MCP live 等）。
+- **第一轮修复**（专家集群深审 + 三簇回归修复）：
+  - MissionController 状态机纪律：所有 State 变更收敛 AdvanceAsync 单一咽喉点；ValidateTransition 双守卫（`to < from` 禁回退、轨迹末站 ≠ 当前状态禁绕过留痕）；失败复盘必达 ExperienceWritten，终兜底落库用 CancellationToken.None（与 CancelAsync 对称）。
+  - Provider 流式 SSE 空闲看门狗：linked CTS + CancelAfter 每行重置，空闲抛 AiProviderException(504, "stream idle timeout")；调用方取消保 OCE 语义；`line is null → yield break` 干净收尾。
+  - JsonPermissionStore：原子写（随机 tmp + Move 覆盖）+ SemaphoreSlim 并发闸门；LoadAsync 缺失契约（FileNotFound/DirectoryNotFoundException 均回退空配置，不阻塞启动）。
+  - SkillCreator.SanitizeId 按路径段清洗（合法层级 id "test/auto-skill" 保留，"../evil" 归约）+ 落盘前根目录 StartsWith 纵深校验。
+  - MCP 启动失败语义固化（Windows shell 解析不存在命令 → exit code 1 IOException；直接 spawn 失败 → 另一签名；握手超时 → TimeoutException；SDK 默认 60s 覆盖为 30s）。
+  - RealLLM 7 用例恢复发现（[CollectionDefinition] 误放测试类会吞掉该类全部测试）。
+- **第二轮修复**（Reviewer B 对抗深审裁决，无 P0）：
+  - P1：SanitizeId 三重加固——Windows 保留设备名黑名单（CON/PRN/AUX/NUL/COM1-9/LPT1-9，任意层级，OrdinalIgnoreCase）命中即整体拒绝（fail-closed，不静默改写）；段长 >64 确定性截断；有效段 >4 整体拒绝；Unicode 同形字符（西里尔 е 等）映射为 '-' 杜绝视觉欺骗；TryCreate 目录创建 + 写盘全部并入 try/catch，任何落盘失败诚实返回 null 不注册半落盘状态。
+  - P2：JsonPermissionStore 写中取消 / Move 失败时尽力清理孤儿 .tmp（清理失败不掩盖原异常，原样重抛）。
+  - 环境抖动修复（非代码回归）：全量并发运行时 MCP Toolbox E2E 因子进程冷启动超过 30s 握手窗口被诚实降级为 0 工具（单独复跑 11s 通过证实负载假设）→ E2E 网关注入 60s 握手余量 + 断言前先暴露 DiscoveryWarnings 真实原因，断言本身（12 真实工具 + 真实 DB 往返）零放宽。
+- **Reviewer A 第二轮回归与完整性审计（前台，两次后台丢失后改派）**：P0=0 / P1=0 / P2=3，签收通过——21 个 src 改动文件逐一核对无调用方破坏；诚实性抽查白名单外 8 文件全为否定式注释、0 真 stub；7 个新测试文件断言全强；README 数字与全仓静态计数精确吻合（[Fact]890+[Fact(·)]8+[SkippableFact]18+[InlineData]66=982）。P2 三项（RsiEngine 拒绝文案未涵盖新拒绝原因 / CreateProbe 共享 HttpClient 超时串扰 / AnalyzerSkill stdout 2s 窗口可误报超时）均不阻断，如实记录留待后续。
+- **新增测试 +68**：第一轮 +33（MissionTransitionDiscipline 3 / MemoryViewModel 4 / SettingsLoadSemantics 3 / McpGatewayStartup 3 / ProviderStreamWatchdog 6 / StrategyBudget+TurnBudget 8 / DialogPermissionBroker 中途取消 5 / JsonPermissionStore 并发写 1），第二轮 +35（SanitizeId 专项 33 / 权限存储失败路径 2）。全部真实文件系统与真实进程，零 mock。
+- **诚实扫描（G3）**：src 内 placeholder/TODO 命中均为合法用途（UI 流式占位消息、AnalyzerSkill 的 TODO 扫描功能本身、"禁止占位"否定式文档），无真 stub/mock/降级。
+- **Reviewer B P2 其余项裁决**：看门狗消费方滞留误报边缘、ProviderFactory Dispose 后 Get 缓慢泄漏、Ensemble finally 无超时兜底、GatewaySidecar 锁外事件乱序——均为边缘/既有遗留，如实记录不修（见已知限制）。
+
+### 收口数字
+
+全量 982 用例 / 963 过 / 19 跳过 / 0 失败（~1 分钟）。对 aaea8b2 的变更：34 个已跟踪文件 +1230/−251，另有 7 个新增测试文件（MissionTransitionDisciplineTests / MemoryViewModelTests / SettingsLoadSemanticsTests / McpGatewayStartupTests / StrategyBudgetTests / ProviderStreamWatchdogTests / SkillIdSanitizationTests）。
+
+### 已知限制（如实记录）
+
+- Android 头项目 XA5300：本机无 Android SDK，不在测试覆盖内（既有环境限制，非本轮引入）。
+- Ensemble 并行候选的预算守卫粒度为"逐次调用发起前"：触顶只拦后续调用，已发起的并行候选照常完成（现状已用 StrategyBudgetTests 如实固化）。
+- 流式响应不计费、未计价模型绕过预算（CostTracker 既有语义）。
+- MissionController `AdvanceAsync(Received)` 在 try 外、FinishAsync 非 OCE 异常裸抛（Reviewer B 判定既有遗留，本轮未动）。
+- 参考库 cline / kilocode / oh-my-opencode 本地有未提交修改，按更新纪律未动（BEHIND-DIRTY）。
+
+### 教训
+
+- C# catch 子句不支持 or-pattern（`catch (A or B)` → CS1002，LangVersion=latest 亦无效），必须写多个 catch 块。
+- 状态机唯一咽喉点 + "轨迹末站 == 当前状态"守卫，是防止绕过留痕最有性价比的两道闸。
+- Id 清洗必须按段：拍扁会破坏合法层级 id，不拍扁会漏穿越；按段清洗 + 落盘前根目录 StartsWith 双闸门才是完备解。
+- Windows 保留设备名（CON/NUL/COM1…）在路径任意层级非法且在 Linux 上是合法目录名，跨平台 fail-closed 只能在应用层做；"con.txt" 类带扩展保留名经 '.'→'-' 映射后自然失效，只需对清洗后整段精确匹配。
+- 真实进程 E2E"单跑过、并发挂"的首因是负载抖动越过握手窗口：修法是给足超时余量 + 让降级警告自解释，而不是放宽断言。
+- xUnit `[CollectionDefinition]` 放在测试类上会静默吞掉该类全部测试——Collection 定义必须独立成类。
+- dotnet 调用坑：PATH 中的 dotnet + 正斜杠 DOTNET_ROOT 报 "No .NET SDKs were found"，必须反斜杠 `export DOTNET_ROOT="C:\\Users\\...\\.dotnet"` 并直连全路径 dotnet.exe。

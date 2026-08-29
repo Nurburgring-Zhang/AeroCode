@@ -1,6 +1,7 @@
 // Copyright (c) AeroCode V3.0
 // MainView — 平台无关主视图：桌面由 MainWindow 承载，Android 由 ISingleViewApplicationLifetime.MainView 承载。
 using System;
+using System.Threading.Tasks;
 using AeroCode.App.Configuration;
 using AeroCode.App.Services;
 using AeroCode.App.ViewModels;
@@ -148,13 +149,26 @@ public partial class MainView : UserControl
             };
             settings.Current.Ui.Theme = next;
             theme.Apply(next);
-            _ = settings.SaveAsync();
+            _ = ObserveSettingsSaveAsync(settings);
             if (DataContext is MainWindowViewModel main)
                 main.StatusText = $"🌓 主题已切换: {next}";
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Cycle theme failed: {ex}");
+        }
+    }
+
+    /// <summary>主题保存失败不应静默：观察异常并写入控制台错误通道。</summary>
+    private static async Task ObserveSettingsSaveAsync(AeroCode.App.Configuration.SettingsService settings)
+    {
+        try
+        {
+            await settings.SaveAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Theme settings save failed: {ex}");
         }
     }
 }

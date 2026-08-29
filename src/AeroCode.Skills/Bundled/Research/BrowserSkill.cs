@@ -56,6 +56,9 @@ public sealed class BrowserSkill : ISkill
         "  mode=shot url=<url> output=<path>           # full-page PNG screenshot\n" +
         "  mode=structured url=<url>                   # extract JSON-LD / OG / microdata\n" +
         "Common: headless=true user_agent=<str> timeout_ms=30000 chromium_path=<path>\n" +
+        "Safety: URL must be http/https (file:// and other schemes are rejected);\n" +
+        "pdf/shot output paths are confined to the workspace root;\n" +
+        "the OS sandbox is ON unless AEROCODE_BROWSER_NO_SANDBOX=1 is set.\n" +
         "FIRST RUN downloads chromium (~150MB) via BrowserFetcher into %LOCALAPPDATA%\\AeroCode\\browser-cache.";
 
     public async Task<SkillResult> ExecuteAsync(SkillInput input, SkillContext ctx, CancellationToken ct = default)
@@ -69,6 +72,12 @@ public sealed class BrowserSkill : ISkill
 
         if (string.IsNullOrEmpty(url)) return new SkillResult { Success = false, Text = "需要 'url' 参数" };
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return new SkillResult { Success = false, Text = "Invalid URL" };
+        // 安全闸门：只允许 http/https。file:// 会让无头浏览器读取本地文件并把内容
+        // 带回模型上下文；其他协议（ftp/data/...）无抓页面语义，一律拒绝。
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+        {
+            return new SkillResult { Success = false, Text = $"只允许 http/https URL（收到 scheme={uri.Scheme}）" };
+        }
 
         try
         {
@@ -77,19 +86,29 @@ public sealed class BrowserSkill : ISkill
             var executable = await EnsureBrowserAsync(browserPath, ct);
 
             // Step 2: launch real browser process.
-            var launchOptions = new LaunchOptions
-            {
-                Headless = headless,
-                ExecutablePath = executable,
-                Args = new[] {
+            // 默认启用操作系统沙箱（渲染不可信 web 内容的进程隔离第一道防线）。
+            // 仅在 AEROCODE_BROWSER_NO_SANDBOX=1 时显式降级为无沙箱启动（个别
+            // 受限环境沙箱无法初始化），降级路径大声记录，绝不静默。
+            var noSandbox = Environment.GetEnvironmentVariable("AEROCODE_BROWSER_NO_SANDBOX") == "1";
+            var launchArgs = noSandbox
+                ? new[]
+                {
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
                     "--no-first-run",
-                    "--no-zygote",
-                    "--single-process",
                 }
+                : new[]
+                {
+                    "--disable-gpu",
+                    "--no-first-run",
+                };
+            var launchOptions = new LaunchOptions
+            {
+                Headless = headless,
+                ExecutablePath = executable,
+                Args = launchArgs,
             };
             await using var browser = await Puppeteer.LaunchAsync(launchOptions).WaitAsync(ct);
             await using var page = await browser.NewPageAsync().WaitAsync(ct);
@@ -104,8 +123,8 @@ public sealed class BrowserSkill : ISkill
                 "eval" => await EvalAsync(page, url, args, ct),
                 "click" => await ClickThenRenderAsync(page, url, args, ct),
                 "wait" => await WaitSelectorThenRenderAsync(page, url, args, ct),
-                "pdf" => await PdfAsync(page, url, args, ct),
-                "shot" => await ScreenshotAsync(page, url, args, ct),
+                "pdf" => await PdfAsync(page, url, args, ctx.WorkspaceRoot, ct),
+                "shot" => await ScreenshotAsync(page, url, args, ctx.WorkspaceRoot, ct),
                 "structured" => await StructuredAsync(page, url, ct),
                 _ => new SkillResult { Success = false, Text = $"Unknown mode: {mode}" }
             };
@@ -166,25 +185,31 @@ public sealed class BrowserSkill : ISkill
         return new SkillResult { Success = true, Text = $"# waited for {selector}\n\n{text}" };
     }
 
-    private static async Task<SkillResult> PdfAsync(IPage page, string url, IReadOnlyDictionary<string, object?> args, CancellationToken ct)
+    private static async Task<SkillResult> PdfAsync(IPage page, string url, IReadOnlyDictionary<string, object?> args, string? workspaceRoot, CancellationToken ct)
     {
         var output = args.TryGetValue("output", out var o) ? o as string : null;
         if (string.IsNullOrEmpty(output)) return new SkillResult { Success = false, Text = "需要 'output' 路径" };
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+        var safeOutput = ResolveOutputInsideRoot(output, workspaceRoot);
+        if (safeOutput is null)
+            return new SkillResult { Success = false, Text = $"output 必须位于工作区内（拒绝越界路径）: {output}" };
+        Directory.CreateDirectory(Path.GetDirectoryName(safeOutput)!);
         await page.GoToAsync(url, WaitUntilNavigation.Networkidle0).WaitAsync(ct);
         await page.EvaluateExpressionHandleAsync("document.fonts.ready").WaitAsync(ct);
-        await page.PdfAsync(output, new PdfOptions { Format = PaperFormat.Letter, PrintBackground = true }).WaitAsync(ct);
-        return new SkillResult { Success = true, Text = $"PDF saved to {output}" };
+        await page.PdfAsync(safeOutput, new PdfOptions { Format = PaperFormat.Letter, PrintBackground = true }).WaitAsync(ct);
+        return new SkillResult { Success = true, Text = $"PDF saved to {safeOutput}" };
     }
 
-    private static async Task<SkillResult> ScreenshotAsync(IPage page, string url, IReadOnlyDictionary<string, object?> args, CancellationToken ct)
+    private static async Task<SkillResult> ScreenshotAsync(IPage page, string url, IReadOnlyDictionary<string, object?> args, string? workspaceRoot, CancellationToken ct)
     {
         var output = args.TryGetValue("output", out var o) ? o as string : null;
         if (string.IsNullOrEmpty(output)) return new SkillResult { Success = false, Text = "需要 'output' 路径" };
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+        var safeOutput = ResolveOutputInsideRoot(output, workspaceRoot);
+        if (safeOutput is null)
+            return new SkillResult { Success = false, Text = $"output 必须位于工作区内（拒绝越界路径）: {output}" };
+        Directory.CreateDirectory(Path.GetDirectoryName(safeOutput)!);
         await page.GoToAsync(url, WaitUntilNavigation.Networkidle0).WaitAsync(ct);
-        await page.ScreenshotAsync(output, new ScreenshotOptions { FullPage = true, Type = ScreenshotType.Png }).WaitAsync(ct);
-        return new SkillResult { Success = true, Text = $"Screenshot saved to {output}" };
+        await page.ScreenshotAsync(safeOutput, new ScreenshotOptions { FullPage = true, Type = ScreenshotType.Png }).WaitAsync(ct);
+        return new SkillResult { Success = true, Text = $"Screenshot saved to {safeOutput}" };
     }
 
     private static async Task<SkillResult> StructuredAsync(IPage page, string url, CancellationToken ct)
@@ -266,6 +291,28 @@ public sealed class BrowserSkill : ISkill
     /// Mirrors the upstream Puppeteer 23.0.0 default. Update via env var AEROCODE_CHROMIUM_REVISION.
     /// </summary>
     public const string ChromiumRevision = "1108766";
+
+    /// <summary>
+    /// 把 output 路径解析为工作区内的绝对路径；越界（绝对路径在外面或 ../ 逃逸）返回 null。
+    /// 相对路径按工作区根解析；工作区根为空时退回当前目录。Windows 大小写不敏感。
+    /// </summary>
+    internal static string? ResolveOutputInsideRoot(string output, string? workspaceRoot)
+    {
+        var root = string.IsNullOrWhiteSpace(workspaceRoot) ? Directory.GetCurrentDirectory() : workspaceRoot;
+        string rootFull;
+        try { rootFull = Path.GetFullPath(root); }
+        catch { return null; }
+        string full;
+        try { full = Path.GetFullPath(Path.IsPathRooted(output) ? output : Path.Combine(rootFull, output)); }
+        catch { return null; }
+        var rootPrefix = rootFull.EndsWith(Path.DirectorySeparatorChar) ? rootFull : rootFull + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(full, rootFull, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        return full;
+    }
 
     private static async Task<string> EnsureBrowserAsync(string? overridePath, CancellationToken ct)
     {

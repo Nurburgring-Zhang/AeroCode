@@ -10,6 +10,7 @@ using AeroAgent.Moa.Accounting;
 using AeroAgent.Moa.Aggregation;
 using AeroAgent.Moa.Assignment;
 using AeroAgent.Moa.Profiles;
+using Microsoft.Extensions.Logging;
 using AiChatMessage = AeroCode.AI.Models.ChatMessage;
 
 namespace AeroAgent.Moa.Strategies;
@@ -27,6 +28,7 @@ public sealed class EnsembleStrategy : IOrchestrationStrategy
     private readonly ModelAssigner _assigner;
     private readonly Synthesizer _synthesizer;
     private readonly MoaOptions _options;
+    private readonly ILogger<EnsembleStrategy>? _logger;
 
     public EnsembleStrategy(
         ISessionService sessions,
@@ -34,7 +36,8 @@ public sealed class EnsembleStrategy : IOrchestrationStrategy
         ModelResolver resolver,
         ModelAssigner assigner,
         Synthesizer synthesizer,
-        MoaOptions options)
+        MoaOptions options,
+        ILogger<EnsembleStrategy>? logger = null)
     {
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
@@ -42,6 +45,7 @@ public sealed class EnsembleStrategy : IOrchestrationStrategy
         _assigner = assigner ?? throw new ArgumentNullException(nameof(assigner));
         _synthesizer = synthesizer ?? throw new ArgumentNullException(nameof(synthesizer));
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _logger = logger;
     }
 
     public OrchestrationStrategy Kind => OrchestrationStrategy.Ensemble;
@@ -97,18 +101,40 @@ public sealed class EnsembleStrategy : IOrchestrationStrategy
             }
         });
 
-        await foreach (var ev in EventPump.DrainAsync(channel, ct))
+        WorkerOutcome[]? outcomes = null;
+        try
         {
-            yield return ev;
+            await foreach (var ev in EventPump.DrainAsync(channel, ct))
+            {
+                yield return ev;
+            }
+
+            outcomes = await workersTask;
+        }
+        finally
+        {
+            // 消费端提前退出（取消/中止/下游异常）时也要结算 workersTask，
+            // 否则其异常成为未观察 TaskException、结果悄然丢失。
+            if (outcomes is null)
+            {
+                try
+                {
+                    await workersTask.ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogDebug(
+                        "ensemble workers settled after early drain exit: {Error}", ex.Message);
+                }
+            }
         }
 
-        var outcomes = await workersTask;
         if (ct.IsCancellationRequested)
         {
             yield break;
         }
 
-        var results = outcomes
+        var results = outcomes!
             .Select((o, i) => new SubtaskResult(
                 $"{Synthesizer.CandidateLabels[i % Synthesizer.CandidateLabels.Length]} · {o.ProviderId}/{o.ModelId}",
                 o.Succeeded,
@@ -158,16 +184,35 @@ public sealed class EnsembleStrategy : IOrchestrationStrategy
             }
         });
 
-        await foreach (var ev in EventPump.DrainAsync(judgeChannel, ct))
+        WorkerOutcome? judgeOutcome = null;
+        try
         {
-            yield return ev;
-        }
+            await foreach (var ev in EventPump.DrainAsync(judgeChannel, ct))
+            {
+                yield return ev;
+            }
 
-        var judgeOutcome = await judgeTask;
+            judgeOutcome = await judgeTask;
+        }
+        finally
+        {
+            if (judgeOutcome is null)
+            {
+                try
+                {
+                    await judgeTask.ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogDebug(
+                        "ensemble judge settled after early drain exit: {Error}", ex.Message);
+                }
+            }
+        }
 
         // ---- 4. 降级标注：有候选失败但裁决成功 ----
         var anyFailed = results.Any(r => !r.Succeeded);
-        if (anyFailed && judgeOutcome.Succeeded && !string.IsNullOrEmpty(judgeOutcome.MessageId))
+        if (anyFailed && judgeOutcome!.Succeeded && !string.IsNullOrEmpty(judgeOutcome.MessageId))
         {
             var messages = await _sessions.GetMessagesAsync(sessionId);
             if (messages.IsSuccess && messages.Value is not null)

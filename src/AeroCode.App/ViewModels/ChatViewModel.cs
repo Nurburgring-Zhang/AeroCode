@@ -457,7 +457,23 @@ public partial class ChatViewModel : ObservableObject
         {
             _suppressStrategySync = false;
         }
-        _ = LoadMessagesAsync(value.Id);
+        _ = ObserveAsync(LoadMessagesAsync(value.Id));
+    }
+
+    /// <summary>
+    /// 观察后台任务异常：fire-and-forget 场景下把异常落到 StatusText，
+    /// 而不是成为 UnobservedTaskException 静默汇。
+    /// </summary>
+    private async Task ObserveAsync(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ {ex.Message}";
+        }
     }
 
     /// <summary>策略下拉变更：持久化到当前会话（新会话则作为创建参数）。</summary>
@@ -475,7 +491,7 @@ public partial class ChatViewModel : ObservableObject
         }
 
         session.Strategy = value;
-        _ = PersistStrategyAsync(session, value);
+        _ = ObserveAsync(PersistStrategyAsync(session, value));
     }
 
     private async Task PersistStrategyAsync(SessionItemViewModel session, OrchestrationStrategy strategy)

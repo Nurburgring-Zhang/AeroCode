@@ -121,7 +121,8 @@ public sealed class SettingsService
     public AIOptions ToAiOptions()
     {
         var ai = Current.Ai;
-        // 兜底:至少保证有 deepseek 占位
+        // 兜底:一个 provider 都未配置时，给出可直接使用的 DeepSeek 默认配置
+        // （配上 DEEPSEEK_API_KEY 环境变量即可连通，不是占位假配置）。
         if (ai.Providers.Count == 0)
         {
             ai.Providers.Add(new ProviderConfig

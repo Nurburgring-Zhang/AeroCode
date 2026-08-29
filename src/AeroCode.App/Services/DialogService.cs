@@ -72,8 +72,7 @@ public class DialogService : IDialogService
                 okBtn2
             }
         };
-        if (TryGetOwner(out var owner)) await dlg.ShowDialog(owner);
-        else dlg.Show();
+        await ShowAndWaitAsync(dlg);
     }
 
     public async Task<bool> ConfirmAsync(string title, string message)
@@ -145,9 +144,27 @@ public class DialogService : IDialogService
                 }
             }
         };
-        if (TryGetOwner(out var owner)) await dlg.ShowDialog(owner);
-        else dlg.Show();
+        await ShowAndWaitAsync(dlg);
         return result;
+    }
+
+    /// <summary>
+    /// 呈现对话框并统一等待其关闭：有 owner 时模态 ShowDialog；无 owner 时
+    /// 非模态 Show + 等待 Closed 事件。旧实现无 owner 分支不等待关闭，
+    /// ConfirmAsync 会在用户尚未作答时立即返回 false——语义错误，此处修正。
+    /// </summary>
+    private static async Task ShowAndWaitAsync(Window dlg)
+    {
+        if (TryGetOwner(out var owner))
+        {
+            await dlg.ShowDialog(owner);
+            return;
+        }
+
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        dlg.Closed += (_, _) => closed.TrySetResult();
+        dlg.Show();
+        await closed.Task;
     }
 
     /// <summary>覆盖层卡片（与设置/授权弹层同一视觉语言）。</summary>

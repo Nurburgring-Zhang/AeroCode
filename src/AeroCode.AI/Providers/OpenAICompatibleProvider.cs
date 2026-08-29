@@ -189,6 +189,15 @@ public abstract class OpenAICompatibleProvider : IAiProvider
         return ParseNonStreamResponse(respText);
     }
 
+    /// <summary>
+    /// 流式 idle 超时：ResponseHeadersRead 语义下 HttpClient.Timeout 不覆盖内容读取，
+    /// 服务端发完头后停滞会把枚举永久挂起。每收到一行重置倒计时，到期按流中断上抛。
+    /// 虚设以便测试注入小值快速验证。
+    /// </summary>
+    protected virtual TimeSpan StreamIdleTimeout => Config.TimeoutSeconds > 0
+        ? TimeSpan.FromSeconds(Config.TimeoutSeconds)
+        : TimeSpan.FromMinutes(2);
+
     public virtual async IAsyncEnumerable<ChatChunk> StreamChatAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken ct = default)
     {
         var body = BuildRequestBody(request);
@@ -202,10 +211,26 @@ public abstract class OpenAICompatibleProvider : IAiProvider
         }
         await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         using var reader = new StreamReader(stream, Encoding.UTF8);
-        while (!reader.EndOfStream)
+        // idle 看门狗：链接令牌 + CancelAfter，每收到一行重置倒计时；
+        // 到期触发的取消与调用方取消严格区分（后者保持 OperationCanceledException 语义）。
+        // 循环用 ReadLineAsync 返回 null 判 EOF——EndOfStream 会同步阻塞读，绕过看门狗。
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        idleCts.CancelAfter(StreamIdleTimeout);
+        while (true)
         {
             ct.ThrowIfCancellationRequested();
-            var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync(idleCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new AiProviderException(ProviderId, 504,
+                    $"stream idle timeout: no data for {StreamIdleTimeout.TotalSeconds:0}s");
+            }
+            if (line is null) yield break; // EOF：流未带 [DONE] 也如实结束
+            idleCts.CancelAfter(StreamIdleTimeout); // 收到数据 → 重置倒计时
             if (string.IsNullOrEmpty(line)) continue;
             if (!line.StartsWith("data: ", StringComparison.Ordinal)) continue;
             var data = line[6..].Trim();

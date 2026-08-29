@@ -671,26 +671,36 @@ public sealed class GatewaySidecar : IAsyncDisposable
         }
     }
 
+    private readonly object _stateLock = new();
+
     private void Transition(GatewaySidecarState next, string? error)
     {
-        if (error is not null)
+        // watchdog 循环与 Start/Stop 调用方并发触发状态迁移：
+        // check-then-set 必须在同一锁内原子完成，避免丢失/乱序写入。
+        GatewaySidecarState changedTo;
+        lock (_stateLock)
         {
-            LastError = error;
+            if (error is not null)
+            {
+                LastError = error;
+            }
+
+            if (State == next)
+            {
+                return;
+            }
+
+            State = next;
+            changedTo = next;
         }
 
-        if (State == next)
-        {
-            return;
-        }
-
-        State = next;
+        // 事件在锁外派发：订阅者异常与耗时不得干扰生命周期管理，也不得反向死锁。
         try
         {
-            StateChanged?.Invoke(next);
+            StateChanged?.Invoke(changedTo);
         }
         catch (Exception ex)
         {
-            // 订阅者异常不得干扰生命周期管理。
             _logger.LogWarning("gateway sidecar state subscriber threw: {Error}", ex.Message);
         }
     }

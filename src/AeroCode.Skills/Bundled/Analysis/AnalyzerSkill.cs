@@ -255,7 +255,7 @@ public sealed class AnalyzerSkill : ISkill
         }
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git", "status --porcelain")
+            var psi = new System.Diagnostics.ProcessStartInfo("git")
             {
                 WorkingDirectory = root,
                 RedirectStandardOutput = true,
@@ -263,9 +263,29 @@ public sealed class AnalyzerSkill : ISkill
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            // core.fsmonitor=false：恶意仓库可在本地配置里挂 fsmonitor 钩子，
+            // git status 即触发任意命令——扫描用途显式禁用。
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("core.fsmonitor=false");
+            psi.ArgumentList.Add("status");
+            psi.ArgumentList.Add("--porcelain");
+
             using var p = System.Diagnostics.Process.Start(psi);
-            p!.WaitForExit(5000);
-            var output = p.StandardOutput.ReadToEnd();
+            if (p is null)
+            {
+                sb.AppendLine("- git command failed: process not started");
+                return sb.ToString();
+            }
+            // 先异步抽干 stdout 再等进程：顺序反了大输出会填满管道缓冲区造成死锁。
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            var exited = p.WaitForExit(5000) && stdoutTask.Wait(2000);
+            if (!exited)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { /* 已退出则忽略 */ }
+                sb.AppendLine("- git status timed out (>5s); process killed");
+                return sb.ToString();
+            }
+            var output = stdoutTask.Result;
             var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             var modified = lines.Count(l => l.StartsWith(" M") || l.StartsWith("M "));
             var added = lines.Count(l => l.StartsWith("??") || l.StartsWith("A "));

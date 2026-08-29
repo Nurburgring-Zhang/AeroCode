@@ -22,8 +22,12 @@ using AeroCode.Skills.Registry;
 
 namespace AeroCode.Skills.Bundled.Research;
 
-public sealed class EmbeddingSkill : ISkill
+public sealed partial class EmbeddingSkill : ISkill
 {
+    /// <summary>合法环境变量名（字母/下划线开头，≤64 字符）——api_key_env 闸门用。</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]{0,63}$")]
+    private static partial System.Text.RegularExpressions.Regex EnvVarNameRx();
+
     public string Id => "research/embedding";
     public string Name => "Embedding (real HTTP)";
     public string Description => "真HTTP调Ollama/OpenAI嵌入拿向量+top-K检索";
@@ -58,6 +62,19 @@ public sealed class EmbeddingSkill : ISkill
         var baseUrl = (args.TryGetValue("base_url", out var bu) ? bu as string : null) ?? "http://localhost:11434";
         var model = (args.TryGetValue("model", out var mo) ? mo as string : null) ?? "all-minlm-l6-v2";
         var apiKeyEnv = args.TryGetValue("api_key_env", out var ake) ? ake as string : null;
+
+        // 安全闸门：base_url 只允许 http/https 绝对地址（拒绝 file://、ftp:// 等，
+        // 防止把嵌入请求打到本地文件或非常规协议端点）；api_key_env 必须是合法环境
+        // 变量名——否则模型可传入任意变量名，把其值作为 Bearer 发往任意 URL（凭据外泄面）。
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri)
+            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))
+        {
+            return new SkillResult { Success = false, Text = $"base_url 只允许 http/https 绝对地址: {baseUrl}" };
+        }
+        if (!string.IsNullOrEmpty(apiKeyEnv) && !EnvVarNameRx().IsMatch(apiKeyEnv))
+        {
+            return new SkillResult { Success = false, Text = $"api_key_env 不是合法的环境变量名: {apiKeyEnv}" };
+        }
 
         var client = new EmbeddingClient(new EmbeddingClientOptions
         {

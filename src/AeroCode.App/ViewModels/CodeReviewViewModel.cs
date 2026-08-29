@@ -12,7 +12,7 @@ namespace AeroCode.App.ViewModels;
 
 /// <summary>
 /// V3 Code Review Tab: 选文件 / 粘代码, 调用 CodeReviewSkill 8 维度。
-/// 真实 LLM 增强占位, 当前用启发式 + 可选 LLM 二次确认 (V3.1)。
+/// 启发式审查 + 可选 LLM 二次确认（V3.1 已实现，非占位）。
 /// </summary>
 public partial class CodeReviewViewModel : ObservableObject
 {

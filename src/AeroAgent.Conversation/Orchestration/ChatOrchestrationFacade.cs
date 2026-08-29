@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -37,6 +38,11 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
     private readonly IReadOnlyDictionary<OrchestrationStrategy, IOrchestrationStrategy> _strategies;
     private readonly ILogger<ChatOrchestrationFacade> _logger;
 
+    // 会话级轮次闸门：同一会话同时最多一个进行中的轮次。
+    // 并发 SendAsync 会交叉"追加用户消息"与"加载完整历史"，把上下文串错；
+    // 闸门按 sessionId 隔离，跨会话并行不受影响。
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionGates = new();
+
     public ChatOrchestrationFacade(
         ISessionService sessions,
         IProviderRegistry providers,
@@ -65,6 +71,9 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
             };
             yield break;
         }
+
+        // 会话级轮次串行化（闸门随枚举完成或消费方 Dispose 释放）。
+        await using var gateLease = await SessionGateLease.AcquireAsync(_sessionGates, sessionId, ct);
 
         var sessionResult = await _sessions.GetSessionAsync(sessionId);
         if (!sessionResult.IsSuccess || sessionResult.Value is not { } session)
@@ -283,6 +292,36 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         finally
         {
             inFlight.Clear();
+        }
+    }
+
+    /// <summary>
+    /// 会话轮次闸门租约：持有期间该会话至多一个进行中的轮次；
+    /// await using 在枚举正常结束、异常终止或消费方 Dispose 时都会释放。
+    /// </summary>
+    private sealed class SessionGateLease : IAsyncDisposable
+    {
+        private readonly SemaphoreSlim _gate;
+
+        private SessionGateLease(SemaphoreSlim gate)
+        {
+            _gate = gate;
+        }
+
+        public static async ValueTask<SessionGateLease> AcquireAsync(
+            ConcurrentDictionary<string, SemaphoreSlim> gates,
+            string sessionId,
+            CancellationToken ct)
+        {
+            var gate = gates.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(ct).ConfigureAwait(false);
+            return new SessionGateLease(gate);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _gate.Release();
+            return ValueTask.CompletedTask;
         }
     }
 }

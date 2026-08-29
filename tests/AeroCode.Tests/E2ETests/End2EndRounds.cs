@@ -242,19 +242,31 @@ public class R4_Skills_E2E
 public class R5_Memory_E2E
 {
     [Fact]
-    public void Memory_WriteRead_RespectsLimit()
+    public async Task Memory_WriteRead_RespectsLimit()
     {
+        // 旧版用例是自证式（测试自己写文件自己截断，未触碰产品代码）。
+        // 现改为真实调用 MemoryViewModel：AppDataPaths(string rootDirectory) 支持注入临时根目录，
+        // 截断治理是 MemoryViewModel.SaveAsync 的产品逻辑（MEMORY.md 2200 / USER.md 1375）。
         var tmp = Path.Combine(Path.GetTempPath(), "aerocode_mem_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tmp);
         try
         {
-            var memPath = Path.Combine(tmp, "MEMORY.md");
-            var longText = new string('x', 3000);
-            File.WriteAllText(memPath, longText);
-            var read = File.ReadAllText(memPath);
-            // Cap to 2200 (Hermes recommendation)
-            var capped = read[..Math.Min(2200, read.Length)];
-            Assert.Equal(2200, capped.Length);
+            var paths = new AeroCode.App.Services.AppDataPaths(tmp);
+            var vm = new AeroCode.App.ViewModels.MemoryViewModel(paths);
+            vm.MemoryContent = new string('x', 3000);
+            vm.UserContent = new string('u', 2000);
+
+            await vm.SaveCommand.ExecuteAsync(null);
+
+            var memoryFile = Path.Combine(tmp, "memories", "MEMORY.md");
+            var userFile = Path.Combine(tmp, "memories", "USER.md");
+            Assert.Equal(2200, File.ReadAllText(memoryFile).Length); // Hermes MEMORY.md cap
+            Assert.Equal(1375, File.ReadAllText(userFile).Length);   // Hermes USER.md cap
+
+            // 读侧回环：新 VM 重载读到的正是截断后的内容，计数一致
+            var vm2 = new AeroCode.App.ViewModels.MemoryViewModel(new AeroCode.App.Services.AppDataPaths(tmp));
+            Assert.Equal(2200, vm2.MemoryContent.Length);
+            Assert.Equal(2200, vm2.MemoryCharCount);
+            Assert.Equal(1375, vm2.UserCharCount);
         }
         finally { try { Directory.Delete(tmp, true); } catch { } }
     }

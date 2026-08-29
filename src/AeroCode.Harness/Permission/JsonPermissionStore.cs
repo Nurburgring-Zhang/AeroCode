@@ -32,6 +32,9 @@ public sealed class JsonPermissionStore
     };
 
     private readonly string _filePath;
+    // 并发写闸门：MOA 多 worker 的弹窗回调与设置页保存可能并发 SaveAsync；
+    // 串行化保证"写临时文件 → Move 覆盖"两步作为整体完成，不留孤儿 .tmp。
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
 
     public JsonPermissionStore(string filePath)
     {
@@ -43,12 +46,23 @@ public sealed class JsonPermissionStore
     /// <summary>读取持久化决策；文件缺失或损坏时返回空配置（诚实回退，不抛异常阻塞启动）。</summary>
     public async Task<PermissionSettings> LoadAsync(CancellationToken ct = default)
     {
-        if (!File.Exists(_filePath))
+        string json;
+        try
         {
+            json = await File.ReadAllTextAsync(_filePath, ct).ConfigureAwait(false);
+        }
+        catch (FileNotFoundException)
+        {
+            // 文件缺失、或 Exists→Read 之间被删除的竞态：与"文件缺失"同义，
+            // 按契约回退空配置（不抛异常阻塞启动）。
+            return new PermissionSettings();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // 父目录尚不存在同样等价于"文件缺失"（ReadAllText 对不存在目录抛此异常）。
             return new PermissionSettings();
         }
 
-        var json = await File.ReadAllTextAsync(_filePath, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(json))
         {
             return new PermissionSettings();
@@ -70,19 +84,41 @@ public sealed class JsonPermissionStore
         }
     }
 
-    /// <summary>原子写入：先写随机临时文件再 Move 覆盖，避免半截文件。</summary>
+    /// <summary>
+    /// 原子写入：先写随机临时文件再 Move 覆盖，避免半截文件；并发写串行化。
+    /// 写入被取消或 Move 失败时，尽力清理孤儿 .tmp（清理本身的失败不掩盖原异常）。
+    /// </summary>
     public async Task SaveAsync(PermissionSettings settings, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        var dir = Path.GetDirectoryName(_filePath);
-        if (!string.IsNullOrEmpty(dir))
+        await _saveGate.WaitAsync(ct).ConfigureAwait(false);
+        string? tmp = null;
+        try
         {
-            Directory.CreateDirectory(dir);
-        }
+            var dir = Path.GetDirectoryName(_filePath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
 
-        var json = JsonSerializer.Serialize(settings, JsonOptions);
-        var tmp = $"{_filePath}.{Guid.NewGuid():N}.tmp";
-        await File.WriteAllTextAsync(tmp, json, ct).ConfigureAwait(false);
-        File.Move(tmp, _filePath, overwrite: true);
+            var json = JsonSerializer.Serialize(settings, JsonOptions);
+            tmp = $"{_filePath}.{Guid.NewGuid():N}.tmp";
+            await File.WriteAllTextAsync(tmp, json, ct).ConfigureAwait(false);
+            File.Move(tmp, _filePath, overwrite: true);
+        }
+        catch
+        {
+            // 写中取消 / Move 失败：尽力清掉孤儿 .tmp，再原样重抛保留失败语义。
+            if (tmp is not null)
+            {
+                try { File.Delete(tmp); }
+                catch { /* 尽力清理：二次失败不掩盖原异常 */ }
+            }
+            throw;
+        }
+        finally
+        {
+            _saveGate.Release();
+        }
     }
 }
