@@ -41,10 +41,30 @@ public sealed class PermissionPolicy
     private readonly object _sync = new();
     private readonly Dictionary<string, ToolPermissionRule> _rules = new();
     private readonly EventBus.EventBus _eventBus;
+    private PermissionMode _mode = PermissionMode.Default;
 
     public PermissionPolicy(EventBus.EventBus eventBus)
     {
         _eventBus = eventBus;
+    }
+
+    /// <summary>当前权限档位。运行时可切换（UI 档位下拉/Plan 审批进出），线程安全。</summary>
+    public PermissionMode CurrentMode
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _mode;
+            }
+        }
+        set
+        {
+            lock (_sync)
+            {
+                _mode = value;
+            }
+        }
     }
 
     /// <summary>Register a default rule for a tool.</summary>
@@ -91,37 +111,46 @@ public sealed class PermissionPolicy
         }
     }
 
-    /// <summary>Check permission for a tool call.</summary>
+    /// <summary>
+    /// Check permission for a tool call.
+    /// 裁决序：显式 Deny &gt; 档位变换后的基线 &gt; Override 只升不降。
+    /// </summary>
     public PermissionResult Check(string toolName, IReadOnlyDictionary<string, object?>? args = null)
     {
         ToolPermissionRule? rule;
+        PermissionMode mode;
         lock (_sync)
         {
             _rules.TryGetValue(toolName, out rule);
+            mode = _mode;
         }
 
         if (rule is null)
         {
-            // Unknown tool: ask by default (safe).
-            return new PermissionResult(PermissionDecision.Ask, $"Unknown tool '{toolName}'");
+            // Unknown tool: ask by default (safe) — Plan 档收紧为 Deny（规划期不接受新工具）。
+            return mode == PermissionMode.Plan
+                ? new PermissionResult(PermissionDecision.Deny, $"Unknown tool '{toolName}' in plan mode")
+                : new PermissionResult(PermissionDecision.Ask, $"Unknown tool '{toolName}'");
         }
 
-        // 显式 Deny 优先：用户/系统明确拒绝的工具不得被 Override（模式探测）翻成放行。
+        // 显式 Deny 优先：用户/系统明确拒绝的工具不得被 Override 或档位翻成放行。
         if (rule.DefaultDecision == PermissionDecision.Deny)
         {
             return new PermissionResult(PermissionDecision.Deny, "Explicitly denied");
         }
 
+        var baseline = PermissionModeTransform.Apply(mode, toolName, rule.DefaultDecision);
+
         if (rule.Override is not null)
         {
             var d = rule.Override(args);
             // Override 只允许升级审慎度（Allow→Ask→Deny），绝不降级：
-            // 用户把默认决策设为 Ask 后，模式探测不得把它悄悄放行为 Allow。
-            if (PrudenceRank(d) > PrudenceRank(rule.DefaultDecision))
+            // 用户把默认决策设为 Ask（或档位放行）后，模式探测不得把它悄悄放行为 Allow。
+            if (PrudenceRank(d) > PrudenceRank(baseline))
                 return new PermissionResult(d, "Rule override");
         }
 
-        return new PermissionResult(rule.DefaultDecision);
+        return new PermissionResult(baseline);
     }
 
     /// <summary>审慎度阶梯：Allow(0) &lt; Ask(1) &lt; Deny(2)。Override 只许向上走。</summary>
@@ -207,14 +236,13 @@ public sealed class PermissionPolicy
         p.SetRule(new ToolPermissionRule { ToolName = "delete_file", DefaultDecision = PermissionDecision.Ask, Notes = "Removes from disk" });
 
         // shell: pattern-based
-        // 注意：应用当前未注册任何 run_shell 执行器（休眠规则）——默认 Allow 沿用
-        // 文档化契约（V3_INTEGRATION_PLAN §3.4 安全命令放行）；探测器保持强化状态，
-        // 执行器一旦接线立即受保护。接线执行器前应重新评估默认裁决（建议 Ask）。
+        // WorkspaceToolbox 已接线真实执行器（v1.2 批次 A），按本注释的既定要求把默认裁决
+        // 收紧为 Ask：任何命令默认需用户批准，危险模式探测继续升级且不可被档位绕过。
         p.SetRule(new ToolPermissionRule
         {
             ToolName = "run_shell",
-            DefaultDecision = PermissionDecision.Allow,
-            Notes = "Safe shell (dormant: no executor wired); dangerous patterns always escalate to Ask",
+            DefaultDecision = PermissionDecision.Ask,
+            Notes = "Real executor wired; dangerous patterns always escalate to Ask",
             Override = args =>
             {
                 if (args is null) return PermissionDecision.Ask;
@@ -235,6 +263,15 @@ public sealed class PermissionPolicy
         p.SetRule(new ToolPermissionRule { ToolName = "git_commit", DefaultDecision = PermissionDecision.Ask, Notes = "Side effect on local repo" });
         p.SetRule(new ToolPermissionRule { ToolName = "git_status", DefaultDecision = PermissionDecision.Allow, Notes = "Read-only" });
         p.SetRule(new ToolPermissionRule { ToolName = "git_diff", DefaultDecision = PermissionDecision.Allow, Notes = "Read-only" });
+
+        // plan-file writer: only meaningful inside plan mode (PermissionModeTransform 放行白名单)。
+        // Default/AcceptEdits/Bypass 档下显式 Deny——计划文件只能由规划流程产生。
+        p.SetRule(new ToolPermissionRule
+        {
+            ToolName = "write_plan",
+            DefaultDecision = PermissionDecision.Deny,
+            Notes = "Only allowed while PermissionMode.Plan is active",
+        });
 
         return p;
     }

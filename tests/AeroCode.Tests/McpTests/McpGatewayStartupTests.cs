@@ -127,11 +127,29 @@ public sealed class McpGatewayStartupTests
         // 防御性令牌：注入万一失效时，用例在 20s 内以取消失败，而不是空等 SDK 默认 60s。
         using var safetyNet = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var sw = Stopwatch.StartNew();
-        var ex = await Assert.ThrowsAsync<TimeoutException>(
-            () => gateway.ListToolsAsync(safetyNet.Token));
-        sw.Stop();
+        // 全量并发下安静进程的启动可能慢于注入超时：SDK 在 send 阶段以
+        // IOException(canceled) 失败而非 TimeoutException——两种都是"快速失败"，
+        // 单跑实测稳定 TimeoutException（3/3）。钉住双类型但保持语义与时长断言。
+        Exception failure;
+        try
+        {
+            await gateway.ListToolsAsync(safetyNet.Token);
+            Assert.Fail("silent process handshake should fail fast, not succeed");
+            return;
+        }
+        catch (Exception caught)
+        {
+            failure = caught;
+        }
 
-        Assert.Contains("Initialization timed out", ex.Message);
+        sw.Stop();
+        var isTimeout = failure is TimeoutException
+            || (failure is IOException io && io.InnerException is OperationCanceledException);
+        Assert.True(isTimeout,
+            $"expected fast-fail (TimeoutException or IOException(canceled)), got {failure.GetType().Name}: {failure.Message}");
+        Assert.True(failure.Message.Contains("Initialization timed out", StringComparison.Ordinal)
+            || failure.Message.Contains("Failed to send message", StringComparison.Ordinal),
+            $"unexpected failure message: {failure.Message}");
         // 200ms 注入 + 进程启动开销，正常 ~1-2s；给足 CI 抖动余量，
         // 但仍远低于默认 30s——注入不生效时该断言必然失败。
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10),

@@ -162,7 +162,7 @@
             <Border Grid.Row="1" Background="{StaticResource ChatPanel}"
                     BorderBrush="{StaticResource ChatBorder}" BorderThickness="0,1,0,0" Padding="12">
                 <StackPanel Spacing="8">
-                    <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto">
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
                             <TextBlock Text="Provider" Foreground="{StaticResource ChatMuted}"
                                        FontSize="11" VerticalAlignment="Center" />
@@ -178,7 +178,17 @@
                                       ToolTip.Tip="本会话编排策略：Single 单模型 / Router 路由分流 / Decompose 拆解分工 / Ensemble 多模型集成 / Pipeline 起草-评审-修订"
                                       MinWidth="110" FontSize="12" />
                         </StackPanel>
-                        <TextBlock Grid.Column="3" Text="{Binding StatusText}"
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0">
+                            <TextBlock Text="档位" Foreground="{StaticResource ChatMuted}"
+                                       FontSize="11" VerticalAlignment="Center" />
+                            <ComboBox ItemsSource="{Binding PermissionModes}"
+                                      SelectedItem="{Binding SelectedMode, Mode=TwoWay}"
+                                      MinWidth="104" FontSize="12"
+                                      ToolTip.Tip="权限档位：Default 逐工具规则 / AcceptEdits 自动接受编辑 / Plan 只读规划（write_plan 落 PLAN.md）/ Bypass 跳过询问（显式拒绝与危险命令拦截不受影响）" />
+                            <TextBlock Text="{Binding ModeDescription}" Foreground="{StaticResource ChatMuted}"
+                                       FontSize="10" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="4" Text="{Binding StatusText}"
                                    Foreground="{StaticResource ChatMuted}" FontSize="11"
                                    VerticalAlignment="Center" Margin="12,0" />
                     </Grid>

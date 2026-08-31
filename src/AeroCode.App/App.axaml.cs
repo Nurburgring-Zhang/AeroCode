@@ -11,6 +11,7 @@ using AeroAgent.Moa.Planning;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Strategies;
 using AeroAgent.Moa.Tools;
+using AeroAgent.Moa.Tools.Workspace;
 using AeroCode.AI.Embedding;
 using AeroCode.AI.Providers;
 using AeroCode.AI.Telemetry;
@@ -24,6 +25,7 @@ using AeroCode.Core.Data;
 using AeroCode.Core.Services;
 using AeroCode.Harness;
 using AeroCode.Harness.Permission;
+using AeroCode.Harness.PlanMode;
 using AeroCode.Mcp.Client;
 using AeroCode.Skills;
 using Avalonia;
@@ -218,9 +220,59 @@ public partial class App : Application
         sc.AddSingleton<IPermissionBroker>(permissionBroker);
 
         var toolboxRegistry = new ToolboxRegistry();
-        var toolRouter = new ToolRouter(toolboxRegistry, harnessHost.Permission, permissionBroker);
+
+        // 3e. 工作区工具域接线（批次 A）：WorkspaceContext 解析失败时诚实降级——
+        //     不注册 workspace/git/plan 工具域并记 WARN，绝不伪造根路径。
+        //     检查点/大输出落盘都在 AppDataPaths 根下（尊重 Android 数据根覆盖）。
+        //     注册与 ChatViewModel 可选参数（默认 null）配套：未注册即如实无工作区。
+        WorkspaceContext? workspace = ResolveWorkspace(settings, paths, loggerFactory);
+        var planWorkflow = workspace is null
+            ? null
+            : new PlanWorkflow(harnessHost.Permission, workspace.Root);
+        sc.AddSingleton(new InstructionLoader(paths.RootDirectory, workspace?.Root));
+
+        if (workspace is not null)
+        {
+            sc.AddSingleton(workspace);
+            sc.AddSingleton(planWorkflow!);
+
+            ICheckpointTracker? checkpoints = null;
+            try
+            {
+                checkpoints = new CheckpointStore(Path.Combine(paths.RootDirectory, "checkpoints"));
+            }
+            catch (Exception ex)
+            {
+                loggerFactory.CreateLogger("AeroCode.Workspace").LogWarning(
+                    "[DEGRADED] 检查点目录不可用，写类工具将不留检查点：{Error}", ex.Message);
+            }
+
+            toolboxRegistry.Register(new WorkspaceToolbox(
+                workspace,
+                new ShellRunner(
+                    workspace.Root,
+                    TimeSpan.FromSeconds(settings.Current.Workspace.ShellTimeoutSeconds)),
+                checkpoints));
+            toolboxRegistry.Register(new GitToolbox(new GitWorkflow(workspace.Root)));
+            toolboxRegistry.Register(new PlanToolbox(planWorkflow!));
+        }
+
+        // 工具大结果落盘汇：按日期分目录，截断后的引用路径指回真实文件。
+        var toolRouter = new ToolRouter(
+            toolboxRegistry,
+            harnessHost.Permission,
+            permissionBroker,
+            workspace is null ? null : GuardWorkspaceBoundary(workspace),
+            new FileToolOutputSink(Path.Combine(paths.RootDirectory, "tool-outputs")));
         sc.AddSingleton(toolboxRegistry);
         sc.AddSingleton(toolRouter);
+
+        // AutoApproveEdits：启动即 AcceptEdits 档（文件编辑免逐次确认；
+        // shell 与网络仍走原规则）。持久化授权面只覆盖逐工具决策，不回写档位。
+        if (settings.Current.Workspace.AutoApproveEdits)
+        {
+            harnessHost.Permission.CurrentMode = PermissionMode.AcceptEdits;
+        }
 
         sc.AddSingleton<WorkerRunner>();
         sc.AddSingleton<ModelAssigner>();
@@ -267,6 +319,59 @@ public partial class App : Application
         RegisterToolboxes(serviceProvider, settings, loggerFactory);
         ApplyPersistedPermissions(serviceProvider, loggerFactory);
         return serviceProvider;
+    }
+
+    /// <summary>
+    /// 解析/创建工作区根：settings.workspace.root 为空时用 Documents/AeroCode-workspace
+    /// （首次惰性创建）。目录无法创建时诚实降级返回 null——组合根不注册 workspace/git
+    /// 工具域并记 WARN，绝不伪造根路径继续运行。
+    /// </summary>
+    private static WorkspaceContext? ResolveWorkspace(
+        SettingsService settings, AppDataPaths paths, ILoggerFactory loggerFactory)
+    {
+        var logger = loggerFactory.CreateLogger("AeroCode.Workspace");
+        var configured = settings.Current.Workspace.Root;
+        var root = string.IsNullOrWhiteSpace(configured)
+            ? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "AeroCode-workspace")
+            : configured;
+        try
+        {
+            Directory.CreateDirectory(root);
+            return new WorkspaceContext(root);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                "[DEGRADED] 工作区根 '{Root}' 不可用（{Error}）——workspace/git/plan 工具域未注册",
+                root, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 工作区边界前置守卫：path 类参数解析不到工作区内（越界/无效）一律升级 Ask，
+    /// 交授权面显式裁决——绝不静默放行（WorkspaceContext.Resolve 契约）。守卫只许
+    /// 更审慎：返回 Ask 后仍会过一次策略，显式 Deny 维持 Deny。
+    /// run_shell 的 command 不是路径，不做字符串猜测：其边界由 ShellRunner 的
+    /// cwd=工作区根钉死，危险性由策略 Ask 基线 + 危险模式探测把关。
+    /// </summary>
+    private static Func<string, IReadOnlyDictionary<string, object?>?, PermissionDecision?> GuardWorkspaceBoundary(
+        WorkspaceContext workspace)
+    {
+        return (_, args) =>
+        {
+            if (args is null
+                || !args.TryGetValue("path", out var path)
+                || path is not string pathText
+                || string.IsNullOrWhiteSpace(pathText))
+            {
+                return null; // 无 path 目标（read-only/git_status 等）——走正常策略。
+            }
+
+            return workspace.Resolve(pathText) is null ? PermissionDecision.Ask : null;
+        };
     }
 
     /// <summary>

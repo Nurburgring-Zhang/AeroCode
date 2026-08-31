@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,7 +9,10 @@ using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
 using AeroAgent.Moa.Strategies;
+using AeroAgent.Moa.Tools.Workspace;
 using AeroCode.AI.Providers;
+using AeroCode.Harness.Permission;
+using AeroCode.Harness.PlanMode;
 using Avalonia;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -177,6 +181,10 @@ public partial class ChatViewModel : ObservableObject
     private readonly IChatOrchestrationFacade _facade;
     private readonly IProviderRegistry _providers;
     private readonly MoaOptions _moaOptions;
+    private readonly PermissionPolicy _permission;
+    private readonly InstructionLoader _instructions;
+    private readonly WorkspaceContext? _workspace;
+    private readonly PlanWorkflow? _planWorkflow;
 
     private CancellationTokenSource? _streamCts;
     private bool _suppressStrategySync;
@@ -186,12 +194,20 @@ public partial class ChatViewModel : ObservableObject
         ISessionService sessions,
         IChatOrchestrationFacade facade,
         IProviderRegistry providers,
-        MoaOptions moaOptions)
+        MoaOptions moaOptions,
+        PermissionPolicy permission,
+        InstructionLoader instructions,
+        WorkspaceContext? workspace = null,
+        PlanWorkflow? planWorkflow = null)
     {
         _sessions = sessions;
         _facade = facade;
         _providers = providers;
         _moaOptions = moaOptions ?? throw new ArgumentNullException(nameof(moaOptions));
+        _permission = permission ?? throw new ArgumentNullException(nameof(permission));
+        _instructions = instructions ?? throw new ArgumentNullException(nameof(instructions));
+        _workspace = workspace;
+        _planWorkflow = planWorkflow;
 
         ProviderIds = new ObservableCollection<string>(providers.ListConfiguredIds());
         _selectedProviderId = ProviderIds.FirstOrDefault() ?? string.Empty;
@@ -199,6 +215,8 @@ public partial class ChatViewModel : ObservableObject
             Enum.GetValues<OrchestrationStrategy>());
         // 新会话默认策略：从 MOA 选项取（设置页可改），工具条仍可逐会话覆盖。
         _selectedStrategy = moaOptions.DefaultStrategy;
+        // 档位下拉与裁决源同步初始值（直接写字段：构造期不走 ApplyPermissionMode）。
+        _selectedMode = permission.CurrentMode;
 
         // 热重载链：设置保存 → ProviderFactory.Reload → ProvidersChanged → 下拉就地刷新。
         // 本 VM 与应用同生命周期（DI 单例），订阅无需退订。
@@ -297,6 +315,24 @@ public partial class ChatViewModel : ObservableObject
 
     [ObservableProperty]
     private string _statusText = "就绪";
+
+    /// <summary>权限档位下拉数据源（顺序即枚举定义序：Default→AcceptEdits→Plan→Bypass）。</summary>
+    public IReadOnlyList<PermissionMode> PermissionModes { get; } =
+        new[] { PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.Plan, PermissionMode.Bypass };
+
+    [ObservableProperty]
+    private PermissionMode _selectedMode;
+
+    /// <summary>当前档位说明（档位下拉旁常显文本，语义与 PermissionModeTransform 对齐）。</summary>
+    public string ModeDescription => SelectedMode switch
+    {
+        PermissionMode.AcceptEdits => "自动接受文件编辑",
+        PermissionMode.Plan => "规划（只读 + 计划）",
+        PermissionMode.Bypass => "跳过询问（显式拒绝/危险命令仍拦截）",
+        _ => "默认（写/执行需确认）",
+    };
+
+    partial void OnSelectedModeChanged(PermissionMode value) => ApplyPermissionMode(value);
 
     /// <summary>视图加载时调用：拉取会话列表。</summary>
     public async Task InitializeAsync()
@@ -583,6 +619,21 @@ public partial class ChatViewModel : ObservableObject
             return;
         }
 
+        // @引用先于指令前缀展开：Expand 只扫原始输入，避免把指令内容误当 @记号解析。
+        text = AtReference.Expand(text, ReadAtReference);
+
+        // 批次 A 最小接线：AGENTS.md/CLAUDE.md 指令作为 system 前缀拼进本次发送文本头部
+        //（<instructions…> 块由 InstructionLoader 产出；门面签名不动——批次 B 将下沉到
+        // 请求组装层，不再占用用户消息体）。
+        if (_instructions.HasAny)
+        {
+            var instructions = _instructions.Load();
+            if (instructions.Length > 0)
+            {
+                text = instructions + "\n\n" + text;
+            }
+        }
+
         // 无会话则先按当前 provider/策略建一个。
         if (SelectedSession is null)
         {
@@ -634,6 +685,52 @@ public partial class ChatViewModel : ObservableObject
             _streamCts = null;
             await ReloadSessionsAsync(); // 标题可能因首条消息自动更新
         }
+    }
+
+    /// <summary>
+    /// 档位切换：唯一裁决源是 PermissionPolicy.CurrentMode。进出 Plan 档走
+    /// PlanWorkflow 状态机——Enter 建 PLAN.md 骨架并推进 Planning；切出即 Approve
+    /// （规格的最小实现，Approve 幂等，Cancel 交互留待完整审批 UI）。
+    /// 无工作区时无 PlanWorkflow：直接置档，Plan 档退化为纯只读白名单
+    /// （write_plan 工具域未注册，未知工具在 Plan 档被策略 Deny）。
+    /// </summary>
+    private void ApplyPermissionMode(PermissionMode value)
+    {
+        if (value != PermissionMode.Plan && _permission.CurrentMode == PermissionMode.Plan)
+        {
+            _planWorkflow?.Approve();
+        }
+
+        if (value == PermissionMode.Plan)
+        {
+            _planWorkflow?.Enter();
+        }
+
+        _permission.CurrentMode = value;
+        OnPropertyChanged(nameof(ModeDescription));
+    }
+
+    /// <summary>
+    /// @引用读取：经 WorkspaceContext 边界解析后读全文；无工作区/越界/不存在/
+    /// 超过 <see cref="WorkspaceToolbox.MaxReadBytes"/>（与 read_file 同上限）返回 null，
+    /// AtReference.Expand 会把它如实列进未解析清单，不静默丢弃。
+    /// </summary>
+    private string? ReadAtReference(string reference)
+    {
+        if (_workspace is null)
+        {
+            return null;
+        }
+
+        var abs = _workspace.Resolve(reference);
+        if (abs is null || !File.Exists(abs))
+        {
+            return null;
+        }
+
+        return new FileInfo(abs).Length > WorkspaceToolbox.MaxReadBytes
+            ? null
+            : File.ReadAllText(abs);
     }
 
     internal void HandleEvent(ChatEvent ev)

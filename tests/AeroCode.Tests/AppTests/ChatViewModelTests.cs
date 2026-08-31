@@ -6,10 +6,24 @@ using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
 using AeroAgent.Moa.Strategies;
 using AeroCode.App.ViewModels;
+using AeroCode.Harness.EventBus;
+using AeroCode.Harness.Permission;
 using AeroCode.Tests.ConversationTests;
 using Xunit;
 
 namespace AeroCode.Tests.AppTests;
+
+/// <summary>
+/// ChatViewModel 接线参数的最小真实构造（批次 A 档位/指令/@引用接线后共享）。
+/// </summary>
+internal static class ChatViewModelWiring
+{
+    /// <summary>独立策略实例：不共享 EventBus 与规则表，测试互不干扰。</summary>
+    public static PermissionPolicy NewPermission() => new(new EventBus());
+
+    /// <summary>指向不存在目录的装载器：HasAny=false，构造与查询不触碰文件系统。</summary>
+    public static InstructionLoader NewInstructions() => new("chatviewmodel-tests-appdata", null);
+}
 
 /// <summary>
 /// ChatViewModel 事件路由回归测试。
@@ -20,7 +34,9 @@ namespace AeroCode.Tests.AppTests;
 public sealed class ChatViewModelEventRoutingTests
 {
     private static ChatViewModel MakeViewModel() =>
-        new(new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), new MoaOptions());
+        new(
+            new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), new MoaOptions(),
+            ChatViewModelWiring.NewPermission(), ChatViewModelWiring.NewInstructions(), null, null);
 
     [Fact]
     public void Event_FromOtherSession_IsDiscarded()
@@ -175,7 +191,8 @@ public sealed class ChatViewModelToolProjectionTests
     private static ChatViewModel MakeSelectedViewModel(string sessionId = "session-B")
     {
         var vm = new ChatViewModel(
-            new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), new MoaOptions());
+            new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), new MoaOptions(),
+            ChatViewModelWiring.NewPermission(), ChatViewModelWiring.NewInstructions(), null, null);
         vm.SelectedSession = new SessionItemViewModel { Id = sessionId };
         return vm;
     }
@@ -369,7 +386,9 @@ public sealed class ChatViewModelToolProjectionTests
 public sealed class ChatViewModelProviderReloadTests
 {
     private static ChatViewModel MakeViewModel(TestProviderRegistry registry) =>
-        new(new NullSessionService(), new UnusedFacade(), registry, new MoaOptions());
+        new(
+            new NullSessionService(), new UnusedFacade(), registry, new MoaOptions(),
+            ChatViewModelWiring.NewPermission(), ChatViewModelWiring.NewInstructions(), null, null);
 
     [Fact]
     public void ProvidersChanged_NewProviderAdded_ListRefreshed_SelectionKept()
@@ -490,7 +509,9 @@ public sealed class ChatViewModelDefaultStrategyTests
     {
         var sessions = new RecordingSessionService();
         var options = new MoaOptions { DefaultStrategy = defaultStrategy };
-        var vm = new ChatViewModel(sessions, new UnusedFacade(), new TestProviderRegistry(), options);
+        var vm = new ChatViewModel(
+            sessions, new UnusedFacade(), new TestProviderRegistry(), options,
+            ChatViewModelWiring.NewPermission(), ChatViewModelWiring.NewInstructions(), null, null);
         return (vm, sessions, options);
     }
 
@@ -546,6 +567,7 @@ public sealed class ChatViewModelDefaultStrategyTests
     public void Ctor_NullMoaOptions_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => new ChatViewModel(
-            new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), null!));
+            new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), null!,
+            ChatViewModelWiring.NewPermission(), ChatViewModelWiring.NewInstructions(), null, null));
     }
 }

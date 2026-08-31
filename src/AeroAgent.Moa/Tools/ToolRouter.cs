@@ -5,10 +5,12 @@ using AeroCode.Harness.Permission;
 namespace AeroAgent.Moa.Tools;
 
 /// <summary>
-/// 工具调用执行入口：授权裁决 → 注册中心执行。
+/// 工具调用执行入口：前置守卫 → 授权裁决 → 注册中心执行 → 输出截断。
 /// <see cref="PermissionPolicy"/> 是唯一裁决源（Allow/Deny/Ask）：
 /// Ask 交由 <see cref="IPermissionBroker"/> 向用户要决定；无代理时诚实拒绝，绝不静默放行。
 /// 用户显式 Deny 的工具不会被任何 Override 翻回 Allow（策略内部已保证）。
+/// 前置守卫（如工作区边界）返回非 null 决定时直接采用——守卫只能把裁决改得更审慎
+/// （Allow→Ask/Deny），否则忽略并走正常策略（防线语义只升不降）。
 /// 本类只执行裁决与分发，不新增也不吞掉任何裁决。
 /// </summary>
 public sealed class ToolRouter
@@ -16,12 +18,21 @@ public sealed class ToolRouter
     private readonly ToolboxRegistry _registry;
     private readonly PermissionPolicy _policy;
     private readonly IPermissionBroker? _broker;
+    private readonly Func<string, IReadOnlyDictionary<string, object?>?, PermissionDecision?>? _preCheck;
+    private readonly IToolOutputSink? _outputSink;
 
-    public ToolRouter(ToolboxRegistry registry, PermissionPolicy policy, IPermissionBroker? broker = null)
+    public ToolRouter(
+        ToolboxRegistry registry,
+        PermissionPolicy policy,
+        IPermissionBroker? broker = null,
+        Func<string, IReadOnlyDictionary<string, object?>?, PermissionDecision?>? preCheck = null,
+        IToolOutputSink? outputSink = null)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _broker = broker;
+        _preCheck = preCheck;
+        _outputSink = outputSink;
     }
 
     /// <summary>是否有可用工具（false 时 worker 走普通调用，不携带 tools）。</summary>
@@ -38,7 +49,21 @@ public sealed class ToolRouter
         string toolName, string argumentsJson, CancellationToken ct)
     {
         var args = MaterializeArgs(argumentsJson);
-        var decision = _policy.Check(toolName, args).Decision;
+
+        var decision = _preCheck?.Invoke(toolName, args);
+        if (decision is null || decision == PermissionDecision.Allow)
+        {
+            // 守卫放行（或未装配守卫）：走正常策略；守卫给出的 Allow 不许越过策略的 Deny/Ask。
+            decision = _policy.Check(toolName, args).Decision;
+        }
+        else if (decision == PermissionDecision.Ask)
+        {
+            // 守卫要求更审慎（如路径越界）：仍要过一次策略——策略若是显式 Deny 则维持 Deny。
+            if (_policy.Check(toolName, args).Decision == PermissionDecision.Deny)
+            {
+                decision = PermissionDecision.Deny;
+            }
+        }
 
         if (decision == PermissionDecision.Ask)
         {
@@ -61,7 +86,17 @@ public sealed class ToolRouter
             return ToolInvokeResult.Deny($"Permission denied: tool '{toolName}' is forbidden by policy");
         }
 
-        return await _registry.InvokeAsync(toolName, argumentsJson, ct);
+        var result = await _registry.InvokeAsync(toolName, argumentsJson, ct);
+        if (result.Success && _outputSink is not null && OutputTruncator.NeedsTruncation(result.Output))
+        {
+            var truncated = OutputTruncator.Truncate(toolName, result.Output, _outputSink);
+            if (truncated is not null)
+            {
+                return result with { Output = truncated };
+            }
+        }
+
+        return result;
     }
 
     /// <summary>

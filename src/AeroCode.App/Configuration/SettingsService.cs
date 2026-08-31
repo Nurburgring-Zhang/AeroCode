@@ -27,6 +27,37 @@ public sealed class AppSettings
     /// <summary>MCP server 连接配置（stdio 子进程）。空 = 未接入任何外部工具服务器。</summary>
     [JsonPropertyName("mcpServers")]
     public System.Collections.Generic.List<McpServerConfig> McpServers { get; set; } = new();
+
+    /// <summary>工作区工具域设置（批次 A：工作区根 / git 工作流 / 启动档位）。</summary>
+    [JsonPropertyName("workspace")]
+    public WorkspaceSettings Workspace { get; set; } = new();
+}
+
+/// <summary>
+/// 工作区设置节。Root 为空串 = 使用 Documents/AeroCode-workspace（首次惰性创建）；
+/// 指定了 Root 但目录无法创建时组合根诚实降级（不注册 workspace/git 工具域），绝不伪造根路径。
+/// </summary>
+public sealed class WorkspaceSettings
+{
+    /// <summary>工作区根目录；空 = 用 Documents/AeroCode-workspace，首次惰性创建。</summary>
+    [JsonPropertyName("root")]
+    public string Root { get; set; } = string.Empty;
+
+    /// <summary>编辑后自动 git 提交（不在 git 仓时如实跳过，不伪造提交）。</summary>
+    [JsonPropertyName("autoCommit")]
+    public bool AutoCommit { get; set; }
+
+    /// <summary>脏区保护：存在与本次编辑无关的未暂存改动时不自动提交，等用户决定。</summary>
+    [JsonPropertyName("protectDirty")]
+    public bool ProtectDirty { get; set; } = true;
+
+    /// <summary>启动即 AcceptEdits 档（文件编辑免逐次确认；shell 与网络仍走原规则）。</summary>
+    [JsonPropertyName("autoApproveEdits")]
+    public bool AutoApproveEdits { get; set; }
+
+    /// <summary>run_shell 默认超时秒数（超时杀整棵进程树；单条命令可用参数覆盖）。</summary>
+    [JsonPropertyName("shellTimeoutSeconds")]
+    public int ShellTimeoutSeconds { get; set; } = 60;
 }
 
 public sealed class AISettings

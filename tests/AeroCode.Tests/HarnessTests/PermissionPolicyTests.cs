@@ -35,14 +35,16 @@ public class PermissionPolicyTests
     }
 
     [Fact]
-    public void RunShell_SafeCommand_Allowed()
+    public void RunShell_SafeCommand_Asks()
     {
+        // run_shell 接线真实执行器后基线收紧为 Ask（Permission.cs 既定变更）：
+        // 安全命令也需经授权面批准；危险命令由 Override 继续升级为 Ask。
         var p = NewPolicy();
         var r = p.Check("run_shell", new Dictionary<string, object?>
         {
             ["command"] = "git status",
         });
-        Assert.Equal(PermissionDecision.Allow, r.Decision);
+        Assert.Equal(PermissionDecision.Ask, r.Decision);
     }
 
     [Fact]

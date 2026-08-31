@@ -269,26 +269,30 @@ public sealed class ToolKernelTests
     {
         // run_shell 的危险模式 Override 依赖 args["command"] as string——
         // 参数必须从 JSON 物化为真实字符串，否则 Override 永远拿不到命令。
+        // 接线真实执行器后 run_shell 基线收紧为 Ask：安全命令经 broker 批准后
+        // 真实执行（脚本裁决 Allow），危险命令被 broker 拒绝——Ask 面与参数物化同时钉住。
         var policy = NewPolicy();
         var box = new ScriptedToolbox("shell", Def("run_shell"));
         box.SetResult("run_shell", ToolInvokeResult.Ok("ok"));
         var registry = new ToolboxRegistry();
         registry.Register(box);
-        var broker = new ScriptedBroker(PermissionDecision.Deny);
+        var broker = new ScriptedBroker(PermissionDecision.Allow, PermissionDecision.Deny);
 
         var router = new ToolRouter(registry, policy, broker);
 
-        // 安全命令：Override 直接 Allow，不需要问 broker
+        // 安全命令：基线 Ask → broker 批准 → 执行成功
         var safe = await router.InvokeAsync("run_shell", "{\"command\":\"git status\"}", CancellationToken.None);
         Assert.True(safe.Success);
 
-        // 危险命令：Override 升级为 Ask → broker 裁决
+        // 危险命令：Override 升级为 Ask → broker 拒绝
         var dangerous = await router.InvokeAsync("run_shell", "{\"command\":\"rm -rf /\"}", CancellationToken.None);
         Assert.False(dangerous.Success);
         Assert.True(dangerous.Denied);
-        var consult = Assert.Single(broker.Consultations);
-        Assert.Equal("run_shell", consult.ToolName);
-        Assert.Equal("rm -rf /", consult.Args!["command"] as string);
+        Assert.Equal(2, broker.Consultations.Count);
+        Assert.Equal("run_shell", broker.Consultations[0].ToolName);
+        Assert.Equal("git status", broker.Consultations[0].Args!["command"] as string);
+        Assert.Equal("run_shell", broker.Consultations[1].ToolName);
+        Assert.Equal("rm -rf /", broker.Consultations[1].Args!["command"] as string);
     }
 
     [Fact]
