@@ -51,6 +51,16 @@
             <DockPanel LastChildFill="True">
                 <TextBlock DockPanel.Dock="Top" Text="将要用到的参数" FontSize="12"
                            FontWeight="SemiBold" Foreground="{StaticResource FgMuted}" Margin="0,0,0,6" />
+                <!-- 智能审批建议（G5）：无建议器/无可用建议时整块隐藏 -->
+                <Border DockPanel.Dock="Top" x:Name="AdvisorCard" IsVisible="False"
+                        Background="#1B2333" BorderBrush="{StaticResource AccentAmber}"
+                        BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,6">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="🧠" FontSize="13" VerticalAlignment="Center" />
+                        <TextBlock x:Name="AdvisorText" Foreground="{StaticResource AccentAmber}"
+                                   FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
                 <Border Background="{StaticResource BgElev}" BorderBrush="{StaticResource Border}"
                         BorderThickness="1" CornerRadius="4" Padding="10">
                     <ScrollViewer>

@@ -144,15 +144,15 @@ RootDirectory = Path.Combine(
 
 ### 5.1 当前覆盖
 
-`tests/AeroCode.Tests` 共 **900+ 用例**（2026-08-26 基线：914 执行，
-895 通过，19 条件跳过），按域划分：
+`tests/AeroCode.Tests` 共 **1419 用例**（2026-08-31 基线：1419 执行，
+1396 通过，23 条件跳过），按域划分：
 
 ```
 tests/AeroCode.Tests/
 ├── ServiceTests/    Core 服务 CRUD、Provider 协议/流式看门狗、热重载、弹性管线
 ├── HarnessTests/    权限策略、Preset、PlanMode、补丁引擎、任务图、质量门
 ├── McpTests/        MCP 工具箱、设置、真实子进程 E2E（无宿主时如实跳过）
-├── MoaTests/        五策略编排、预算、网关客户端/sidecar、画像目录
+├── MoaTests/        六策略编排、预算、网关客户端/sidecar、画像目录、守卫链/子代理/压缩门
 ├── ConversationTests/ 会话服务、流式映射、Schema 迁移、错误文本
 ├── Autonomy/        Mission、专家集群、学习/RSI、Steelman
 ├── AppTests/        ViewModel、AXAML 资源一致性、授权中间人

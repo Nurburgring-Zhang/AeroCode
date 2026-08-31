@@ -39,7 +39,8 @@ public interface IMcpGateway : IAsyncDisposable
 }
 
 /// <summary>
-/// 生产级 MCP 网关：官方 SDK McpClient + StdioClientTransport 管理一个子进程服务器。
+/// 生产级 MCP 网关：官方 SDK McpClient + StdioClientTransport 管理一个子进程服务器；
+/// 远程配置（Url）走 HttpClientTransport（SSE / Streamable HTTP，见 McpTransportFactory）。
 /// 重启容错：调用/发现因连接丢失失败时，自动重连一次再重试（进程崩溃/被杀后自愈）；
 /// 二次失败如实上抛，不静默吞错。全程由信号量串行化，防并发重复建连。
 /// </summary>
@@ -47,18 +48,27 @@ public sealed class McpGateway : IMcpGateway
 {
     private readonly McpServerConfig _config;
     private readonly ILogger? _logger;
+    private readonly ITokenProvider? _tokenProvider;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private McpClient? _client;
     private bool _disposed;
 
-    public McpGateway(McpServerConfig config, ILogger? logger = null)
+    public McpGateway(McpServerConfig config, ILogger? logger = null, ITokenProvider? tokenProvider = null)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         if (string.IsNullOrWhiteSpace(config.Id))
             throw new ArgumentException("MCP server config must carry a non-empty Id", nameof(config));
-        if (string.IsNullOrWhiteSpace(config.Command))
-            throw new ArgumentException("MCP server config must carry a non-empty Command", nameof(config));
+        var isRemote = !string.IsNullOrWhiteSpace(config.Url);
+        if (isRemote)
+        {
+            if (!Uri.TryCreate(config.Url, UriKind.Absolute, out var endpoint) || endpoint.Scheme is not ("http" or "https"))
+                throw new ArgumentException(
+                    $"MCP server config '{config.Id}': url must be an absolute http(s) address, got '{config.Url}'", nameof(config));
+        }
+        else if (string.IsNullOrWhiteSpace(config.Command))
+            throw new ArgumentException("MCP server config must carry a non-empty Command (or a remote Url)", nameof(config));
         _logger = logger;
+        _tokenProvider = tokenProvider;
     }
 
     /// <summary>握手（initialize）超时。可注入——测试无需等满 30 秒即可验证超时路径。</summary>
@@ -190,14 +200,25 @@ public sealed class McpGateway : IMcpGateway
             return _client;
         }
 
-        var transport = new StdioClientTransport(new StdioClientTransportOptions
+        // 远程配置（Url）→ SDK HttpClientTransport（SSE / Streamable HTTP）；
+        // 本地配置 → 既有 StdioClientTransport（拉起子进程）。传输选择集中在这里。
+        IClientTransport transport;
+        if (McpTransportFactory.ResolveKind(_config) == McpTransportKind.Stdio)
         {
-            Name = ServerId,
-            Command = _config.Command,
-            Arguments = _config.Arguments,
-            EnvironmentVariables = ToEnvironmentMap(_config.EnvironmentVariables, _logger, ServerId),
-            WorkingDirectory = _config.WorkingDirectory,
-        });
+            transport = new StdioClientTransport(new StdioClientTransportOptions
+            {
+                Name = ServerId,
+                Command = _config.Command,
+                Arguments = _config.Arguments,
+                EnvironmentVariables = ToEnvironmentMap(_config.EnvironmentVariables, _logger, ServerId),
+                WorkingDirectory = _config.WorkingDirectory,
+            });
+        }
+        else
+        {
+            transport = McpTransportFactory.CreateHttpTransport(
+                _config, _logger, _tokenProvider, InitializationTimeout);
+        }
 
         try
         {
@@ -209,11 +230,11 @@ public sealed class McpGateway : IMcpGateway
         }
         catch
         {
-            // 握手失败如实上抛；子进程生命周期由 SDK transport 内部管理。
+            // 握手失败如实上抛；子进程/HTTP 连接生命周期由 SDK transport 内部管理。
             throw;
         }
 
-        _logger?.LogInformation("MCP server '{ServerId}' connected", ServerId);
+        _logger?.LogInformation("MCP server '{ServerId}' connected via {Kind}", ServerId, McpTransportFactory.ResolveKind(_config));
         return _client;
     }
 

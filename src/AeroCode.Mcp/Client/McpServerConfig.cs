@@ -37,6 +37,27 @@ public sealed class McpServerConfig
     [JsonPropertyName("workingDirectory")]
     public string? WorkingDirectory { get; set; }
 
+    // ---- 远程传输扩展（批次 B G4，builder-γ）：Url 非空 = 远程服务器，command 仅在 stdio 时需要 ----
+
+    /// <summary>
+    /// 远程服务器地址（绝对 http/https）。非空 = 走 HTTP 传输（SSE 或 Streamable HTTP），
+    /// Command/Arguments 被忽略；空 = 既有 stdio 子进程行为（向后兼容）。
+    /// </summary>
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
+
+    /// <summary>
+    /// 传输种类（仅 url 配置时生效）："streamableHttp"（缺省，当前 MCP 标准）| "sse"（旧式 HTTP+SSE）。
+    /// 注意带 headers/token 的远程服务器凭据：header 值支持 ${ENV_NAME} 引用（同 environmentVariables 语义），
+    /// 或经 <see cref="ITokenProvider"/> 注入 Authorization——都绝不落盘。
+    /// </summary>
+    [JsonPropertyName("transport")]
+    public string? Transport { get; set; }
+
+    /// <summary>远程请求附带头（如 X-Api-Key）。值支持 ${ENV_NAME} 引用展开；引用未设置时该头被省略并告警。</summary>
+    [JsonPropertyName("headers")]
+    public Dictionary<string, string>? Headers { get; set; }
+
     /// <summary>false = 配置保留但当前不连接（UI 可一键停用）。</summary>
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;

@@ -70,7 +70,7 @@ public sealed class SettingsViewModelMoaTests : IDisposable
         Assert.Equal(2, _vm.EnsembleSize);
         Assert.Equal(string.Empty, _vm.MaxUsdText);
         Assert.True(_vm.ToolsEnabled);
-        Assert.Equal(5, _vm.StrategyChoices.Count); // 全部编排策略枚举值
+        Assert.Equal(6, _vm.StrategyChoices.Count); // 全部编排策略枚举值（批次 B 新增 Experts 专家团）
 
         // 选项构成：自动分配 + 每个已配置 provider 的默认模型（种子 4 个 provider）
         Assert.True(_vm.RoleBindingChoices.Count >= 5);

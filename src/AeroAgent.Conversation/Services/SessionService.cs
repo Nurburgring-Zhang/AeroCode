@@ -20,7 +20,7 @@ namespace AeroAgent.Conversation.Services;
 /// 且并行 worker 的 HTTP 调用本身不受锁影响（锁只覆盖持久化瞬间）。
 /// 读取方法一律返回脱离跟踪的实体副本：调用方持有的实例不会混入后续保存。
 /// </summary>
-public sealed class SessionService : ISessionService, IDisposable
+public sealed class SessionService : ISessionService, ISessionFork, IDisposable
 {
     private readonly ConversationDbContext _db;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -324,5 +324,100 @@ public sealed class SessionService : ISessionService, IDisposable
             var detached = Detach(existing);
             _db.Entry(existing).State = EntityState.Detached;
             return Result<ChatMessage>.Ok(detached);
+        });
+
+    /// <summary>
+    /// 会话分叉：新会话复制源会话元数据与消息集（≤ uptoMessageId 含），消息 Id 全部
+    /// 重新生成、ParentMessageId 链同步重映射（父不在分叉前缀内的置 null）；消息的
+    /// CreatedAtUtc 与归属/用量字段如实保留。整个操作单事务落库，源会话零改动。
+    /// </summary>
+    public Task<Result<ChatSession>> ForkAsync(string sessionId, string? uptoMessageId = null)
+        => WithDbAsync(async () =>
+        {
+            if (string.IsNullOrWhiteSpace(sessionId))
+            {
+                return Result<ChatSession>.Fail("sessionId must not be empty");
+            }
+
+            var source = await _db.Sessions.FirstOrDefaultAsync(s => s.Id == sessionId);
+            if (source is null)
+            {
+                return Result<ChatSession>.Fail($"session '{sessionId}' not found");
+            }
+
+            var messages = await _db.Messages.AsNoTracking()
+                .Where(m => m.SessionId == sessionId)
+                .OrderBy(m => m.CreatedAtUtc)
+                .ThenBy(m => m.Id)
+                .ToListAsync();
+
+            IReadOnlyList<ChatMessage> prefix = messages;
+            if (uptoMessageId is not null)
+            {
+                var idx = messages.FindIndex(m => m.Id == uptoMessageId);
+                if (idx < 0)
+                {
+                    return Result<ChatSession>.Fail(
+                        $"message '{uptoMessageId}' not found in session '{sessionId}'");
+                }
+
+                prefix = messages.Take(idx + 1).ToList();
+            }
+
+            // 新会话：标题带 fork 后缀（500 上限内截断），置顶状态不继承（分叉是新起点）。
+            var forkedTitle = source.Title.Length + "（fork）".Length > 500
+                ? source.Title[..(500 - "（fork）".Length)] + "（fork）"
+                : source.Title + "（fork）";
+            var fork = new ChatSession
+            {
+                Title = forkedTitle,
+                Strategy = source.Strategy,
+                PreferredProviderId = source.PreferredProviderId,
+                PreferredModel = source.PreferredModel,
+                IsPinned = false,
+                IsDeleted = false,
+            };
+
+            // 消息复制：新 Id + 父链重映射（父不在前缀内 → null）。
+            var idMap = new Dictionary<string, string>(prefix.Count, StringComparer.Ordinal);
+            foreach (var m in prefix)
+            {
+                idMap[m.Id] = Guid.NewGuid().ToString("N");
+            }
+
+            foreach (var m in prefix)
+            {
+                fork.Messages.Add(new ChatMessage
+                {
+                    Id = idMap[m.Id],
+                    SessionId = fork.Id,
+                    Role = m.Role,
+                    Content = m.Content,
+                    ProviderId = m.ProviderId,
+                    ModelId = m.ModelId,
+                    OrchestrationRole = m.OrchestrationRole,
+                    ParentMessageId = m.ParentMessageId is not null && idMap.ContainsKey(m.ParentMessageId)
+                        ? idMap[m.ParentMessageId]
+                        : null,
+                    Label = m.Label,
+                    IsFinal = m.IsFinal,
+                    ToolCallsJson = m.ToolCallsJson,
+                    ToolCallId = m.ToolCallId,
+                    Name = m.Name,
+                    Status = m.Status,
+                    Error = m.Error,
+                    TokensIn = m.TokensIn,
+                    TokensOut = m.TokensOut,
+                    CostUsd = m.CostUsd,
+                    LatencyMs = m.LatencyMs,
+                    CreatedAtUtc = m.CreatedAtUtc,
+                });
+            }
+
+            _db.Sessions.Add(fork);
+            await _db.SaveChangesAsync(); // 单事务：会话与全部复制消息一次落库
+            var detached = Detach(fork);
+            _db.Entry(fork).State = EntityState.Detached;
+            return Result<ChatSession>.Ok(detached);
         });
 }

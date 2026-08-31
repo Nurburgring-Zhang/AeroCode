@@ -14,6 +14,7 @@ using AeroAgent.Moa.Assignment;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Tools;
 using AeroCode.AI.Providers;
+using AeroCode.Harness.Compaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using AiChatMessage = AeroCode.AI.Models.ChatMessage;
@@ -36,10 +37,22 @@ public sealed record WorkerOutcome(
     int LatencyMs);
 
 /// <summary>
-/// MOA 各策略共用的单模型调用引擎：持久化占位消息 → 真实调用（流式/非流式）→
+/// 工具循环溢出检测配置（组合根从 Settings.Compaction 映射，DI 单例注入）。
+/// ThresholdTokens ≤ 0 = 关闭溢出检测（不压缩，行为与批次 A 完全一致）。
+/// </summary>
+public sealed record CompactionGateOptions
+{
+    public int ThresholdTokens { get; init; }
+
+    public static CompactionGateOptions Disabled { get; } = new() { ThresholdTokens = 0 };
+}
+
+/// <summary>MOA 各策略共用的单模型调用引擎：持久化占位消息 → 真实调用（流式/非流式）→
 /// 事件发射 → 真实用量与成本落库 → 自学习统计回填。
 /// 异常边界：provider 异常/取消都在此收容为 Failed/Cancelled 终态（DB 是事实源），
 /// 不向策略抛出——策略按 <see cref="WorkerOutcome"/> 决定降级或中止。
+/// 批次 B G2-4：工具循环带溢出检测——估算 token 超过阈值时调 Harness <see cref="Compactor"/>
+/// 压缩在途上下文（Compactor 自身发布 CompactionTriggeredEvent），工具配对完整性由本类保证。
 /// </summary>
 public sealed class WorkerRunner
 {
@@ -51,24 +64,28 @@ public sealed class WorkerRunner
     private readonly ILogger<WorkerRunner> _logger;
     private readonly ToolRouter? _tools;
     private readonly MoaOptions? _options;
+    private readonly Compactor? _compactor;
+    private readonly CompactionGateOptions? _compaction;
 
     public WorkerRunner(
         ISessionService sessions,
         IModelProfileCatalog catalog,
         ILogger<WorkerRunner>? logger = null,
         ToolRouter? tools = null,
-        MoaOptions? options = null)
+        MoaOptions? options = null,
+        Compactor? compactor = null,
+        CompactionGateOptions? compaction = null)
     {
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _logger = logger ?? NullLogger<WorkerRunner>.Instance;
         _tools = tools;
         _options = options;
+        _compactor = compactor;
+        _compaction = compaction;
     }
 
-    /// <summary>
-    /// 执行一次模型调用。事件写入 <paramref name="sink"/>（可为 null = 静默执行）。
-    /// </summary>
+    /// <summary>执行一次模型调用。事件写入 <paramref name="sink"/>（可为 null = 静默执行）。</summary>
     /// <param name="ctx">编排上下文（会话/历史/provider 注册表）。</param>
     /// <param name="assignment">模型分配（provider + 模型 + 画像）。</param>
     /// <param name="role">本消息在编排中的角色（归属标注）。</param>
@@ -345,6 +362,9 @@ public sealed class WorkerRunner
                         budget, totalCost);
                 }
 
+                // ---- 溢出检测（G2-4）：估算 token 超阈值 → Harness Compactor 压缩在途上下文 ----
+                conversation = CompactIfOverflowing(conversation);
+
                 var turnSw = Stopwatch.StartNew();
                 var request = new AiChatRequest
                 {
@@ -584,6 +604,162 @@ public sealed class WorkerRunner
                 tokensIn, tokensOut, (int)runSw.ElapsedMilliseconds, countInStats: true,
                 budget, totalCost);
         }
+    }
+
+    /// <summary>
+    /// 溢出检测 + 压缩（G2-4）。未装配压缩器/阈值为 0 时原样返回（行为不变）。
+    /// 达到阈值 → Compactor（TruncateOldest）压缩 → 头部修复保证 tool 配对完整
+    /// （Compactor 逐条丢最旧消息可能拆散 assistant tool_calls 与 tool 应答对，
+    /// 请求序列非法）；压缩是设计内行为（非降级），Compactor 自身发布 CompactionTriggeredEvent。
+    /// internal for tests（Reviewer-H P1-1 零覆盖修复）：经 InternalsVisibleTo 直测。
+    /// </summary>
+    internal List<AiChatMessage> CompactIfOverflowing(List<AiChatMessage> conversation)
+    {
+        var threshold = _compaction?.ThresholdTokens ?? 0;
+        if (_compactor is null || threshold <= 0)
+        {
+            return conversation;
+        }
+
+        var estimated = EstimateTokens(conversation);
+        if (estimated < threshold)
+        {
+            return conversation;
+        }
+
+        try
+        {
+            var result = _compactor.Compact(conversation, threshold);
+            if (!result.DidCompact)
+            {
+                return conversation;
+            }
+
+            var repaired = DropBrokenToolPairsAtHead(result.Messages);
+            _logger.LogInformation(
+                "tool-loop context compacted: {Original}→{Compacted} tokens (threshold {Threshold}), {Dropped} broken pair heads dropped",
+                result.OriginalTokens, result.CompactedTokens, threshold,
+                result.Messages.Count - repaired.Count);
+            return repaired;
+        }
+        catch (Exception ex)
+        {
+            // 压缩失败不中止对话循环：下一轮按未压缩上下文继续（超限风险由 provider 端显式报错兜底）。
+            _logger.LogWarning(
+                "[DEGRADED] tool-loop compaction failed, continuing uncompacted: {Error}", ex.Message);
+            return conversation;
+        }
+    }
+
+    /// <summary>4 字符 ≈ 1 token 的既有口径；tool_calls 按函数名+参数 JSON 估算。</summary>
+    internal static int EstimateTokens(IReadOnlyList<AiChatMessage> messages)
+    {
+        var total = 0;
+        foreach (var m in messages)
+        {
+            total += TokenCounter.ApproxTokens(m.Content);
+            if (m.ToolCalls is { Count: > 0 })
+            {
+                foreach (var call in m.ToolCalls)
+                {
+                    total += TokenCounter.ApproxTokens(call.FunctionName + call.ArgumentsJson);
+                }
+            }
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// 头部修复：从头丢弃不满足配对自洽的消息，直到找到一个合法边界——
+    /// 该边界之后（含）不存在"tool 应答缺 assistant 携带方"或"assistant 携带的 tool_call 缺应答"。
+    /// 至少保留一条消息（不可能发生全丢：Compactor 保留带保证尾部完整）。
+    /// </summary>
+    internal static List<AiChatMessage> DropBrokenToolPairsAtHead(IReadOnlyList<AiChatMessage> messages)
+    {
+        var start = 0;
+        while (start < messages.Count && !IsSelfConsistentFrom(messages, start))
+        {
+            start++;
+        }
+
+        if (start >= messages.Count)
+        {
+            // 理论不可达的兜底：至少保留最后一条（最新上下文不能全丢）。
+            return new List<AiChatMessage> { messages[^1] };
+        }
+
+        return messages.Skip(start).ToList();
+    }
+
+    /// <summary>从 <paramref name="start"/> 起，消息序列是否满足 tool 配对自洽（每个 tool 应答在携带方之后，每个 tool_call 有应答）。</summary>
+    private static bool IsSelfConsistentFrom(IReadOnlyList<AiChatMessage> messages, int start)
+    {
+        for (var i = start; i < messages.Count; i++)
+        {
+            var m = messages[i];
+            var isToolResponse = string.Equals(m.Role, "tool", StringComparison.OrdinalIgnoreCase);
+            if (isToolResponse)
+            {
+                // tool 应答的 assistant 携带方必须在本段内（start..i-1 中存在含该 ToolCallId 的消息）。
+                var partnerFound = false;
+                for (var j = start; j < i; j++)
+                {
+                    if (HasToolCallWithId(messages[j], m.ToolCallId))
+                    {
+                        partnerFound = true;
+                        break;
+                    }
+                }
+
+                if (!partnerFound)
+                {
+                    return false;
+                }
+            }
+            else if (m.ToolCalls is { Count: > 0 })
+            {
+                // assistant 携带的每个 tool_call 都必须在本段内（i..end）有应答。
+                foreach (var call in m.ToolCalls)
+                {
+                    var answered = false;
+                    for (var j = i + 1; j < messages.Count; j++)
+                    {
+                        if (string.Equals(messages[j].Role, "tool", StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(messages[j].ToolCallId, call.Id, StringComparison.Ordinal))
+                        {
+                            answered = true;
+                            break;
+                        }
+                    }
+
+                    if (!answered)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasToolCallWithId(AiChatMessage message, string? toolCallId)
+    {
+        if (message.ToolCalls is null || toolCallId is null)
+        {
+            return false;
+        }
+
+        foreach (var call in message.ToolCalls)
+        {
+            if (string.Equals(call.Id, toolCallId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

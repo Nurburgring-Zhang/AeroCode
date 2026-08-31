@@ -28,6 +28,12 @@ public partial class PermissionDialogView : UserControl
         ArgsText.Text = string.IsNullOrWhiteSpace(prompt.ArgumentsPreview)
             ? "(无参数)"
             : prompt.ArgumentsPreview;
+        // 智能审批建议（G5）：有建议才显示建议卡，绝不显示空壳。
+        if (!string.IsNullOrWhiteSpace(prompt.AdvisorNote))
+        {
+            AdvisorCard.IsVisible = true;
+            AdvisorText.Text = prompt.AdvisorNote;
+        }
     }
 
     private void OnAllowClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

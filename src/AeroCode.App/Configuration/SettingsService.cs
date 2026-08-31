@@ -31,6 +31,122 @@ public sealed class AppSettings
     /// <summary>工作区工具域设置（批次 A：工作区根 / git 工作流 / 启动档位）。</summary>
     [JsonPropertyName("workspace")]
     public WorkspaceSettings Workspace { get; set; } = new();
+
+    /// <summary>子代理派发（批次 B）：字段对照 SubagentOptions，组合根映射注入。</summary>
+    [JsonPropertyName("subagent")]
+    public SubagentSettings Subagent { get; set; } = new();
+
+    /// <summary>安全控制（批次 B）：守卫链/审批熔断/智能审批/急停哨兵。</summary>
+    [JsonPropertyName("safety")]
+    public SafetySettings Safety { get; set; } = new();
+
+    /// <summary>事件钩子引擎开关（批次 B）。</summary>
+    [JsonPropertyName("hooks")]
+    public HooksSettings Hooks { get; set; } = new();
+
+    /// <summary>自动化调度开关（批次 B）。</summary>
+    [JsonPropertyName("scheduler")]
+    public SchedulerSettings Scheduler { get; set; } = new();
+
+    /// <summary>会话记忆（批次 B G2）：召回条数与自动沉淀开关。</summary>
+    [JsonPropertyName("memory")]
+    public MemorySettings Memory { get; set; } = new();
+
+    /// <summary>上下文压缩（批次 B G2）：工具循环溢出检测阈值。</summary>
+    [JsonPropertyName("compaction")]
+    public CompactionSettings Compaction { get; set; } = new();
+}
+
+/// <summary>子代理设置节。MaxTurns/MaxCostUsd 由派发方（工具/任务）按需映射进 SubAgentSpec。</summary>
+public sealed class SubagentSettings
+{
+    /// <summary>false 时派发诚实失败（SubAgentRunner 抛 InvalidOperationException）。</summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>深度上限（层数含自身；被 SubAgentSpec.MaxDepth=4 硬上限钳制）。</summary>
+    [JsonPropertyName("maxDepth")]
+    public int MaxDepth { get; set; } = 4;
+
+    /// <summary>同时运行的子代理实例上限（≥1，超限排队）。</summary>
+    [JsonPropertyName("maxParallel")]
+    public int MaxParallel { get; set; } = 2;
+
+    /// <summary>单次派发的默认工具轮数上限（>0）。</summary>
+    [JsonPropertyName("maxTurns")]
+    public int MaxTurns { get; set; } = 16;
+
+    /// <summary>单次派发的默认成本上限（美元，≥0；0 = 不设计价上限）。</summary>
+    [JsonPropertyName("maxCostUsd")]
+    public double MaxCostUsd { get; set; } = 1.0;
+}
+
+/// <summary>安全设置节。EstopFile 为空 = 不启用急停哨兵检查；AdvisorModel 为空 = 智能审批建议器不可用。</summary>
+public sealed class SafetySettings
+{
+    /// <summary>doom-loop 阈值：同工具同参数第 N 次升级 Ask（≥2）。</summary>
+    [JsonPropertyName("doomLoopThreshold")]
+    public int DoomLoopThreshold { get; set; } = 3;
+
+    /// <summary>急停哨兵文件路径；空 = 不启用（不构建 EstopGuard）。</summary>
+    [JsonPropertyName("estopFile")]
+    public string EstopFile { get; set; } = string.Empty;
+
+    /// <summary>智能审批判定 risk=low 时自动放行（记录在案；false = 一律弹窗）。</summary>
+    [JsonPropertyName("autoApproveLowRisk")]
+    public bool AutoApproveLowRisk { get; set; }
+
+    /// <summary>审批建议器判定模型（便宜档）；空 = advisor 不可用，审批行为不变。</summary>
+    [JsonPropertyName("advisorModel")]
+    public string AdvisorModel { get; set; } = string.Empty;
+
+    /// <summary>审批熔断：连续批准次数阈值（≥1）。</summary>
+    [JsonPropertyName("approvalBurstLimit")]
+    public int ApprovalBurstLimit { get; set; } = 25;
+
+    /// <summary>审批熔断：会话累计成本阈值（美元，>0）。</summary>
+    [JsonPropertyName("approvalCostLimitUsd")]
+    public double ApprovalCostLimitUsd { get; set; } = 5.0;
+}
+
+/// <summary>钩子引擎设置节（hooks.json 缺失 = 空载，不是降级）。</summary>
+public sealed class HooksSettings
+{
+    /// <summary>false = 不加载 hooks.json 也不订阅事件分发。</summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+}
+
+/// <summary>调度服务设置节（jobs.json 缺失 = 空载，不是降级）。</summary>
+public sealed class SchedulerSettings
+{
+    /// <summary>false = 不启动轮询 Timer（注册仍生效，供设置页查看/编辑）。</summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+}
+
+/// <summary>会话记忆设置节（批次 B G2）。</summary>
+public sealed class MemorySettings
+{
+    /// <summary>语义召回 Top-K 条数（0 = 关闭笔记召回，仅注入 MEMORY.md/USER.md）。</summary>
+    [JsonPropertyName("recallTopK")]
+    public int RecallTopK { get; set; } = 5;
+
+    /// <summary>对话轮结束后自动沉淀经验（真实轨迹/失败教训入 ExperienceStore）。</summary>
+    [JsonPropertyName("autoConsolidate")]
+    public bool AutoConsolidate { get; set; } = true;
+}
+
+/// <summary>上下文压缩设置节（批次 B G2）。ThresholdTokens ≤ 0 = 关闭溢出检测。</summary>
+public sealed class CompactionSettings
+{
+    /// <summary>工具循环上下文 token 估算阈值（4 字符≈1 token 的既有口径）。</summary>
+    [JsonPropertyName("thresholdTokens")]
+    public int ThresholdTokens { get; set; } = 24000;
+
+    /// <summary>压缩后保留的最近消息条数（Compactor 语义）。</summary>
+    [JsonPropertyName("keepRecentMessages")]
+    public int KeepRecentMessages { get; set; } = 10;
 }
 
 /// <summary>

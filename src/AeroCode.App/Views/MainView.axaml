@@ -145,6 +145,10 @@
                     <views:ChatView />
                 </TabItem>
 
+                <TabItem Header="🚀 Mission" Foreground="{StaticResource AccentPink}">
+                    <views:MissionView />
+                </TabItem>
+
                 <TabItem Header="🎯 Skills (V3)" Foreground="{StaticResource AccentPurple}">
                     <views:SkillsView />
                 </TabItem>

@@ -1,15 +1,28 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using AeroAgent.Autonomy.Analysis;
+using AeroAgent.Autonomy.Clarification;
+using AeroAgent.Autonomy.Data;
+using AeroAgent.Autonomy.Experience;
+using AeroAgent.Autonomy.Learning;
+using AeroAgent.Autonomy.Llm;
+using AeroAgent.Autonomy.Mission;
+using AeroAgent.Autonomy.Retrospective;
+using AeroAgent.Autonomy.Steelman;
 using AeroAgent.Conversation.Data;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
 using AeroAgent.Moa.Aggregation;
 using AeroAgent.Moa.Assignment;
+using AeroAgent.Moa.Gateway;
 using AeroAgent.Moa.Planning;
 using AeroAgent.Moa.Profiles;
+using AeroAgent.Moa.Safety;
 using AeroAgent.Moa.Strategies;
+using AeroAgent.Moa.Subagent;
 using AeroAgent.Moa.Tools;
 using AeroAgent.Moa.Tools.Workspace;
 using AeroCode.AI.Embedding;
@@ -24,8 +37,12 @@ using AeroCode.App.Views;
 using AeroCode.Core.Data;
 using AeroCode.Core.Services;
 using AeroCode.Harness;
+using AeroCode.Harness.Agents;
+using AeroCode.Harness.Compaction;
+using AeroCode.Harness.Hooks;
 using AeroCode.Harness.Permission;
 using AeroCode.Harness.PlanMode;
+using AeroCode.Harness.Scheduler;
 using AeroCode.Mcp.Client;
 using AeroCode.Skills;
 using Avalonia;
@@ -188,6 +205,8 @@ public partial class App : Application
         ConversationDbContext.EnsureSchemaAsync(convDb).GetAwaiter().GetResult();
         sc.AddSingleton(convDb);
         sc.AddSingleton<ISessionService, SessionService>();
+        // B2 会话 fork 能力：SessionService 同时实现 ISessionFork（同一真实持久化实例）。
+        sc.AddSingleton<ISessionFork>(sp => (ISessionFork)sp.GetRequiredService<ISessionService>());
 
         // 3c. MOA 编排（AeroAgent.Moa）。画像目录：文件覆盖内建种子；
         //     编排选项：缺失/损坏时回退默认（JsonMoaOptionsStore 自带容错）。
@@ -208,16 +227,70 @@ public partial class App : Application
         var harnessHost = new HarnessHost();
         sc.AddSingleton(harnessHost);
         sc.AddSingleton(harnessHost.Permission);
+        // B2 组合根：EventBus/Compactor 从 HarnessHost 取同一实例（规格 2.3），
+        // 守卫链/熔断/钩子/调度/子代理/压缩全部共享一条事件面。
+        sc.AddSingleton(harnessHost.EventBus);
+        sc.AddSingleton(new Compactor(
+            harnessHost.EventBus,
+            CompactionStrategy.TruncateOldest,
+            triggerThresholdPercent: 100, // 阈值语义 = 估算 token ≥ 设置阈值即触发
+            keepRecentMessages: Math.Clamp(settings.Current.Compaction.KeepRecentMessages, 1, 200)));
+        sc.AddSingleton(new CompactionGateOptions
+        {
+            // ≤0 = 关闭溢出检测（不压缩，行为与批次 A 一致）。
+            ThresholdTokens = settings.Current.Compaction.ThresholdTokens,
+        });
 
         // S7 授权链：持久化存储（permissions.json）+ 对话框代理（Ask → 真实授权窗口）。
         // 用户的持久化决策在 RegisterToolboxes 之后应用（用户决定优先于内建默认）。
         var permissionStore = new JsonPermissionStore(paths.PermissionsFile);
         sc.AddSingleton(permissionStore);
-        var permissionBroker = new DialogPermissionBroker(
+
+        // B2 智能审批（G3）：AdvisorModel 非空时用默认 provider 的小模型判定。
+        // provider 解析失败 → advisor 不可用（审批行为与无 advisor 一致，如实记录）。
+        IPermissionAdvisor? advisor = null;
+        var advisorModel = settings.Current.Safety.AdvisorModel;
+        if (!string.IsNullOrWhiteSpace(advisorModel))
+        {
+            try
+            {
+                advisor = new PermissionAdvisor(
+                    providerFactory.Get(settings.Current.Ai.DefaultProviderId), advisorModel);
+            }
+            catch (Exception ex)
+            {
+                loggerFactory.CreateLogger("AeroCode.Safety").LogWarning(
+                    "[DEGRADED] 审批建议器不可用（默认 provider 解析失败，审批行为不变）：{Error}", ex.Message);
+            }
+        }
+
+        if (advisor is not null)
+        {
+            sc.AddSingleton(advisor);
+            sc.AddSingleton<IPermissionAdvisor>(advisor);
+        }
+
+        var dialogBroker = new DialogPermissionBroker(
             harnessHost.Permission, permissionStore,
             new AvaloniaPermissionDialogPresenter(),
-            loggerFactory.CreateLogger<DialogPermissionBroker>());
-        sc.AddSingleton<IPermissionBroker>(permissionBroker);
+            loggerFactory.CreateLogger<DialogPermissionBroker>(),
+            advisor,
+            settings.Current.Safety.AutoApproveLowRisk);
+        sc.AddSingleton(dialogBroker);
+
+        // B2 审批熔断（G3）：会话内连续批准/累计成本任一超限 → 强制人工弹窗。
+        // 成本通道由 ChatViewModel 在轮完成时用真实 usage 计费累计（RecordCost）。
+        var approvalBreaker = new ApprovalCircuitBreaker(
+            interactiveBroker: dialogBroker,
+            autoAdoptBroker: null,
+            eventBus: harnessHost.EventBus,
+            sessionId: "app",
+            maxConsecutiveApprovals: Math.Max(1, settings.Current.Safety.ApprovalBurstLimit),
+            maxSessionCostUsd: settings.Current.Safety.ApprovalCostLimitUsd > 0
+                ? settings.Current.Safety.ApprovalCostLimitUsd
+                : 5.0);
+        sc.AddSingleton(approvalBreaker);
+        sc.AddSingleton<IPermissionBroker>(approvalBreaker);
 
         var toolboxRegistry = new ToolboxRegistry();
 
@@ -257,15 +330,123 @@ public partial class App : Application
             toolboxRegistry.Register(new PlanToolbox(planWorkflow!));
         }
 
+        // B2 守卫链（规格 2.1，替换批次 A 的 GuardWorkspaceBoundary 直传）：
+        // 工作区边界 → 命令结构分类 → doom-loop → 敏感文件（含 AeroCode 配置自保护）→
+        // 可选急停哨兵。preCheck 只许更审慎（ToolRouter 保证 Allow 不越过策略 Deny/Ask）。
+        // 无工作区时工作区边界守卫缺席（诚实降级，其余守卫照常生效）。
+        var safetyLogger = loggerFactory.CreateLogger("AeroCode.Safety");
+        var guards = new List<IToolGuard>();
+        if (workspace is not null)
+        {
+            guards.Add(new WorkspaceBoundaryGuard(workspace));
+        }
+
+        guards.Add(new CommandClassifierGuard());
+        guards.Add(new DoomLoopGuard(Math.Max(2, settings.Current.Safety.DoomLoopThreshold)));
+        guards.Add(new SensitiveFileGuard(workspace, paths.RootDirectory));
+        var estopFile = settings.Current.Safety.EstopFile;
+        if (!string.IsNullOrWhiteSpace(estopFile))
+        {
+            guards.Add(new EstopGuard(estopFile, harnessHost.EventBus));
+        }
+
+        var guardChain = new ToolGuardChain(guards);
+        safetyLogger.LogInformation(
+            "守卫链装配完成：{Guards}（estop={Estop}）",
+            string.Join(" → ", guards.Select(g => g.Name)),
+            string.IsNullOrWhiteSpace(estopFile) ? "未启用" : estopFile);
+
         // 工具大结果落盘汇：按日期分目录，截断后的引用路径指回真实文件。
         var toolRouter = new ToolRouter(
             toolboxRegistry,
             harnessHost.Permission,
-            permissionBroker,
-            workspace is null ? null : GuardWorkspaceBoundary(workspace),
+            approvalBreaker,
+            (toolName, args) => guardChain.Check(toolName, args),
             new FileToolOutputSink(Path.Combine(paths.RootDirectory, "tool-outputs")));
         sc.AddSingleton(toolboxRegistry);
         sc.AddSingleton(toolRouter);
+
+        // B2 Hook 引擎（规格 2.3）：hooks.json 缺失 = 空载（正常态，非降级）；
+        // 坏配置 fail-safe 拒载（InvalidDataException 捕获后记 WARN，不崩溃）。
+        var hookEngine = new HookEngine(harnessHost.EventBus, loggerFactory.CreateLogger("AeroCode.Hooks"));
+        sc.AddSingleton(hookEngine);
+        sc.AddSingleton<IHookEngine>(hookEngine);
+        if (settings.Current.Hooks.Enabled)
+        {
+            var hooksPath = Path.Combine(paths.RootDirectory, "hooks.json");
+            if (File.Exists(hooksPath))
+            {
+                try
+                {
+                    var loaded = hookEngine.LoadFrom(hooksPath);
+                    loggerFactory.CreateLogger("AeroCode.Hooks").LogInformation(
+                        "已加载 {Count} 条事件钩子（{Path}）", loaded, hooksPath);
+                }
+                catch (InvalidDataException ex)
+                {
+                    loggerFactory.CreateLogger("AeroCode.Hooks").LogWarning(
+                        "[DEGRADED] hooks.json 配置拒载（fail-safe，保留空载）：{Error}", ex.Message);
+                }
+            }
+            else
+            {
+                loggerFactory.CreateLogger("AeroCode.Hooks").LogInformation(
+                    "hooks.json 不存在，钩子引擎空载（{Path}）", hooksPath);
+            }
+        }
+        else
+        {
+            loggerFactory.CreateLogger("AeroCode.Hooks").LogInformation(
+                "Hooks.Enabled=false，事件钩子未启用");
+        }
+
+        // B2 调度服务（规格 2.4）：jobs.json 持久化 + Timer 触发 + 急停哨兵联动。
+        // Enabled=false 不启动轮询（注册保留，设置页仍可查看/编辑任务定义）。
+        var scheduler = new SchedulerService(
+            Path.Combine(paths.RootDirectory, "jobs.json"),
+            string.IsNullOrWhiteSpace(estopFile) ? null : estopFile,
+            harnessHost.EventBus,
+            msg => loggerFactory.CreateLogger("AeroCode.Scheduler").LogInformation("{Message}", msg));
+        scheduler.Load();
+        if (settings.Current.Scheduler.Enabled)
+        {
+            scheduler.Start();
+        }
+        else
+        {
+            loggerFactory.CreateLogger("AeroCode.Scheduler").LogInformation(
+                "Scheduler.Enabled=false，调度轮询未启动");
+        }
+
+        if (scheduler.LastLoadError is not null)
+        {
+            loggerFactory.CreateLogger("AeroCode.Scheduler").LogWarning(
+                "[DEGRADED] jobs.json 拒载（fail-safe 空载）：{Error}", scheduler.LastLoadError);
+        }
+
+        sc.AddSingleton(scheduler);
+
+        // B2 子代理（规格 2.5）：ISubAgentLauncher 单例，独立会话 + 继承 ToolRouter
+        // （同一策略/守卫/授权代理实例，权限显式继承）。设置节映射进 SubagentOptions。
+        var subagentOptions = new SubagentOptions
+        {
+            Enabled = settings.Current.Subagent.Enabled,
+            MaxDepth = Math.Clamp(settings.Current.Subagent.MaxDepth, 1, SubAgentSpec.MaxDepth),
+            MaxParallel = Math.Max(1, settings.Current.Subagent.MaxParallel),
+        };
+        sc.AddSingleton<ISubAgentLauncher>(sp => new SubAgentRunner(
+            sp.GetRequiredService<ISessionService>(),
+            providerFactory,
+            profileCatalog,
+            harnessHost.EventBus,
+            subagentOptions,
+            toolRouter,
+            loggerFactory.CreateLogger<SubAgentRunner>()));
+
+        // B2 会话级组件：Steer 插话队列（G3 消费点在 ChatOrchestrationFacade）+ Todo 持久化
+        //（短生命周期 DbContext 工厂——与 SessionService 的互斥锁模型解并发竞争）。
+        sc.AddSingleton(new SteerQueue());
+        sc.AddSingleton<ITodoStore>(new TodoStore(() => new ConversationDbContext(convOptions)));
 
         // AutoApproveEdits：启动即 AcceptEdits 档（文件编辑免逐次确认；
         // shell 与网络仍走原规则）。持久化授权面只覆盖逐工具决策，不回写档位。
@@ -285,8 +466,96 @@ public partial class App : Application
         sc.AddSingleton<IOrchestrationStrategy, DecomposeStrategy>();
         sc.AddSingleton<IOrchestrationStrategy, EnsembleStrategy>();
         sc.AddSingleton<IOrchestrationStrategy, PipelineStrategy>();
+        // B2 G2-2 专家团策略：真实调 moa-gateway-pro（MOA_GATEWAY_URL/MOA_GATEWAY_KEY
+        // 环境变量约定，与官方 CLI 一致）；网关不可达时诚实失败（不静默回退）。
+        sc.AddSingleton(new MoaGatewayClient(MoaGatewayClientOptions.FromEnvironment()));
+        sc.AddSingleton<IOrchestrationStrategy, ExpertsStrategy>();
         sc.AddSingleton<IChatOrchestrationFacade, ChatOrchestrationFacade>();
         sc.AddSingleton<ChatViewModel>();
+
+        // ---- B2 G2-1 Mission 控制器接线（内核零改造，只装配其既有依赖）----
+        var autonomyRoot = Path.Combine(paths.RootDirectory, "autonomy");
+        var autonomyPaths = new AutonomyDataPaths(autonomyRoot);
+        autonomyPaths.EnsureDirectories();
+        var autonomyDb = new AutonomyDbContext(new DbContextOptionsBuilder<AutonomyDbContext>()
+            .UseSqlite($"Data Source={autonomyPaths.DatabaseFile}")
+            .Options);
+        var missionStore = new MissionStore(autonomyDb);
+        var autonomyLlm = new AutonomyLlmClient(providerFactory);
+        var clarificationGate = new ClarificationGate(autonomyLlm);
+        sc.AddSingleton(missionStore);
+        sc.AddSingleton(sp => new MoaMissionExecutor(
+            sp.GetRequiredService<ISessionService>(),
+            sp.GetRequiredService<IChatOrchestrationFacade>()));
+        sc.AddSingleton<IMissionExecutor>(sp => sp.GetRequiredService<MoaMissionExecutor>());
+        sc.AddSingleton(sp => new MissionController(
+            new TaskAnalyzer(autonomyLlm),
+            new StrategySelector(),
+            clarificationGate,
+            new SteelmanProtocol(autonomyLlm),
+            missionStore,
+            sp.GetRequiredService<IMissionExecutor>(),
+            new RetrospectiveEngine(),
+            new ExperienceInjector(missionStore),
+            autonomyLlm,
+            autonomyPaths,
+            loggerFactory.CreateLogger<MissionController>()));
+        sc.AddSingleton<MissionViewModel>();
+
+        // ---- B2 G2-3 会话记忆：学习库（四型沉淀的真实存储）+ 召回/沉淀服务 ----
+        var learningPaths = new LearningDataPaths(Path.Combine(paths.RootDirectory, "learning"));
+        var experienceStore = new ExperienceStore(
+            LearningDbContext.Create(learningPaths), learningPaths);
+        sc.AddSingleton(experienceStore);
+        sc.AddSingleton<IClarificationPresenter>(new AvaloniaClarificationPresenter());
+        sc.AddSingleton<IClarificationPort>(new ClarificationGatePort(clarificationGate));
+        sc.AddSingleton(sp => new SessionMemoryService(
+            paths,
+            settings.Current.Memory,
+            sp.GetRequiredService<INoteService>(),
+            providerFactory,
+            embeddingClient,
+            experienceStore,
+            settings.Current.Ai.DefaultProviderId,
+            loggerFactory.CreateLogger<SessionMemoryService>()));
+
+        // ---- B2 声明式 agent 定义（agents/*.md）：目录存在才加载；结果注册为单例 ----
+        //     （最小接线：注册 + 日志条数；画像映射的完整消费面按规格留待后续批次。）
+        var agentsRoot = Path.Combine(paths.RootDirectory, "agents");
+        if (Directory.Exists(agentsRoot))
+        {
+            try
+            {
+                var agentResult = new AgentDefinitionLoader(w =>
+                        loggerFactory.CreateLogger("AeroCode.Agents").LogWarning("[DEGRADED] {Warning}", w))
+                    .LoadFromDirectory(agentsRoot);
+                sc.AddSingleton(agentResult);
+                loggerFactory.CreateLogger("AeroCode.Agents").LogInformation(
+                    "已加载 {Count} 个声明式 agent 定义（{Warnings} 条警告，目录 {Dir}）",
+                    agentResult.Agents.Count, agentResult.Warnings.Count, agentsRoot);
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                loggerFactory.CreateLogger("AeroCode.Agents").LogWarning(
+                    "[DEGRADED] agents 目录不可读，声明式 agent 未加载：{Error}", ex.Message);
+            }
+        }
+        else
+        {
+            loggerFactory.CreateLogger("AeroCode.Agents").LogInformation(
+                "agents 目录不存在，跳过声明式 agent 加载（{Dir}）", agentsRoot);
+        }
+
+        // ---- B2 G4 WindowsJobSandbox：ShellRunner 构造无沙箱参数（builder 所有权约束，
+        //      不碰其文件）→ 无法在不改动 ShellRunner 的前提下真实挂接。诚实处置：
+        //      注册单例工厂（惰性，解析即真实创建 Job Object）+ 启动日志记录待挂接状态，
+        //      绝不伪造挂接。详见 batchB_delta_report.md。
+        sc.AddSingleton(_ => new WindowsJobSandbox(
+            processMemoryLimitBytes: 1L << 30,
+            maxActiveProcesses: 32));
+        loggerFactory.CreateLogger("AeroCode.Sandbox").LogWarning(
+            "[DEGRADED] WindowsJobSandbox 已注册但未挂接：ShellRunner 构造签名无沙箱参数，" +
+            "run_shell 仍走 ShellRunner 原生路径（不伪造挂接）");
 
         // 4. Core services
         sc.AddSingleton<ITagService, TagService>();
@@ -351,30 +620,6 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// 工作区边界前置守卫：path 类参数解析不到工作区内（越界/无效）一律升级 Ask，
-    /// 交授权面显式裁决——绝不静默放行（WorkspaceContext.Resolve 契约）。守卫只许
-    /// 更审慎：返回 Ask 后仍会过一次策略，显式 Deny 维持 Deny。
-    /// run_shell 的 command 不是路径，不做字符串猜测：其边界由 ShellRunner 的
-    /// cwd=工作区根钉死，危险性由策略 Ask 基线 + 危险模式探测把关。
-    /// </summary>
-    private static Func<string, IReadOnlyDictionary<string, object?>?, PermissionDecision?> GuardWorkspaceBoundary(
-        WorkspaceContext workspace)
-    {
-        return (_, args) =>
-        {
-            if (args is null
-                || !args.TryGetValue("path", out var path)
-                || path is not string pathText
-                || string.IsNullOrWhiteSpace(pathText))
-            {
-                return null; // 无 path 目标（read-only/git_status 等）——走正常策略。
-            }
-
-            return workspace.Resolve(pathText) is null ? PermissionDecision.Ask : null;
-        };
-    }
-
-    /// <summary>
     /// 应用 permissions.json 中的用户决策，覆盖内建默认（笔记/技能工具 Allow、
     /// MCP 工具 Ask、CreateDefault 规则表）。必须在 RegisterToolboxes 之后执行：
     /// 用户记住的拒绝/询问优先于应用的便利默认。读取失败如实降级为默认策略。
@@ -435,6 +680,34 @@ public partial class App : Application
             services.GetRequiredService<AppDataPaths>().RootDirectory,
             logger);
         registry.Register(skillToolbox);
+
+        // ---- B2 工具域注册（规格 2.6）：与 workspace 可用性无关的域，全平台注册 ----
+        // todo_*：会话级任务清单（TodoStore 真实读写 SQLite；当前会话经 ChatViewModel 访问器解析）。
+        registry.Register(new TodoToolbox(
+            services.GetRequiredService<ITodoStore>(),
+            () => services.GetRequiredService<ChatViewModel>().SelectedSession?.Id ?? string.Empty));
+
+        // web_search / web_fetch：真实检索栈（SearchService 默认后端）+ 真实 HTTP。
+        registry.Register(new WebToolbox(logger: loggerFactory.CreateLogger<WebToolbox>()));
+
+        // question：结构化澄清——评估走真实 ClarificationGate（端口适配），弹窗走真实 UI。
+        // 澄清工具本身无副作用（只向用户发问），Allow；弹窗未回应时工具诚实失败。
+        var clarifyToolbox = new ClarifyToolbox(
+            services.GetRequiredService<IClarificationPort>(),
+            services.GetRequiredService<IClarificationPresenter>(),
+            logger: loggerFactory.CreateLogger<ClarifyToolbox>());
+        registry.Register(clarifyToolbox);
+        permission.SetRule(new ToolPermissionRule
+        {
+            ToolName = "question",
+            DefaultDecision = PermissionDecision.Allow,
+            Notes = "结构化澄清：向用户弹窗提问，无副作用",
+        });
+
+        foreach (var def in clarifyToolbox.Definitions.Where(d => d.Name != "question"))
+        {
+            permission.SetDefaultDecision(def.Name, PermissionDecision.Ask);
+        }
 
         foreach (var def in noteToolbox.Definitions)
         {

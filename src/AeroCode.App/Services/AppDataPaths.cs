@@ -25,6 +25,9 @@ public class AppDataPaths
     /// <summary>工具授权决策（用户"记住选择"/设置页修改的持久化）。</summary>
     public string PermissionsFile { get; }
 
+    /// <summary>会话记忆目录（MEMORY.md / USER.md，Hermes 风格长期记忆）。</summary>
+    public string MemoryDirectory { get; }
+
     private static string? _rootDirectoryOverride;
 
     /// <summary>
@@ -67,6 +70,7 @@ public class AppDataPaths
         MoaProfilesFile = Path.Combine(RootDirectory, "moa-profiles.json");
         MoaOptionsFile = Path.Combine(RootDirectory, "moa-options.json");
         PermissionsFile = Path.Combine(RootDirectory, "permissions.json");
+        MemoryDirectory = Path.Combine(RootDirectory, "memories");
     }
 
     public void EnsureAll()

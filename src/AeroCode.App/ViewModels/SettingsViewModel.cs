@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -17,7 +18,9 @@ using AeroCode.AI.Configuration;
 using AeroCode.AI.Providers;
 using AeroCode.App.Configuration;
 using AeroCode.App.Services;
+using AeroCode.Harness.Hooks;
 using AeroCode.Harness.Permission;
+using AeroCode.Harness.Scheduler;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
@@ -60,6 +63,55 @@ public sealed partial class PermissionRuleItem : ObservableObject
 
 /// <summary>速度档位的下拉选项。</summary>
 public sealed record SpeedChoice(SpeedTier Value, string Display);
+
+/// <summary>钩子列表段的一行（G5 设置页）：全部只读展示（配置编辑经 hooks.json 文件）。</summary>
+public sealed class HookItemViewModel
+{
+    public string Id { get; }
+    public string Event { get; }
+    public string MatchText { get; }
+    public string Command { get; }
+    public int TimeoutSec { get; }
+    public bool Enabled { get; }
+    public string EnabledText => Enabled ? "✅ 启用" : "⏸ 停用";
+
+    public HookItemViewModel(HookDef hook)
+    {
+        Id = hook.Id;
+        Event = hook.Event;
+        MatchText = string.IsNullOrEmpty(hook.Match) ? "（无过滤）" : hook.Match;
+        Command = hook.Command;
+        TimeoutSec = hook.TimeoutSec;
+        Enabled = hook.Enabled;
+    }
+}
+
+/// <summary>调度任务列表段的一行（G5 设置页）：启停可编辑，其余经增删流程维护。</summary>
+public sealed partial class JobItemViewModel : ObservableObject
+{
+    public string Id { get; }
+    public string TriggerText { get; }
+    public string Command { get; }
+
+    [ObservableProperty]
+    private bool _isEnabled;
+
+    public string EnabledText => IsEnabled ? "✅ 启用" : "⏸ 停用";
+
+    public JobItemViewModel(JobDef job)
+    {
+        Id = job.Id;
+        Command = job.Command;
+        IsEnabled = job.Enabled;
+        TriggerText = job.Cron is not null
+            ? $"{job.Cron}（cron · 本地时间）"
+            : job.AtUtc.HasValue
+                ? $"{job.AtUtc.Value.ToLocalTime():yyyy-MM-dd HH:mm}（一次性）"
+                : "（未定义触发）";
+    }
+
+    partial void OnIsEnabledChanged(bool value) => OnPropertyChanged(nameof(EnabledText));
+}
 
 /// <summary>
 /// MOA 角色绑定的下拉选项：Binding 为 null = 自动分配（按画像）；
@@ -280,6 +332,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly MoaOptions _moaOptions;
     private readonly JsonMoaOptionsStore _moaOptionsStore;
     private readonly ILogger<SettingsViewModel> _logger;
+    private readonly IHookEngine? _hookEngine;
+    private readonly SchedulerService? _scheduler;
+    private readonly string? _hooksJsonPath;
 
     /// <summary>
     /// JSON 非法而未能提交的 ExtraHeaders/ExtraBody 文本（按 config 实例暂存）：
@@ -385,6 +440,48 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>工具权限规则列表段（策略快照；Save 时写回策略并持久化）。</summary>
     public ObservableCollection<PermissionRuleItem> PermissionRules { get; } = new();
 
+    // ==================== 事件钩子段（G5 设置页） ====================
+
+    /// <summary>已加载的钩子行（真实快照，来自 HookEngine.Hooks）。</summary>
+    public ObservableCollection<HookItemViewModel> HookItems { get; } = new();
+
+    /// <summary>钩子引擎启停（settings.hooks.enabled；保存落盘，重启后由组合根按档生效）。</summary>
+    [ObservableProperty]
+    private bool _hooksEnabled;
+
+    /// <summary>钩子段状态文本（段内独立，不冲主状态栏）。</summary>
+    [ObservableProperty]
+    private string _hooksStatusText = string.Empty;
+
+    // ==================== 自动调度段（G5 设置页） ====================
+
+    /// <summary>任务定义行（真实快照，来自 SchedulerService.Jobs）。</summary>
+    public ObservableCollection<JobItemViewModel> JobItems { get; } = new();
+
+    /// <summary>开机自动轮询（settings.scheduler.enabled；保存落盘，重启后由组合根按档启动）。</summary>
+    [ObservableProperty]
+    private bool _schedulerEnabled;
+
+    /// <summary>本进程内轮询 Timer 是否在跑（Start/Stop 即时反映）。</summary>
+    [ObservableProperty]
+    private bool _isSchedulerRunning;
+
+    /// <summary>调度段状态文本（段内独立，不冲主状态栏）。</summary>
+    [ObservableProperty]
+    private string _schedulerStatusText = string.Empty;
+
+    [ObservableProperty]
+    private string _newJobId = string.Empty;
+
+    [ObservableProperty]
+    private string _newJobCommand = string.Empty;
+
+    [ObservableProperty]
+    private string _newJobCron = string.Empty;
+
+    [ObservableProperty]
+    private string _newJobAtUtcLocal = string.Empty;
+
     public SettingsViewModel(
         SettingsService settings,
         ThemeService theme,
@@ -394,7 +491,10 @@ public sealed partial class SettingsViewModel : ObservableObject
         IModelProfileCatalog profileCatalog,
         MoaOptions moaOptions,
         JsonMoaOptionsStore moaOptionsStore,
-        ILogger<SettingsViewModel> logger)
+        ILogger<SettingsViewModel> logger,
+        IHookEngine? hookEngine = null,
+        SchedulerService? scheduler = null,
+        AppDataPaths? paths = null)
     {
         _settings = settings;
         _theme = theme;
@@ -405,6 +505,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         _moaOptions = moaOptions ?? throw new ArgumentNullException(nameof(moaOptions));
         _moaOptionsStore = moaOptionsStore ?? throw new ArgumentNullException(nameof(moaOptionsStore));
         _logger = logger;
+        _hookEngine = hookEngine;
+        _scheduler = scheduler;
+        _hooksJsonPath = paths is null ? null : Path.Combine(paths.RootDirectory, "hooks.json");
         HydrateFromSettings();
         HydratePermissionRules();
         HydrateProfiles();
@@ -545,6 +648,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         SelectedProvider = Providers.FirstOrDefault(p => p.Id == DefaultProviderId) ?? Providers.FirstOrDefault();
         // 重水合 = 配置全部来自磁盘/当前设置，此前未提交的非法文本已过期作废
         _pendingExtras.Clear();
+
+        // G5 钩子/调度段：开关取磁盘档；调度运行态按组合根事实（Enabled 即启动轮询）反映。
+        HooksEnabled = s.Hooks.Enabled;
+        SchedulerEnabled = s.Scheduler.Enabled;
+        IsSchedulerRunning = _scheduler is not null && s.Scheduler.Enabled;
+        RefreshHookItems();
+        RefreshJobs();
     }
 
     /// <summary>切走 provider 前把在编辑的 Extra* 文本提交回旧 config（合法写字，非法暂存原文）。</summary>
@@ -860,6 +970,10 @@ public sealed partial class SettingsViewModel : ObservableObject
             s.Ai.DefaultModel = string.IsNullOrWhiteSpace(DefaultModel) ? "deepseek-v4-flash" : DefaultModel;
             s.Ai.Providers.Clear();
             foreach (var p in Providers) s.Ai.Providers.Add(p);
+            // G5 钩子/调度开关随 Save 落盘（进程内引擎/Timer 不受此处影响：
+            // 钩子加载发生在组合根启动，调度启停用段内 Start/Stop 按钮即时生效）。
+            s.Hooks.Enabled = HooksEnabled;
+            s.Scheduler.Enabled = SchedulerEnabled;
             await _settings.SaveAsync();
             _theme.Apply(SelectedTheme);
 
@@ -1027,6 +1141,276 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         error = $"无法解析 '{text.Trim()}'（示例：0.5，单位美元/轮）";
         return false;
+    }
+
+    // ==================== 事件钩子段命令（G5） ====================
+
+    /// <summary>从引擎快照重建钩子行（水合 + Reload 后）。</summary>
+    public void RefreshHookItems()
+    {
+        HookItems.Clear();
+        if (_hookEngine is null)
+        {
+            HooksStatusText = "钩子引擎未装配";
+            return;
+        }
+
+        foreach (var hook in _hookEngine.Hooks)
+        {
+            HookItems.Add(new HookItemViewModel(hook));
+        }
+
+        HooksStatusText = $"{HookItems.Count} 条钩子已加载";
+    }
+
+    /// <summary>
+    /// 从 hooks.json 重新加载（与组合根启动同路径同失败语义：坏配置 fail-safe 拒载，
+    /// 保留当前有效配置；未启用/文件缺失时如实提示，不伪造加载）。
+    /// </summary>
+    [RelayCommand]
+    public void ReloadHooks()
+    {
+        if (_hookEngine is null || _hooksJsonPath is null)
+        {
+            HooksStatusText = "钩子引擎未装配";
+            return;
+        }
+
+        if (!HooksEnabled)
+        {
+            HooksStatusText = "钩子未启用（开启并保存后重启应用生效）";
+            return;
+        }
+
+        if (!File.Exists(_hooksJsonPath))
+        {
+            HooksStatusText = $"hooks.json 不存在（{_hooksJsonPath}），引擎空载";
+            RefreshHookItems();
+            return;
+        }
+
+        try
+        {
+            var count = _hookEngine.LoadFrom(_hooksJsonPath);
+            RefreshHookItems();
+            HooksStatusText = $"已从 hooks.json 加载 {count} 条钩子";
+        }
+        catch (InvalidDataException ex)
+        {
+            RefreshHookItems();
+            HooksStatusText = $"[DEGRADED] hooks.json 拒载（fail-safe，保留当前有效配置）：{ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// 打开 hooks.json（系统默认编辑器）。文件缺失时先创建最小合法空配置（[]）再打开——
+    /// 不伪造内容；移动端无文件关联时如实给出路径，不静默。
+    /// </summary>
+    [RelayCommand]
+    public void OpenHooksJson()
+    {
+        if (_hooksJsonPath is null)
+        {
+            HooksStatusText = "应用数据路径未装配";
+            return;
+        }
+
+        try
+        {
+            if (!File.Exists(_hooksJsonPath))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_hooksJsonPath)!);
+                File.WriteAllText(_hooksJsonPath, "[]\n");
+                HooksStatusText = "hooks.json 不存在，已创建空配置";
+            }
+
+            if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
+            {
+                HooksStatusText = $"移动端无文件关联，请手动编辑：{_hooksJsonPath}";
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo { FileName = _hooksJsonPath, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            HooksStatusText = $"打开失败：{ex.Message}（路径 {_hooksJsonPath}）";
+        }
+    }
+
+    // ==================== 自动调度段命令（G5） ====================
+
+    /// <summary>从调度服务快照重建任务行（水合 + 增删启停后）。</summary>
+    public void RefreshJobs()
+    {
+        JobItems.Clear();
+        if (_scheduler is null)
+        {
+            SchedulerStatusText = "调度服务未装配";
+            return;
+        }
+
+        foreach (var job in _scheduler.Jobs)
+        {
+            JobItems.Add(new JobItemViewModel(job));
+        }
+
+        SchedulerStatusText = _scheduler.LastLoadError is not null
+            ? $"[DEGRADED] jobs.json 拒载（fail-safe 空载）：{_scheduler.LastLoadError}"
+            : $"{JobItems.Count} 个任务定义";
+    }
+
+    /// <summary>
+    /// 新增任务（真实 AddOrUpdate 即时落盘）。Cron 与一次性时刻二选一——
+    /// 均空/均填在 UI 层先拦，其余不合法（坏 cron、超时非正数）由 JobDef.Validate 如实报错。
+    /// </summary>
+    [RelayCommand]
+    public void AddJob()
+    {
+        if (_scheduler is null)
+        {
+            SchedulerStatusText = "调度服务未装配";
+            return;
+        }
+
+        var id = NewJobId.Trim();
+        var command = NewJobCommand.Trim();
+        if (id.Length == 0)
+        {
+            SchedulerStatusText = "任务 Id 不能为空";
+            return;
+        }
+
+        if (command.Length == 0)
+        {
+            SchedulerStatusText = "任务命令不能为空";
+            return;
+        }
+
+        var cron = string.IsNullOrWhiteSpace(NewJobCron) ? null : NewJobCron.Trim();
+        DateTime? atUtc = null;
+        var atText = NewJobAtUtcLocal.Trim();
+        if (atText.Length > 0)
+        {
+            if (!DateTime.TryParse(atText, CultureInfo.CurrentCulture, DateTimeStyles.None, out var local))
+            {
+                SchedulerStatusText = $"一次性时刻无法解析：'{atText}'（示例 2026-09-01 09:30，本地时间）";
+                return;
+            }
+
+            atUtc = local.ToUniversalTime();
+        }
+
+        if (cron is null && atUtc is null)
+        {
+            SchedulerStatusText = "Cron 与一次性时刻必须二选一";
+            return;
+        }
+
+        if (cron is not null && atUtc is not null)
+        {
+            SchedulerStatusText = "Cron 与一次性时刻只能填一个";
+            return;
+        }
+
+        try
+        {
+            _scheduler.AddOrUpdate(new JobDef
+            {
+                Id = id,
+                Command = command,
+                Cron = cron,
+                AtUtc = atUtc,
+                Enabled = true,
+                TimeoutSec = 120,
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            SchedulerStatusText = $"任务定义不合法：{ex.Message}";
+            return;
+        }
+
+        NewJobId = NewJobCommand = NewJobCron = NewJobAtUtcLocal = string.Empty;
+        RefreshJobs();
+        SchedulerStatusText = $"任务 '{id}' 已保存并即时落盘";
+    }
+
+    /// <summary>移除任务（真实 Remove 落盘）。</summary>
+    [RelayCommand]
+    public void RemoveJob(JobItemViewModel? item)
+    {
+        if (_scheduler is null || item is null)
+        {
+            return;
+        }
+
+        SchedulerStatusText = _scheduler.Remove(item.Id)
+            ? $"任务 '{item.Id}' 已移除"
+            : $"任务 '{item.Id}' 不存在";
+        RefreshJobs();
+    }
+
+    /// <summary>启停任务（真实写回 Enabled 并落盘；重启后按档恢复）。</summary>
+    [RelayCommand]
+    public void ToggleJob(JobItemViewModel? item)
+    {
+        if (_scheduler is null || item is null)
+        {
+            return;
+        }
+
+        var job = _scheduler.Jobs.FirstOrDefault(j => j.Id == item.Id);
+        if (job is null)
+        {
+            SchedulerStatusText = $"任务 '{item.Id}' 不存在";
+            RefreshJobs();
+            return;
+        }
+
+        job.Enabled = !job.Enabled;
+        try
+        {
+            _scheduler.AddOrUpdate(job);
+            SchedulerStatusText = $"任务 '{job.Id}' 已{(job.Enabled ? "启用" : "停用")}";
+        }
+        catch (ArgumentException ex)
+        {
+            SchedulerStatusText = $"任务更新失败：{ex.Message}";
+        }
+
+        RefreshJobs();
+    }
+
+    /// <summary>启动轮询 Timer（真实 Start，内部自动重载 jobs.json）。</summary>
+    [RelayCommand]
+    public void StartScheduler()
+    {
+        if (_scheduler is null)
+        {
+            SchedulerStatusText = "调度服务未装配";
+            return;
+        }
+
+        _scheduler.Start();
+        IsSchedulerRunning = true;
+        RefreshJobs();
+        SchedulerStatusText = $"调度轮询已启动（间隔 {_scheduler.PollSeconds}s；急停哨兵优先）";
+    }
+
+    /// <summary>停止轮询 Timer（任务定义保留，重启后按 settings 档恢复）。</summary>
+    [RelayCommand]
+    public void StopScheduler()
+    {
+        if (_scheduler is null)
+        {
+            SchedulerStatusText = "调度服务未装配";
+            return;
+        }
+
+        _scheduler.Stop();
+        IsSchedulerRunning = false;
+        SchedulerStatusText = "调度轮询已停止（任务定义保留）";
     }
 
     public sealed record ThemeChoice(string Id, string Display);

@@ -369,6 +369,83 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ====================== 事件钩子（G5） ====================== -->
+                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnDefinitions="*,Auto,Auto">
+                            <TextBlock Grid.Column="0" Text="🪝 事件钩子" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource AccentCyan}" />
+                            <Button Grid.Column="1" Content="📂 打开 hooks.json" Command="{Binding OpenHooksJsonCommand}" Margin="0,0,8,0" />
+                            <Button Grid.Column="2" Content="🔄 重新加载" Command="{Binding ReloadHooksCommand}" />
+                        </Grid>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                                   Text="事件钩子：Harness 事件（13 类白名单）触发用户配置的 shell 命令（事件 JSON 以 stdin 传入；单钩子失败不阻塞主流程，结果留痕 HookExecutedEvent）。配置文件为 AppData/AeroCode/hooks.json（HookDef 数组：id/event/match/command/timeoutSec/enabled）；坏配置整份拒载（fail-safe 保留当前有效配置）。启用开关随 Save 落盘，加载发生在应用启动——改开关后重启生效。" />
+                        <CheckBox IsChecked="{Binding HooksEnabled, Mode=TwoWay}" Content="启用事件钩子引擎（Hooks.Enabled）" />
+                        <ListBox ItemsSource="{Binding HookItems}" Background="Transparent" BorderThickness="0" MinHeight="40" MaxHeight="220">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="vm:HookItemViewModel">
+                                    <Grid ColumnDefinitions="110,110,*,Auto,64" Margin="0,2">
+                                        <TextBlock Grid.Column="0" Text="{Binding Id}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Event}" FontSize="11" Foreground="{StaticResource AccentCyan}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Command}" FontSize="11" Foreground="{StaticResource FgMuted}" VerticalAlignment="Center" Margin="6,0" TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding Command}" />
+                                        <TextBlock Grid.Column="3" Text="{Binding MatchText}" FontSize="10" Foreground="{StaticResource FgMuted}" VerticalAlignment="Center" Margin="0,0,8,0" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="4" Text="{Binding EnabledText}" FontSize="10" Foreground="{StaticResource AccentGreen}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock Text="{Binding HooksStatusText}" Foreground="{StaticResource FgMuted}" FontSize="11" />
+                    </StackPanel>
+                </Border>
+
+                <!-- ====================== 自动调度（G5） ====================== -->
+                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnDefinitions="*,Auto,Auto">
+                            <TextBlock Grid.Column="0" Text="⏰ 自动调度" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource AccentAmber}" />
+                            <Button Grid.Column="1" Content="▶ 启动轮询" Command="{Binding StartSchedulerCommand}" Margin="0,0,8,0"
+                                    IsEnabled="{Binding !IsSchedulerRunning}" />
+                            <Button Grid.Column="2" Content="⏸ 停止轮询" Command="{Binding StopSchedulerCommand}"
+                                    IsEnabled="{Binding IsSchedulerRunning}" />
+                        </Grid>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                                   Text="调度任务以真实子进程执行（jobs.json 持久化，原子写；cron 按本地时间求值，一次性任务消耗后停用）。急停哨兵存在时触发前拦截（任务不消耗）。运行状态为本进程 Timer 的真实状态；「开机自动轮询」开关随 Save 落盘，重启后由组合根按档启动。" />
+                        <Grid ColumnDefinitions="140,*,140,*,Auto">
+                            <TextBox Grid.Column="0" Text="{Binding NewJobId, Mode=TwoWay}" Watermark="任务 Id*" FontSize="12" />
+                            <TextBox Grid.Column="1" Text="{Binding NewJobCommand, Mode=TwoWay}" Watermark="命令*（shell 子进程）" FontSize="12" />
+                            <TextBox Grid.Column="2" Text="{Binding NewJobCron, Mode=TwoWay}" Watermark="cron（二选一）" FontSize="12" />
+                            <TextBox Grid.Column="3" Text="{Binding NewJobAtUtcLocal, Mode=TwoWay}" Watermark="一次性时刻（二选一）" FontSize="12" />
+                            <Button Grid.Column="4" Content="➕ 添加" Command="{Binding AddJobCommand}" />
+                        </Grid>
+                        <ListBox ItemsSource="{Binding JobItems}" Background="Transparent" BorderThickness="0" MinHeight="40" MaxHeight="220">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="vm:JobItemViewModel">
+                                    <Grid ColumnDefinitions="110,*,Auto,Auto" Margin="0,2">
+                                        <TextBlock Grid.Column="0" Text="{Binding Id}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding TriggerText}" FontSize="11" Foreground="{StaticResource AccentAmber}" />
+                                            <TextBlock Text="{Binding Command}" FontSize="11" Foreground="{StaticResource FgMuted}" TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding Command}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{Binding EnabledText}" FontSize="10" Foreground="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <StackPanel Grid.Column="3" Orientation="Horizontal">
+                                            <Button Content="⏯" FontSize="10" Padding="4,2" Margin="0,0,4,0"
+                                                    ToolTip.Tip="启用/停用（真实落盘）"
+                                                    Command="{Binding $parent[ListBox].((vm:SettingsViewModel)DataContext).ToggleJobCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="🗑" FontSize="10" Padding="4,2"
+                                                    ToolTip.Tip="移除任务"
+                                                    Command="{Binding $parent[ListBox].((vm:SettingsViewModel)DataContext).RemoveJobCommand}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock Text="{Binding SchedulerStatusText}" Foreground="{StaticResource FgMuted}" FontSize="11" />
+                    </StackPanel>
+                </Border>
+
             </StackPanel>
         </ScrollViewer>
     </DockPanel>

@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AeroAgent.Conversation.Data;
 
 /// <summary>
-/// 统一对话持久化上下文。chat_sessions / chat_messages 两张表，
+/// 统一对话持久化上下文。chat_sessions / chat_messages / todo_items 三张表，
 /// 消息自带 MOA 归属列（provider/model/策略角色/成本/延迟）。
 /// </summary>
 public class ConversationDbContext : DbContext
@@ -18,6 +18,7 @@ public class ConversationDbContext : DbContext
 
     public DbSet<ChatSession> Sessions => Set<ChatSession>();
     public DbSet<ChatMessage> Messages => Set<ChatMessage>();
+    public DbSet<TodoItem> Todos => Set<TodoItem>();
 
     /// <summary>
     /// 既有数据库的兼容升级。EnsureCreated 不会给已存在的库补列：
@@ -28,6 +29,8 @@ public class ConversationDbContext : DbContext
     /// 此处用 PRAGMA table_info 检测缺列并以 ALTER TABLE 补齐（幂等）。
     /// 注意：列名必须与 EF 实际映射名一致（本模型未配置 snake_case 约定，
     /// 列名即属性名）——写成 is_final 会让存量库升级后 EF 查询报 no such column。
+    /// 批次 B：todo_items 表对存量库按同口径补建（CREATE TABLE IF NOT EXISTS，
+    /// 列名/类型与 OnModelCreating 映射一致，constraint/index 名不影响 EF 使用）。
     /// </summary>
     public static async Task EnsureSchemaAsync(ConversationDbContext db, CancellationToken ct = default)
     {
@@ -67,6 +70,32 @@ public class ConversationDbContext : DbContext
             await using var alter = conn.CreateCommand();
             alter.CommandText = ddl;
             await alter.ExecuteNonQueryAsync(ct);
+        }
+
+        // ---- 批次 B：todo_items 表对存量库补建（全新库由 EnsureCreated 直接建好）----
+        var todoTableExists = false;
+        await using (var probe = conn.CreateCommand())
+        {
+            probe.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='todo_items';";
+            var scalar = await probe.ExecuteScalarAsync(ct);
+            todoTableExists = Convert.ToInt64(scalar) > 0;
+        }
+
+        if (!todoTableExists)
+        {
+            await using var create = conn.CreateCommand();
+            create.CommandText = @"
+CREATE TABLE IF NOT EXISTS todo_items (
+    Id TEXT NOT NULL CONSTRAINT pk_todo_items PRIMARY KEY,
+    SessionId TEXT NOT NULL,
+    Content TEXT NOT NULL,
+    IsCompleted INTEGER NOT NULL,
+    Position INTEGER NOT NULL,
+    CreatedAtUtc TEXT NOT NULL,
+    UpdatedAtUtc TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_todo_items_sessionid ON todo_items (SessionId);";
+            await create.ExecuteNonQueryAsync(ct);
         }
     }
 
@@ -110,6 +139,15 @@ public class ConversationDbContext : DbContext
             e.HasIndex(m => m.SessionId);
             e.HasIndex(m => m.CreatedAtUtc);
             e.HasIndex(m => new { m.SessionId, m.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<TodoItem>(e =>
+        {
+            e.ToTable("todo_items");
+            e.HasKey(t => t.Id);
+            e.Property(t => t.Content).IsRequired();
+            e.HasIndex(t => t.SessionId);
+            e.HasIndex(t => new { t.SessionId, t.Position });
         });
     }
 }

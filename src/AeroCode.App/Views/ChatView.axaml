@@ -23,12 +23,42 @@
 
     <Grid ColumnDefinitions="260,*" Background="{StaticResource ChatBg}">
 
-        <!-- 左栏：会话列表 -->
+        <!-- 左栏：会话列表 + todo 清单 -->
         <Border Grid.Column="0" Background="{StaticResource ChatPanel}"
                 BorderBrush="{StaticResource ChatBorder}" BorderThickness="0,0,1,0">
             <DockPanel LastChildFill="True">
                 <Button DockPanel.Dock="Top" Margin="10" HorizontalAlignment="Stretch"
                         Content="＋ 新会话" Command="{Binding NewSessionCommand}" />
+
+                <!-- 待办清单（G5）：当前会话 TodoStore 条目，勾选/删除真实落库 -->
+                <Border DockPanel.Dock="Bottom" MaxHeight="230"
+                        BorderBrush="{StaticResource ChatBorder}" BorderThickness="0,1,0,0">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="✅ 待办清单" Margin="10,8,10,4"
+                                   FontWeight="SemiBold" Foreground="{StaticResource ChatAccent}" FontSize="12" />
+                        <ListBox ItemsSource="{Binding Todos}" Background="Transparent" BorderThickness="0">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:TodoItemViewModel">
+                                    <Grid ColumnDefinitions="Auto,*,Auto" Margin="2">
+                                        <CheckBox Grid.Column="0" VerticalAlignment="Center"
+                                                  IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                                  ToolTip.Tip="勾选/取消完成（真实落库）"
+                                                  Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).ToggleTodoCommand}"
+                                                  CommandParameter="{Binding}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Content}" FontSize="12"
+                                                   TextWrapping="Wrap" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource ChatFg}" />
+                                        <Button Grid.Column="2" Content="🗑" FontSize="10" Padding="3"
+                                                VerticalAlignment="Center" ToolTip.Tip="删除待办"
+                                                Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).DeleteTodoCommand}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                </Border>
+
                 <ListBox ItemsSource="{Binding Sessions}"
                          SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
                          Background="Transparent" BorderThickness="0"
@@ -48,6 +78,10 @@
                                     <Button Content="📌" FontSize="10" Padding="3"
                                             ToolTip.Tip="置顶/取消置顶"
                                             Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).TogglePinCommand}"
+                                            CommandParameter="{Binding}" />
+                                    <Button Content="🌿" FontSize="10" Padding="3"
+                                            ToolTip.Tip="分叉会话（复制元数据与全部消息为新会话，标题带 fork）"
+                                            Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).ForkSessionCommand}"
                                             CommandParameter="{Binding}" />
                                     <Button Content="🗑" FontSize="10" Padding="3"
                                             ToolTip.Tip="删除会话"
@@ -175,8 +209,13 @@
                                        FontSize="11" VerticalAlignment="Center" />
                             <ComboBox ItemsSource="{Binding Strategies}"
                                       SelectedItem="{Binding SelectedStrategy, Mode=TwoWay}"
-                                      ToolTip.Tip="本会话编排策略：Single 单模型 / Router 路由分流 / Decompose 拆解分工 / Ensemble 多模型集成 / Pipeline 起草-评审-修订"
+                                      ToolTip.Tip="本会话编排策略：Single 单模型 / Router 路由分流 / Decompose 拆解分工 / Ensemble 多模型集成 / Pipeline 起草-评审-修订 / Experts 专家团（经 moa-gateway-pro 网关多专家编排，网关不可达时该轮诚实失败）"
                                       MinWidth="110" FontSize="12" />
+                            <TextBlock Text="{Binding ExpertsGatewayHint}"
+                                       IsVisible="{Binding IsExpertsSelected}"
+                                       Foreground="{StaticResource ChatMuted}" FontSize="10"
+                                       MaxWidth="320" TextWrapping="Wrap"
+                                       VerticalAlignment="Center" Margin="4,0,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0">
                             <TextBlock Text="档位" Foreground="{StaticResource ChatMuted}"
@@ -191,6 +230,16 @@
                         <TextBlock Grid.Column="4" Text="{Binding StatusText}"
                                    Foreground="{StaticResource ChatMuted}" FontSize="11"
                                    VerticalAlignment="Center" Margin="12,0" />
+                    </Grid>
+                    <!-- Steer 插话（G5）：流式进行中可见，经 SteerQueue 下一轮注入 -->
+                    <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding IsStreaming}">
+                        <TextBox Grid.Column="0"
+                                 Text="{Binding SteerInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Watermark="插话（Steer）：流式进行中输入，下一轮注入…"
+                                 FontSize="12" MinHeight="32" />
+                        <Button Grid.Column="1" Margin="8,0,0,0" Content="↪ 插话"
+                                Command="{Binding SteerCommand}"
+                                ToolTip.Tip="入队插话（队列满/无会话时如实提示）" />
                     </Grid>
                     <Grid ColumnDefinitions="*,Auto,Auto">
                         <TextBox Grid.Column="0" x:Name="InputBox"

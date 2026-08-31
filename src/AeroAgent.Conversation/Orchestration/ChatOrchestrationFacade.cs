@@ -36,6 +36,7 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
     private readonly ISessionService _sessions;
     private readonly IProviderRegistry _providers;
     private readonly IReadOnlyDictionary<OrchestrationStrategy, IOrchestrationStrategy> _strategies;
+    private readonly SteerQueue? _steer;
     private readonly ILogger<ChatOrchestrationFacade> _logger;
 
     // 会话级轮次闸门：同一会话同时最多一个进行中的轮次。
@@ -47,12 +48,14 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         ISessionService sessions,
         IProviderRegistry providers,
         IEnumerable<IOrchestrationStrategy> strategies,
+        SteerQueue? steerQueue = null,
         ILogger<ChatOrchestrationFacade>? logger = null)
     {
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _providers = providers ?? throw new ArgumentNullException(nameof(providers));
         _strategies = (strategies ?? throw new ArgumentNullException(nameof(strategies)))
             .ToDictionary(s => s.Kind);
+        _steer = steerQueue;
         _logger = logger ?? NullLogger<ChatOrchestrationFacade>.Instance;
     }
 
@@ -120,6 +123,36 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
             yield break;
         }
 
+        // ---- Steer 消费点：上一轮运行中排队的插话，此刻作为真实用户消息落库并并入历史 ----
+        // 流式进行中 enqueue 的指令在本轮（下一轮编排）注入 user 块——插话是用户意图，
+        // 持久化到会话库（Label=steer）而不是只改内存，保证 fork/续跑后插话仍在。
+        List<ChatMessage> effectiveHistory = new(history);
+        if (_steer is { } steer)
+        {
+            foreach (var steerText in steer.Drain(sessionId))
+            {
+                var steerMessage = new ChatMessage
+                {
+                    SessionId = sessionId,
+                    Role = ChatRole.User,
+                    Content = steerText,
+                    Label = "steer",
+                    Status = MessageStatus.Completed,
+                };
+                var appendedSteer = await _sessions.AppendMessageAsync(steerMessage);
+                if (appendedSteer.IsSuccess)
+                {
+                    effectiveHistory.Add(steerMessage);
+                }
+                else
+                {
+                    // 落库失败的插话不静默丢弃：如实当作轮级失败原因之一透出。
+                    _logger.LogWarning(
+                        "[DEGRADED] steer 消息落库失败（插话未注入本轮）：{Error}", appendedSteer.Error);
+                }
+            }
+        }
+
         if (!_strategies.TryGetValue(session.Strategy, out var strategy))
         {
             // 未注册的策略如实回退 Single（Phase 2 会补齐其余策略）。
@@ -129,7 +162,7 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         var context = new OrchestrationContext
         {
             Session = session,
-            History = history,
+            History = effectiveHistory,
             UserMessageId = userMessage.Id,
             Providers = _providers,
             CancellationToken = ct,

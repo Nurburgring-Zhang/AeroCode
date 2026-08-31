@@ -8,9 +8,12 @@ using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
+using AeroAgent.Moa.Safety;
 using AeroAgent.Moa.Strategies;
 using AeroAgent.Moa.Tools.Workspace;
 using AeroCode.AI.Providers;
+using AeroCode.App.Services;
+using AeroCode.Harness.EventBus;
 using AeroCode.Harness.Permission;
 using AeroCode.Harness.PlanMode;
 using Avalonia;
@@ -168,12 +171,34 @@ public partial class MessageItemViewModel : ObservableObject
     partial void OnHasToolCallsChanged(bool value) => OnPropertyChanged(nameof(ToolCallsBadge));
 }
 
+/// <summary>todo 清单面板的一行（G5）：真实 TodoItem 投影 + 完成态切换/删除。</summary>
+public partial class TodoItemViewModel : ObservableObject
+{
+    public string Id { get; }
+    public int Position { get; }
+
+    [ObservableProperty]
+    private string _content;
+
+    [ObservableProperty]
+    private bool _isCompleted;
+
+    public TodoItemViewModel(TodoItem item)
+    {
+        Id = item.Id;
+        Position = item.Position;
+        _content = item.Content;
+        _isCompleted = item.IsCompleted;
+    }
+}
+
 /// <summary>
 /// 统一对话视图模型：会话 CRUD + 流式对话 + 事件流消费。
 /// 持久化全部由 <see cref="IChatOrchestrationFacade"/> 负责，
 /// 本 VM 只做 UI 投影（Dispatcher 保证 UI 线程安全）。
 /// 事件路由按 MessageId 精确定位气泡——MOA 并行编排下多条消息
 /// 交错产出，任何"当前消息"单指针都会串线。
+/// 批次 B G5 接线：会话 fork / Steer 插话 / todo 清单 / 首轮记忆注入 / 熔断成本累计。
 /// </summary>
 public partial class ChatViewModel : ObservableObject
 {
@@ -185,10 +210,19 @@ public partial class ChatViewModel : ObservableObject
     private readonly InstructionLoader _instructions;
     private readonly WorkspaceContext? _workspace;
     private readonly PlanWorkflow? _planWorkflow;
+    private readonly EventBus? _events;
+    private readonly SteerQueue? _steer;
+    private readonly ISessionFork? _fork;
+    private readonly ITodoStore? _todos;
+    private readonly SessionMemoryService? _memory;
+    private readonly ApprovalCircuitBreaker? _approvalBreaker;
 
     private CancellationTokenSource? _streamCts;
     private bool _suppressStrategySync;
     private bool _suppressSessionLoad;
+
+    /// <summary>当前轮是否出现过失败/取消事件（沉淀时如实标注轮成败；轮末消费后复位）。</summary>
+    private bool _turnFailed;
 
     public ChatViewModel(
         ISessionService sessions,
@@ -198,7 +232,13 @@ public partial class ChatViewModel : ObservableObject
         PermissionPolicy permission,
         InstructionLoader instructions,
         WorkspaceContext? workspace = null,
-        PlanWorkflow? planWorkflow = null)
+        PlanWorkflow? planWorkflow = null,
+        EventBus? eventBus = null,
+        SteerQueue? steerQueue = null,
+        ISessionFork? sessionFork = null,
+        ITodoStore? todoStore = null,
+        SessionMemoryService? memory = null,
+        ApprovalCircuitBreaker? approvalBreaker = null)
     {
         _sessions = sessions;
         _facade = facade;
@@ -208,6 +248,12 @@ public partial class ChatViewModel : ObservableObject
         _instructions = instructions ?? throw new ArgumentNullException(nameof(instructions));
         _workspace = workspace;
         _planWorkflow = planWorkflow;
+        _events = eventBus;
+        _steer = steerQueue;
+        _fork = sessionFork;
+        _todos = todoStore;
+        _memory = memory;
+        _approvalBreaker = approvalBreaker;
 
         ProviderIds = new ObservableCollection<string>(providers.ListConfiguredIds());
         _selectedProviderId = ProviderIds.FirstOrDefault() ?? string.Empty;
@@ -217,6 +263,9 @@ public partial class ChatViewModel : ObservableObject
         _selectedStrategy = moaOptions.DefaultStrategy;
         // 档位下拉与裁决源同步初始值（直接写字段：构造期不走 ApplyPermissionMode）。
         _selectedMode = permission.CurrentMode;
+        // 专家团网关提示（G5）：按 moa-gateway-pro 客户端同一环境变量约定（MOA_GATEWAY_URL/
+        // MOA_GATEWAY_KEY）如实反映"是否已配置"，不探测网络、不伪造连通。
+        ExpertsGatewayHint = BuildExpertsGatewayHint();
 
         // 热重载链：设置保存 → ProviderFactory.Reload → ProvidersChanged → 下拉就地刷新。
         // 本 VM 与应用同生命周期（DI 单例），订阅无需退订。
@@ -316,6 +365,13 @@ public partial class ChatViewModel : ObservableObject
     [ObservableProperty]
     private string _statusText = "就绪";
 
+    /// <summary>Steer 插话输入（流式进行中可见；经 SteerQueue 下一轮注入）。</summary>
+    [ObservableProperty]
+    private string _steerInput = string.Empty;
+
+    /// <summary>当前会话的 todo 清单（G5 面板；经 ITodoStore 真实读写）。</summary>
+    public ObservableCollection<TodoItemViewModel> Todos { get; } = new();
+
     /// <summary>权限档位下拉数据源（顺序即枚举定义序：Default→AcceptEdits→Plan→Bypass）。</summary>
     public IReadOnlyList<PermissionMode> PermissionModes { get; } =
         new[] { PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.Plan, PermissionMode.Bypass };
@@ -331,6 +387,33 @@ public partial class ChatViewModel : ObservableObject
         PermissionMode.Bypass => "跳过询问（显式拒绝/危险命令仍拦截）",
         _ => "默认（写/执行需确认）",
     };
+
+    /// <summary>专家团策略是否选中（策略下拉旁网关提示的可见性，G5）。</summary>
+    public bool IsExpertsSelected => SelectedStrategy == OrchestrationStrategy.Experts;
+
+    /// <summary>
+    /// 专家团网关配置提示（G5，诚实展示）：按 MoaGatewayClientOptions.FromEnvironment
+    /// 的同一约定读取环境变量状态——未配置时明说"未检测到"，绝不声称网关可用。
+    /// </summary>
+    public string ExpertsGatewayHint { get; }
+
+    private static string BuildExpertsGatewayHint()
+    {
+        var url = Environment.GetEnvironmentVariable("MOA_GATEWAY_URL");
+        var key = Environment.GetEnvironmentVariable("MOA_GATEWAY_KEY");
+        var hasUrl = !string.IsNullOrWhiteSpace(url);
+        var hasKey = !string.IsNullOrWhiteSpace(key);
+        if (!hasUrl && !hasKey)
+        {
+            return "⚠ 专家团经 moa-gateway-pro 网关：未检测到 MOA_GATEWAY_URL / MOA_GATEWAY_KEY"
+                   + "（默认探 http://127.0.0.1:8910），网关未运行时该轮将诚实失败";
+        }
+
+        var config = hasUrl ? url! : "默认 http://127.0.0.1:8910";
+        return hasKey
+            ? $"专家团经 moa-gateway-pro 网关：{config}（已配置 KEY）；网关不可达时该轮诚实失败"
+            : $"专家团经 moa-gateway-pro 网关：{config}（未设 KEY，仅健康探活可用）；网关不可达时该轮诚实失败";
+    }
 
     partial void OnSelectedModeChanged(PermissionMode value) => ApplyPermissionMode(value);
 
@@ -494,6 +577,120 @@ public partial class ChatViewModel : ObservableObject
             _suppressStrategySync = false;
         }
         _ = ObserveAsync(LoadMessagesAsync(value.Id));
+        _ = ObserveAsync(RefreshTodosAsync(value.Id));
+    }
+
+    /// <summary>刷新当前会话 todo 清单（G5 面板）。清单服务未注册时面板如实为空。</summary>
+    private async Task RefreshTodosAsync(string sessionId)
+    {
+        if (_todos is null)
+        {
+            return;
+        }
+
+        var result = await _todos.ListAsync(sessionId);
+        Todos.Clear();
+        if (!result.IsSuccess || result.Value is null)
+        {
+            return;
+        }
+
+        foreach (var item in result.Value)
+        {
+            Todos.Add(new TodoItemViewModel(item));
+        }
+    }
+
+    /// <summary>切换 todo 完成态（真实落库后刷新面板）。</summary>
+    [RelayCommand]
+    private async Task ToggleTodoAsync(TodoItemViewModel? item)
+    {
+        if (_todos is null || item is null || SelectedSession is null)
+        {
+            return;
+        }
+
+        var result = await _todos.UpdateAsync(item.Id, isCompleted: !item.IsCompleted);
+        StatusText = result.IsSuccess
+            ? (item.IsCompleted ? "待办已标记未完成" : "待办已完成")
+            : $"待办更新失败：{result.Error}";
+        await RefreshTodosAsync(SelectedSession.Id);
+    }
+
+    /// <summary>删除一条 todo（真实落库后刷新面板）。</summary>
+    [RelayCommand]
+    private async Task DeleteTodoAsync(TodoItemViewModel? item)
+    {
+        if (_todos is null || item is null || SelectedSession is null)
+        {
+            return;
+        }
+
+        var result = await _todos.DeleteAsync(item.Id);
+        StatusText = result.IsSuccess ? "待办已删除" : $"待办删除失败：{result.Error}";
+        await RefreshTodosAsync(SelectedSession.Id);
+    }
+
+    /// <summary>
+    /// 会话 fork（G5 按钮）：经真实 ISessionFork 分叉当前会话，新会话标题带"（fork）"。
+    /// 未装配 fork 能力（理论上仅测试替身场景）时如实提示，不静默。
+    /// </summary>
+    [RelayCommand]
+    private async Task ForkSessionAsync(SessionItemViewModel? session)
+    {
+        session ??= SelectedSession;
+        if (session is null)
+        {
+            return;
+        }
+
+        if (_fork is null)
+        {
+            StatusText = "✗ 当前会话服务不支持分叉";
+            return;
+        }
+
+        var result = await _fork.ForkAsync(session.Id);
+        if (!result.IsSuccess || result.Value is null)
+        {
+            StatusText = $"fork 失败：{result.Error}";
+            return;
+        }
+
+        StatusText = $"已分叉为新会话「{result.Value.Title}」";
+        await ReloadSessionsAsync();
+        SelectedSession = Sessions.FirstOrDefault(s => s.Id == result.Value!.Id);
+    }
+
+    /// <summary>
+    /// Steer 插话（G5 输入框，流式进行中可见）：入队下一轮注入。
+    /// 队列满/无会话 = 诚实失败提示；入队成功发布 SteerRequestedEvent（审计留痕）。
+    /// </summary>
+    [RelayCommand]
+    private void Steer()
+    {
+        var text = SteerInput.Trim();
+        if (text.Length == 0 || !IsStreaming || SelectedSession is null)
+        {
+            return;
+        }
+
+        if (_steer is null)
+        {
+            StatusText = "✗ 插话通道未装配";
+            return;
+        }
+
+        if (_steer.TryEnqueue(SelectedSession.Id, text))
+        {
+            SteerInput = string.Empty;
+            StatusText = "↪ 插话已排队，下一轮注入";
+            _events?.Publish(new SteerRequestedEvent(SelectedSession.Id, text, DateTime.UtcNow));
+        }
+        else
+        {
+            StatusText = "✗ 插话队列已满，请稍后再试";
+        }
     }
 
     /// <summary>
@@ -515,6 +712,7 @@ public partial class ChatViewModel : ObservableObject
     /// <summary>策略下拉变更：持久化到当前会话（新会话则作为创建参数）。</summary>
     partial void OnSelectedStrategyChanged(OrchestrationStrategy value)
     {
+        OnPropertyChanged(nameof(IsExpertsSelected));
         if (_suppressStrategySync || IsStreaming)
         {
             return;
@@ -631,6 +829,30 @@ public partial class ChatViewModel : ObservableObject
             if (instructions.Length > 0)
             {
                 text = instructions + "\n\n" + text;
+            }
+        }
+
+        // G2-3 记忆注入点：会话首轮（投影中尚无用户消息）把 MEMORY.md/USER.md
+        // + 以本轮输入为查询的 Top-K 笔记语义召回，作为 <memory-context> 块前缀注入。
+        // 召回失败降级为仅文件记忆（BuildMemoryBlockAsync 内部如实标注，不阻塞发送）。
+        if (_memory is not null && Messages.All(m => !m.IsUser))
+        {
+            try
+            {
+                var block = await _memory.BuildMemoryBlockAsync(text);
+                if (!string.IsNullOrEmpty(block.Text))
+                {
+                    text = block.Text + "\n\n" + text;
+                    if (block.DegradedNote is not null)
+                    {
+                        StatusText = $"⚠ {block.DegradedNote}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // 记忆装配异常不阻塞发送：如实标注后按无记忆继续。
+                StatusText = $"⚠ 记忆注入失败已跳过：{ex.Message}";
             }
         }
 
@@ -822,6 +1044,7 @@ public partial class ChatViewModel : ObservableObject
                 break;
 
             case MessageFailedEvent failed:
+                _turnFailed = true;
                 if (!string.IsNullOrEmpty(failed.MessageId)
                     && FindMessage(failed.MessageId) is { } failedVm)
                 {
@@ -844,6 +1067,7 @@ public partial class ChatViewModel : ObservableObject
                 break;
 
             case MessageCancelledEvent cancelled:
+                _turnFailed = true;
                 if (!string.IsNullOrEmpty(cancelled.MessageId)
                     && FindMessage(cancelled.MessageId) is { } cancelledVm)
                 {
@@ -857,6 +1081,29 @@ public partial class ChatViewModel : ObservableObject
                 // 成本只在真实计价时展示：未配置单价的模型不显示 $0.0000（那会伪装成已核算）。
                 var costPart = turn.TotalCostUsd > 0 ? $" · 成本 ${turn.TotalCostUsd:F4}" : string.Empty;
                 StatusText = $"本轮结束 · {turn.TotalMessages} 条回复{costPart}";
+
+                // 审批熔断成本通道（G3）：真实 usage 计费逐轮累计，达到阈值自动熔断。
+                if (turn.TotalCostUsd > 0 && _approvalBreaker is not null)
+                {
+                    _approvalBreaker.RecordCost(turn.TotalCostUsd);
+                }
+
+                // G2-3 对话沉淀：真实轨迹 + 失败教训写入经验库（fire-and-forget，失败只降级记录）。
+                if (_memory is not null && SelectedSession is not null)
+                {
+                    var lastUser = Messages.LastOrDefault(m => m.IsUser)?.Content ?? string.Empty;
+                    var lastAssistant = Messages.LastOrDefault(m => m.IsAssistant)?.Content;
+                    var sessionIdForMemory = SelectedSession.Id;
+                    var turnFailed = _turnFailed;
+                    _turnFailed = false;
+                    _ = ObserveAsync(_memory.ConsolidateTurnAsync(
+                        sessionIdForMemory, lastUser, lastAssistant,
+                        succeeded: !turnFailed, costUsd: turn.TotalCostUsd));
+
+                    // todo 清单可能被本轮工具更新：轮末刷新（G5 面板）。
+                    _ = ObserveAsync(RefreshTodosAsync(sessionIdForMemory));
+                }
+
                 break;
         }
     }

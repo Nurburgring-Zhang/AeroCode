@@ -28,11 +28,15 @@
     因此编译期 Moa → Conversation → AI/Core；运行期由 App 组合根把 Moa 策略
     注入 ChatOrchestrationFacade（Conversation 不引用 Moa，无循环）。
     Decompose 策略复用 Harness 的 TaskGraph（DAG 拓扑并行执行）。
+    批次 B：WebToolbox 复用 Skills/Research 的真实检索栈（SearchService +
+    DuckDuckGo/Bing/Tavily provider，零 key 也可用）——Skills 只引用 AI，
+    Moa → Skills 无循环。
   -->
   <ItemGroup>
     <ProjectReference Include="..\AeroCode.Core\AeroCode.Core.csproj" />
     <ProjectReference Include="..\AeroCode.AI\AeroCode.AI.csproj" />
     <ProjectReference Include="..\AeroCode.Harness\AeroCode.Harness.csproj" />
+    <ProjectReference Include="..\AeroCode.Skills\AeroCode.Skills.csproj" />
     <ProjectReference Include="..\AeroAgent.Conversation\AeroAgent.Conversation.csproj" />
   </ItemGroup>
 

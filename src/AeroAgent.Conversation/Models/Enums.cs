@@ -17,6 +17,9 @@ public enum OrchestrationStrategy
     Ensemble = 3,
     /// <summary>流水线：起草→评审→修订顺序接力。</summary>
     Pipeline = 4,
+    /// <summary>专家团：经 moa-gateway-pro 网关多专家编排（references/critics/consensus）。
+    /// 网关不可达时诚实失败（不静默回退到进程内策略——选了专家团就要真实的专家团）。</summary>
+    Experts = 5,
 }
 
 /// <summary>

@@ -1,8 +1,12 @@
 // Copyright (c) AeroCode V3.0
 // DialogPermissionBroker — interactive authorization for tool calls judged "Ask".
 // Real Avalonia dialog (allow / deny / remember), decisions persisted to permissions.json.
+// 批次 B G3/G5：可选装配 IPermissionAdvisor（LLM 智能审批）——Ask 先问建议器，
+// risk=low 且设置允许自动采纳 → 直接 Allow（记录，不打扰用户）；否则弹窗，
+// 弹窗显示建议与理由（advice 随 PermissionPrompt 进入两条真实 UI 路径）。
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using AeroAgent.Moa.Safety;
 using AeroAgent.Moa.Tools;
 using AeroCode.Harness.Permission;
 using Microsoft.Extensions.Logging;
@@ -10,7 +14,8 @@ using Microsoft.Extensions.Logging;
 namespace AeroCode.App.Services;
 
 /// <summary>授权对话框的输入：工具名 + 人类可读的参数预览（模型将要用这些参数执行）。</summary>
-public sealed record PermissionPrompt(string ToolName, string ArgumentsPreview);
+/// <param name="AdvisorNote">智能审批建议（可空）：建议/风险/理由一行式摘要，弹窗展示。</param>
+public sealed record PermissionPrompt(string ToolName, string ArgumentsPreview, string? AdvisorNote = null);
 
 /// <summary>授权对话框的输出：是否放行 + 是否记住（记住后写入策略并持久化）。</summary>
 public sealed record PermissionDialogResult(bool Approved, bool Remember);
@@ -46,6 +51,8 @@ public sealed class DialogPermissionBroker : IPermissionBroker
     private readonly PermissionPolicy _policy;
     private readonly JsonPermissionStore _store;
     private readonly IPermissionDialogPresenter _presenter;
+    private readonly IPermissionAdvisor? _advisor;
+    private readonly bool _autoApproveLowRisk;
     private readonly ILogger<DialogPermissionBroker>? _logger;
     private readonly SemaphoreSlim _dialogGate = new(1, 1);
 
@@ -53,12 +60,16 @@ public sealed class DialogPermissionBroker : IPermissionBroker
         PermissionPolicy policy,
         JsonPermissionStore store,
         IPermissionDialogPresenter presenter,
-        ILogger<DialogPermissionBroker>? logger = null)
+        ILogger<DialogPermissionBroker>? logger = null,
+        IPermissionAdvisor? advisor = null,
+        bool autoApproveLowRisk = false)
     {
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _logger = logger;
+        _advisor = advisor;
+        _autoApproveLowRisk = autoApproveLowRisk;
     }
 
     public async ValueTask<PermissionDecision> ResolveAsync(
@@ -66,7 +77,7 @@ public sealed class DialogPermissionBroker : IPermissionBroker
         IReadOnlyDictionary<string, object?>? args,
         CancellationToken ct)
     {
-        var prompt = new PermissionPrompt(toolName, FormatArguments(args));
+        var preview = FormatArguments(args);
 
         try
         {
@@ -82,6 +93,28 @@ public sealed class DialogPermissionBroker : IPermissionBroker
                         ? PermissionDecision.Allow
                         : PermissionDecision.Deny;
                 }
+
+                // ---- 智能审批（G3/G5）：Ask 先问建议器；任何失败=无建议，不阻塞审批主链 ----
+                string? advisorNote = null;
+                if (_advisor is { IsAvailable: true } advisor)
+                {
+                    var advice = await advisor.AdviseAsync(toolName, args, ct).ConfigureAwait(false);
+                    if (advice is not null && !string.Equals(advice.Risk, "unknown", StringComparison.Ordinal))
+                    {
+                        advisorNote = $"AI 建议：{advice.Recommend}（风险 {advice.Risk}）— {advice.Reason}";
+                        if (_autoApproveLowRisk
+                            && string.Equals(advice.Risk, "low", StringComparison.Ordinal)
+                            && !string.Equals(advice.Recommend, "deny", StringComparison.Ordinal))
+                        {
+                            _logger?.LogInformation(
+                                "工具 '{Tool}' 智能审批自动放行（risk=low，AutoApproveLowRisk）：{Reason}",
+                                toolName, advice.Reason);
+                            return PermissionDecision.Allow;
+                        }
+                    }
+                }
+
+                var prompt = new PermissionPrompt(toolName, preview, advisorNote);
 
                 PermissionDialogResult? result;
                 try

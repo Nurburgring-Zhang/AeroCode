@@ -61,3 +61,9 @@ public sealed record SessionStartEvent(string SessionId, DateTime Utc);
 public sealed record SessionEndEvent(string SessionId, int TotalToolCalls, DateTime Utc);
 public sealed record PermissionRequestedEvent(string ToolName, IReadOnlyDictionary<string, object?> Args);
 public sealed record CompactionTriggeredEvent(int OriginalTokens, int CompactedTokens, DateTime Utc);
+// ---- 批次 B 新事件（G0 契约钉死）----
+public sealed record SubAgentCompletedEvent(string SubAgentId, string Summary, double CostUsd, bool Success, DateTime Utc);
+public sealed record ApprovalCircuitBrokenEvent(string SessionId, string Reason, DateTime Utc);
+public sealed record SteerRequestedEvent(string SessionId, string Text, DateTime Utc);
+public sealed record HookExecutedEvent(string HookId, string EventName, bool Success, int ElapsedMs, DateTime Utc);
+public sealed record EtopTrippedEvent(string Reason, DateTime Utc);

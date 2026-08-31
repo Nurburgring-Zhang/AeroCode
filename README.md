@@ -1,7 +1,7 @@
 # 📒 AeroCode
 
 > **本地优先的 Markdown 笔记 × 多模型 AI 助手 × Agent Harness —— 一套代码，Windows 与 Android 同源双端**
-> .NET 9 + Avalonia 11 · MIT · v1.1.0（PHASE 6 收口 · 全量 982 用例 / 0 失败 / 19 网络门控跳过）
+> .NET 9 + Avalonia 11 · MIT · v1.1.0（PHASE 6 收口 + 批次 A/B · 全量 1419 用例 / 0 失败 / 23 门控跳过）
 
 <p>
   <img src="https://img.shields.io/github/v/release/Nurburgring-Zhang/AeroCode?label=Release" alt="Release" />
@@ -24,13 +24,15 @@ AeroCode 是一款跑在你自己设备上的本地优先工作台：Markdown �
 | 📚 多级笔记本 / 🏷️ 标签 / 🔍 全文搜索 / 📌 置顶 / 🗑️ 软删除 | EF Core + SQLite，全部真实持久化 |
 | 🤖 AI 助手 | 多 Provider（OpenAI 兼容 / Anthropic Messages）、流式、深度思考档 |
 | 💬 统一对话 | 会话历史持久化（SQLite）、token 用量统计 |
-| 🧬 MOA 多模型编排 | Single / Router / Decompose / Ensemble / Pipeline 五策略 + 模型画像 + 真实成本核算（未知不估算） |
+| 🧬 MOA 多模型编排 | Single / Router / Decompose / Ensemble / Pipeline / Experts 六策略 + 模型画像 + 真实成本核算（未知不估算） |
 | 🧰 工具系统 | 笔记工具箱（12 工具）+ Skills + MCP 外部进程工具 |
 | 🔐 工具权限 | 允许 / 拒绝 / 每次询问 + 危险模式探测不降级，持久化 permissions.json |
 | 🧠 Memory | 长期记忆存取 + 容量上限治理 |
 | 🔎 Code Review / Diagnostics | 内置审查与诊断面板 |
 | 🧭 Autonomy 内核（PHASE 5） | 任务状态机 + 工程循环 + 真实网络检索；当前由测试矩阵背书，产品入口接线排期 P8（v1.1.0 发行包未含） |
 | 🎓 专家簇与经验学习（PHASE 6） | 专家簇 + MOA 网关集成 + 经验沉淀 / RSI；同上，随 P8 进入发行包 |
+| 🛡️ Agent 工具域与权限（批次 A） | 工作区八工具（read/write/edit/delete/list/search/grep/run_shell）+ 文件检查点 + Plan 模式（PLAN.md 状态机）+ Git 工作流（status/diff/commit/push）+ 四档权限（Default / AcceptEdits / Plan / Bypass——显式 Deny 与危险模式探测任何档位不降级） |
+| 🤖 多代理与扩展生态（批次 B） | 子代理（独立会话 + 权限显式继承 + 并行上限）+ 守卫链（工作区边界 / 命令分级 / doom-loop / 敏感文件 / 急停哨兵，Deny 恒胜 Ask）+ 智能审批（Advisor 建议卡，不可用时零行为差异）+ Hook 引擎（hooks.json）+ 调度器（jobs.json）+ 会话 fork / Steer 插话 / Todo 持久化 / 上下文溢出压缩；Job 沙箱已注册未挂接 [DEGRADED] 如实标注 |
 | 🔄 跨平台 | Windows（桌面窗口）与 Android（单视图 + Overlay 对话框）共享同一 UI/服务栈 |
 
 ## 🏗️ 架构（11 个工程：10 src + 1 tests）
@@ -49,7 +51,7 @@ AeroCode/
 │   ├── AeroCode.App/             Avalonia 11 桌面端（WinExe）：MainView + 设置 + 授权 UI
 │   └── AeroCode.App.Android/     Android 头项目（net9.0-android + Avalonia.Android）
 ├── tests/
-│   └── AeroCode.Tests/           xUnit 982 用例（963 过 / 19 跳过：需真实网络/LLM/设备）
+│   └── AeroCode.Tests/           xUnit 1419 用例（1396 过 / 23 跳过：需真实网络/LLM/设备）
 └── docs/                         架构 / 各阶段计划与交付 / DEV_LOG / ANDROID_BUILD
 ```
 
@@ -63,7 +65,7 @@ Android 走 `ISingleViewApplicationLifetime` + `OverlayService` 全屏覆盖层�
 ```powershell
 dotnet restore AeroCode.sln
 dotnet build AeroCode.sln -c Debug
-dotnet test AeroCode.sln                 # 982 用例
+dotnet test AeroCode.sln                 # 1419 用例
 dotnet run --project src/AeroCode.App    # 运行 Windows 桌面
 ```
 

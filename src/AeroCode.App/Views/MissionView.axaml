@@ -1,0 +1,102 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AeroCode.App.ViewModels"
+             x:Class="AeroCode.App.Views.MissionView"
+             x:DataType="vm:MissionViewModel">
+
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="BgDeep" Color="#0B0D12"/>
+        <SolidColorBrush x:Key="BgPanel" Color="#11141B"/>
+        <SolidColorBrush x:Key="BgElevated" Color="#161A23"/>
+        <SolidColorBrush x:Key="Border" Color="#2A3142"/>
+        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0"/>
+        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6"/>
+        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED"/>
+        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4"/>
+        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
+        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B"/>
+        <SolidColorBrush x:Key="AccentPink" Color="#EC4899"/>
+        <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
+    </UserControl.Resources>
+
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Background="{StaticResource BgDeep}">
+
+        <!-- 头部：标题 + 状态 + 终局徽章 -->
+        <Border Grid.Row="0" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="🚀 Mission 自主任务" FontSize="15" FontWeight="Bold"
+                           Foreground="{StaticResource AccentPink}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding StatusText}"
+                           Foreground="{StaticResource FgMuted}" FontSize="12"
+                           VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
+                <Border Grid.Column="2" Background="{StaticResource BgElevated}"
+                        BorderBrush="{StaticResource AccentAmber}" BorderThickness="1"
+                        CornerRadius="6" Padding="8,2" IsVisible="{Binding !!OutcomeBadge}">
+                    <TextBlock Text="{Binding OutcomeBadge}" FontSize="11"
+                               Foreground="{StaticResource AccentAmber}" VerticalAlignment="Center" />
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- 目标输入 + 推进/终止 -->
+        <Border Grid.Row="1" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
+            <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="*,Auto,Auto">
+                    <TextBox Grid.Column="0" Text="{Binding GoalInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Watermark="输入任务目标，推进完整状态机：分析→澄清→钢人→规划→执行→校验→复盘→经验沉淀…"
+                             FontSize="13" MinHeight="40" TextWrapping="Wrap" />
+                    <Button Grid.Column="1" Margin="8,0,0,0" Content="▶ 推进任务"
+                            Command="{Binding StartMissionCommand}"
+                            Background="{StaticResource AccentPurple}" Foreground="White"
+                            ToolTip.Tip="启动一次完整任务状态机（运行中重入被拒）" />
+                    <Button Grid.Column="2" Margin="8,0,0,0" Content="⏹ 终止"
+                            Command="{Binding StopMissionCommand}"
+                            IsVisible="{Binding IsRunning}"
+                            Background="{StaticResource AccentRed}" Foreground="White"
+                            ToolTip.Tip="取消当前运行中的任务（真实取消，终态落库为 Cancelled）" />
+                </Grid>
+                <TextBlock Text="{Binding ExecutionSummary}" IsVisible="{Binding !!ExecutionSummary}"
+                           Foreground="{StaticResource AccentCyan}" FontSize="11" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <!-- 状态轨迹 -->
+        <Border Grid.Row="2" Background="{StaticResource BgDeep}" Padding="14,8,14,2">
+            <TextBlock Text="📋 状态轨迹（运行结束后按终态记录的真实 JSON 渲染）"
+                       Foreground="{StaticResource FgMuted}" FontSize="11" />
+        </Border>
+        <ScrollViewer Grid.Row="3" Padding="14,4,14,8" VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding Transitions}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:MissionTransitionItem">
+                        <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}"
+                                BorderThickness="1" CornerRadius="4" Padding="10,6" Margin="0,3">
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <TextBlock Grid.Column="0" FontSize="12" VerticalAlignment="Center">
+                                    <Run Text="{Binding From}" Foreground="{StaticResource FgMuted}" />
+                                    <Run Text="→ " Foreground="{StaticResource AccentCyan}" />
+                                    <Run Text="{Binding To}" Foreground="{StaticResource AccentCyan}" />
+                                </TextBlock>
+                                <TextBlock Grid.Column="1" Text="{Binding Artifact}" Margin="10,0"
+                                           Foreground="{StaticResource FgPrimary}" FontSize="11"
+                                           VerticalAlignment="Center" TextWrapping="Wrap" />
+                                <TextBlock Grid.Column="2" Text="{Binding AtLocal}"
+                                           Foreground="{StaticResource FgMuted}" FontSize="10"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- 底部说明 -->
+        <Border Grid.Row="4" Background="{StaticResource BgPanel}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="14,6">
+            <TextBlock Text="诚实边界：控制器无逐阶段事件面，运行中如实显示「执行中」，轨迹在终态落库后按真实 JSON 渲染（不伪造实时阶段流）。"
+                       Foreground="{StaticResource FgMuted}" FontSize="10" TextWrapping="Wrap" />
+        </Border>
+    </Grid>
+</UserControl>

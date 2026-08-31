@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AeroCode.App.ViewModels"
+             xmlns:svcs="using:AeroCode.App.Services"
              x:Class="AeroCode.App.Views.MemoryView"
              x:DataType="vm:MemoryViewModel">
     <UserControl.Resources>
@@ -17,8 +18,8 @@
         <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
     </UserControl.Resources>
 
-    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="*,6,*" Background="{StaticResource BgDeep}">
-        <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource BgPanel}"
+    <Grid RowDefinitions="Auto,*,Auto" Background="{StaticResource BgDeep}">
+        <Border Grid.Row="0" Background="{StaticResource BgPanel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
                 <TextBlock Grid.Column="0" Text="🧠 V3 Memory" FontSize="15" FontWeight="Bold"
@@ -33,48 +34,103 @@
             </Grid>
         </Border>
 
-        <DockPanel Grid.Row="1" Grid.Column="0">
-            <Border DockPanel.Dock="Top" Padding="14,10,14,4">
-                <StackPanel>
-                    <TextBlock Text="📝 MEMORY.md (Agent 记忆)" Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" />
-                    <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
-                        <TextBlock Grid.Column="0" Text="{Binding MemoryContent.Length, StringFormat='{}{0} 字符'}"
-                                   Foreground="{StaticResource FgMuted}" FontSize="11" />
-                        <TextBlock Grid.Column="1" Text="上限 2200 字符 (Hermes hard rule)"
-                                   Foreground="{StaticResource FgMuted}" FontSize="11" />
-                    </Grid>
-                </StackPanel>
+        <!-- 主区：左侧文件记忆编辑器，右侧召回展示 + 人工沉淀（G5） -->
+        <Grid Grid.Row="1" ColumnDefinitions="*,420,6">
+            <Grid Grid.Column="0" ColumnDefinitions="*,6,*">
+                <DockPanel Grid.Column="0">
+                    <Border DockPanel.Dock="Top" Padding="14,10,14,4">
+                        <StackPanel>
+                            <TextBlock Text="📝 MEMORY.md (Agent 记忆)" Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" />
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                                <TextBlock Grid.Column="0" Text="{Binding MemoryContent.Length, StringFormat='{}{0} 字符'}"
+                                           Foreground="{StaticResource FgMuted}" FontSize="11" />
+                                <TextBlock Grid.Column="1" Text="上限 2200 字符 (Hermes hard rule)"
+                                           Foreground="{StaticResource FgMuted}" FontSize="11" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <TextBox Text="{Binding MemoryContent, Mode=TwoWay}"
+                             FontFamily="Consolas,JetBrains Mono,monospace" FontSize="12"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             Background="{StaticResource BgPanel}" Foreground="{StaticResource FgPrimary}"
+                             Padding="14" />
+                </DockPanel>
+
+                <GridSplitter Grid.Column="1" Width="6"
+                              Background="{StaticResource Border}" ResizeDirection="Columns" />
+
+                <DockPanel Grid.Column="2">
+                    <Border DockPanel.Dock="Top" Padding="14,10,14,4">
+                        <StackPanel>
+                            <TextBlock Text="👤 USER.md (用户画像)" Foreground="{StaticResource AccentGreen}" FontWeight="SemiBold" />
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                                <TextBlock Grid.Column="0" Text="{Binding UserContent.Length, StringFormat='{}{0} 字符'}"
+                                           Foreground="{StaticResource FgMuted}" FontSize="11" />
+                                <TextBlock Grid.Column="1" Text="上限 1375 字符 (Hermes hard rule)"
+                                           Foreground="{StaticResource FgMuted}" FontSize="11" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <TextBox Text="{Binding UserContent, Mode=TwoWay}"
+                             FontFamily="Consolas,JetBrains Mono,monospace" FontSize="12"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             Background="{StaticResource BgPanel}" Foreground="{StaticResource FgPrimary}"
+                             Padding="14" />
+                </DockPanel>
+            </Grid>
+
+            <!-- 召回展示 + 人工沉淀（G5）：全部经 SessionMemoryService 真实 API -->
+            <Border Grid.Column="1" Background="{StaticResource BgPanel}"
+                    BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0" Padding="12,10">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="🔍 语义召回（笔记 Top-K）" Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" />
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBox Grid.Column="0" Text="{Binding RecallQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Watermark="查询词…" FontSize="12" />
+                            <Button Grid.Column="1" Margin="6,0,0,0" Content="🔍 召回"
+                                    Command="{Binding RecallCommand}" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding RecalledNotes}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="svcs:RecalledNote">
+                                    <Border Background="{StaticResource BgElevated}" BorderBrush="{StaticResource Border}"
+                                            BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,2">
+                                        <StackPanel Spacing="2">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <TextBlock Grid.Column="0" Text="{Binding Title}" FontWeight="SemiBold"
+                                                           FontSize="12" TextTrimming="CharacterEllipsis"
+                                                           Foreground="{StaticResource FgPrimary}" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Score, StringFormat='{}{0:F2}'}"
+                                                           Foreground="{StaticResource AccentCyan}" FontSize="10" />
+                                            </Grid>
+                                            <TextBlock Text="{Binding Preview}" FontSize="10" MaxLines="2"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Foreground="{StaticResource FgMuted}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Border Height="1" Background="{StaticResource Border}" Margin="0,6,0,2" />
+                        <TextBlock Text="🫙 人工沉淀（Fact 经验 · 来源=用户手写）" Foreground="{StaticResource AccentGreen}" FontWeight="SemiBold" />
+                        <TextBox Text="{Binding ManualTitle, Mode=TwoWay}"
+                                 Watermark="标题（留空自动生成时间戳标题）" FontSize="12" />
+                        <TextBox Text="{Binding ManualContent, Mode=TwoWay}"
+                                 Watermark="要沉淀为长期经验的内容…" FontSize="12"
+                                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="60" />
+                        <Button Content="💾 沉淀到经验库" Command="{Binding ConsolidateManualCommand}"
+                                HorizontalAlignment="Left"
+                                Background="{StaticResource AccentGreen}" Foreground="White" />
+                        <TextBlock Text="诚实边界：自动扩写 USER/MEMORY 需语义判定（无判定模型的提炼=伪造），故仅人工沉淀；沉淀为 Pending 态，下轮会话生效。"
+                                   Foreground="{StaticResource FgMuted}" FontSize="10" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
             </Border>
-            <TextBox Text="{Binding MemoryContent, Mode=TwoWay}"
-                     FontFamily="Consolas,JetBrains Mono,monospace" FontSize="12"
-                     AcceptsReturn="True" TextWrapping="Wrap"
-                     Background="{StaticResource BgPanel}" Foreground="{StaticResource FgPrimary}"
-                     Padding="14" />
-        </DockPanel>
+        </Grid>
 
-        <GridSplitter Grid.Row="1" Grid.Column="1" Width="6"
-                       Background="{StaticResource Border}" ResizeDirection="Columns" />
-
-        <DockPanel Grid.Row="1" Grid.Column="2">
-            <Border DockPanel.Dock="Top" Padding="14,10,14,4">
-                <StackPanel>
-                    <TextBlock Text="👤 USER.md (用户画像)" Foreground="{StaticResource AccentGreen}" FontWeight="SemiBold" />
-                    <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
-                        <TextBlock Grid.Column="0" Text="{Binding UserContent.Length, StringFormat='{}{0} 字符'}"
-                                   Foreground="{StaticResource FgMuted}" FontSize="11" />
-                        <TextBlock Grid.Column="1" Text="上限 1375 字符 (Hermes hard rule)"
-                                   Foreground="{StaticResource FgMuted}" FontSize="11" />
-                    </Grid>
-                </StackPanel>
-            </Border>
-            <TextBox Text="{Binding UserContent, Mode=TwoWay}"
-                     FontFamily="Consolas,JetBrains Mono,monospace" FontSize="12"
-                     AcceptsReturn="True" TextWrapping="Wrap"
-                     Background="{StaticResource BgPanel}" Foreground="{StaticResource FgPrimary}"
-                     Padding="14" />
-        </DockPanel>
-
-        <Border Grid.Row="2" Grid.ColumnSpan="3" Background="{StaticResource BgPanel}"
+        <Border Grid.Row="2" Background="{StaticResource BgPanel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="14,8">
             <TextBlock Text="💡 这两个文件会在每次 Agent 启动时自动注入到 system prompt (Hermes 冻结快照模式), 实现跨对话长期记忆。保存后立即生效。"
                        Foreground="{StaticResource FgMuted}" FontSize="11" TextWrapping="Wrap" />
