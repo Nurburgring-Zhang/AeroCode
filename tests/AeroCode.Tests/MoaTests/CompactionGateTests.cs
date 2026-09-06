@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Moa.Assignment;
+using AeroAgent.Moa.Curation;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Strategies;
 using AeroAgent.Moa.Tools;
@@ -326,5 +327,145 @@ public sealed class CompactionGateTests : MoaTestBase
         Assert.Equal("tool", reFed[1].Role);
         Assert.Equal("call-1", reFed[1].ToolCallId);
         Assert.Equal("NOTE_BODY", reFed[1].Content);
+    }
+
+    // ---------- F-M3/F-M4（R1 审查修复）：C-CURATE 启用分支的 prefix-aware 压缩 ----------
+
+    /// <summary>策展已接线的 runner（水位调高 = 策展器本身不触发，只启用 prefix-aware 压缩分支）。</summary>
+    private WorkerRunner NewCuratorWiredRunner(Compactor compactor, CompactionGateOptions options, ToolRouter? router = null)
+    {
+        var runner = new WorkerRunner(Sessions, Catalog, tools: router, compactor: compactor, compaction: options);
+        runner.Curator = new ContextCurator(new CurationOptions { WatermarkThresholdTokens = 1_000_000 });
+        return runner;
+    }
+
+    [Fact]
+    public void PrefixAware_CuratorWired_FrozenPrefixNotTruncated()
+    {
+        // 冻结前缀本身就超出压缩预算：prefix-aware 重载拒绝压缩（宁可不压也不动前缀）→ 原样返回。
+        var systemMessage = System(Huge(2000));
+        var conversation = new List<AiChatMessage>
+        {
+            systemMessage,
+            User("question"),
+            AssistantToolCall("call-1"),
+            ToolResult("call-1", Huge(3000)),
+        };
+        var runner = NewCuratorWiredRunner(
+            new Compactor(new EventBus(), CompactionStrategy.TruncateOldest, triggerThresholdPercent: 1),
+            new CompactionGateOptions { ThresholdTokens = 1000 });
+
+        var result = runner.CompactIfOverflowing(conversation, frozenPrefixCount: 1);
+
+        Assert.Same(conversation, result);
+        Assert.Equal(4, result.Count);
+        Assert.Same(systemMessage, result[0]);
+    }
+
+    [Fact]
+    public void PrefixAware_CuratorWired_TruncatesOnlyDialogueZone()
+    {
+        var systemMessage = System("stable system prompt");
+        var conversation = new List<AiChatMessage>
+        {
+            systemMessage,
+            User(Huge(5000)),
+            AssistantToolCall("call-1"),
+            ToolResult("call-1", Huge(3000)),
+        };
+        var runner = NewCuratorWiredRunner(
+            new Compactor(new EventBus(), CompactionStrategy.SlidingWindow, keepRecentMessages: 2),
+            new CompactionGateOptions { ThresholdTokens = 1000 });
+
+        var result = runner.CompactIfOverflowing(conversation, frozenPrefixCount: 1);
+
+        // 冻结前缀逐字保留（同实例）；压缩只作用于对话区；tool 配对完整。
+        Assert.Same(systemMessage, result[0]);
+        Assert.Equal(3, result.Count);
+        Assert.Equal("assistant", result[1].Role);
+        Assert.Equal("call-1", Assert.Single(result[1].ToolCalls!).Id);
+        Assert.Equal("tool", result[2].Role);
+        Assert.Equal("call-1", result[2].ToolCallId);
+    }
+
+    [Fact]
+    public void Legacy_CuratorNotWired_PrefixArgumentHasNoEffect()
+    {
+        // 未启用分支（Curator null）：带不带冻结边界都必须与基线路径逐条一致（禁动 legacy）。
+        var conversation = new List<AiChatMessage>
+        {
+            System(Huge(2000)),
+            User(Huge(5000)),
+            AssistantToolCall("call-1"),
+            ToolResult("call-1", Huge(3000)),
+        };
+        var runner = new WorkerRunner(
+            Sessions, Catalog,
+            compactor: new Compactor(new EventBus(), CompactionStrategy.TruncateOldest, triggerThresholdPercent: 1),
+            compaction: new CompactionGateOptions { ThresholdTokens = 1000 });
+
+        var legacy = runner.CompactIfOverflowing(conversation);
+        var withBoundary = runner.CompactIfOverflowing(conversation, frozenPrefixCount: 1);
+
+        Assert.Equal(legacy.Select(m => m.Role), withBoundary.Select(m => m.Role));
+        Assert.Equal(legacy.Select(m => m.Content), withBoundary.Select(m => m.Content));
+        // 基线事实：legacy 头部修复可能丢弃 system 稳定段（既有语义不动，边界漂移由启用分支修复）。
+        Assert.DoesNotContain(withBoundary, m => m.Role == "system");
+    }
+
+    [Fact]
+    public async Task ToolLoop_CuratorWired_SecondTurnRequest_KeepsFrozenPrefix()
+    {
+        var provider = AddProvider("curator-loop");
+        provider.ResponseQueue.Enqueue(new ChatResponse
+        {
+            Id = "resp-tc",
+            ToolCalls = new List<ToolCall>
+            {
+                new() { Id = "call-1", Type = "function", FunctionName = "get_note", ArgumentsJson = "{}" },
+            },
+            FinishReason = "tool_calls",
+        });
+        provider.ResponseQueue.Enqueue(new ChatResponse { Id = "resp-final", Content = "done", FinishReason = "stop" });
+
+        var box = new ScriptedToolbox("notes", new ToolDefinition { Name = "get_note", Description = "d" });
+        box.SetResult("get_note", ToolInvokeResult.Ok("NOTE_BODY"));
+        var registry = new ToolboxRegistry();
+        registry.Register(box);
+        var router = new ToolRouter(registry, PermissionPolicy.CreateDefault(new EventBus()),
+            new ScriptedBroker(PermissionDecision.Allow));
+
+        // 必须接线工具路由，否则 WorkerRunner 走单轮路径、CompactIfOverflowing 不在工具循环中执行。
+        var runner = NewCuratorWiredRunner(
+            new Compactor(new EventBus(), CompactionStrategy.TruncateOldest, triggerThresholdPercent: 1),
+            new CompactionGateOptions { ThresholdTokens = 1000 }, router);
+
+        var profile = SetProfile("curator-loop", new[] { ModelStrength.General });
+        var session = await NewSessionAsync(OrchestrationStrategy.Single);
+        var ctx = new OrchestrationContext
+        {
+            Session = session,
+            History = Array.Empty<ChatMessage>(),
+            UserMessageId = "msg-user",
+            Providers = Registry,
+        };
+        var assignment = new ModelAssignment("curator-loop", string.Empty, profile);
+
+        var outcome = await runner.RunAsync(
+            ctx, assignment, StrategyRole.Worker, parentMessageId: null, label: null,
+            new List<AiChatMessage> { System("stable system"), User(Huge(5000)) },
+            stream: false, isFinal: true, sink: null, budget: null, CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+
+        // 每轮重算的冻结边界生效：第 2 轮请求仍以冻结 system 前缀开头，tool 配对完整。
+        var reFed = provider.LastRequestMessages!;
+        Assert.Equal(3, reFed.Count);
+        Assert.Equal("system", reFed[0].Role);
+        Assert.Equal("stable system", reFed[0].Content);
+        Assert.Equal("assistant", reFed[1].Role);
+        Assert.Equal("call-1", Assert.Single(reFed[1].ToolCalls!).Id);
+        Assert.Equal("tool", reFed[2].Role);
+        Assert.Equal("call-1", reFed[2].ToolCallId);
     }
 }

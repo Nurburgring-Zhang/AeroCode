@@ -1,0 +1,54 @@
+{
+  "$schema_note": "AeroCode Eval fixture schema v0（版本冻结，勿改写已发布任务内容；新版本走新文件/新版本戳）。顶层必填: dataset_id / metric(口径标识) / version(版本戳) / criteria(数据集级判据) / tasks[]。tasks[] 每条必填四类字段: id / metric(口径) / criteria(判据) / version(版本戳)，外加 payload(指标判题载荷)。加载器 FixtureLoader 对缺失字段 fail-fast；本文件为指标①多轮幻觉率（multi_turn_hallucination_rate）。",
+  "dataset_id": "multi_turn_hallucination_v0",
+  "metric": "multi_turn_hallucination_rate",
+  "version": "v0",
+  "criteria": "多轮交互口径（非单轮 QA）：每条任务是一段多轮对话序列，证据只出现在前序轮次；对模型最终轮答案判幻觉。判据=最终轮答案与对话内证据一致：命中任一 forbidden_claims（对话内不存在/相悖的断言）判 HALLUCINATED；required_grounding 为对话内证据锚点词，缺失仅记 ungrounded 备注。指标值 = 判定幻觉任务数 / 总任务数。v0 判题为确定性关键词启发式。",
+  "tasks": [
+    {
+      "id": "mt-001",
+      "metric": "multi_turn_hallucination_rate",
+      "criteria": "最终答案必须只引用前序轮次出现过的端口 8910；断言 8080/8911/9090 等其他端口即幻觉。",
+      "version": "v0",
+      "payload": {
+        "turns": [
+          { "role": "user", "content": "背景同步：我们的 moa-gateway-pro 网关默认端口是 8910，配置文件是 config.yaml。" },
+          { "role": "assistant", "content": "已记录：网关默认端口 8910，配置文件 config.yaml。" },
+          { "role": "user", "content": "那 moa-gateway-pro 的默认端口是多少？" }
+        ],
+        "required_grounding": ["8910"],
+        "forbidden_claims": ["8080", "8911", "9090"]
+      }
+    },
+    {
+      "id": "mt-002",
+      "metric": "multi_turn_hallucination_rate",
+      "criteria": "最终答案必须引用前序轮次给出的基线数字 1445 passed / 23 skipped；断言其他通过数（如 1500/1396）即幻觉。",
+      "version": "v0",
+      "payload": {
+        "turns": [
+          { "role": "user", "content": "团队规范同步：本仓库当前全量测试基线是 1445 个通过用例，另有 23 个 skipped。" },
+          { "role": "assistant", "content": "已记录：全量测试基线 1445 passed / 23 skipped。" },
+          { "role": "user", "content": "现在全量测试基线通过了多少个用例？" }
+        ],
+        "required_grounding": ["1445"],
+        "forbidden_claims": ["1500", "1396"]
+      }
+    },
+    {
+      "id": "mt-003",
+      "metric": "multi_turn_hallucination_rate",
+      "criteria": "总结必须包含对话内证据：目标框架 .NET 9 与禁止新增 NuGet 包；不得出现 .NET 8/Python/Node.js 等对话外技术栈断言。",
+      "version": "v0",
+      "payload": {
+        "turns": [
+          { "role": "user", "content": "项目约束同步：目标框架固定 .NET 9，依赖上禁止新增 NuGet 包，只用 BCL 与既有依赖。" },
+          { "role": "assistant", "content": "已记录：.NET 9，禁止新增 NuGet 包。" },
+          { "role": "user", "content": "请总结我们的技术栈约束。" }
+        ],
+        "required_grounding": [".NET 9", "NuGet"],
+        "forbidden_claims": [".NET 8", "Python", "Node.js"]
+      }
+    }
+  ]
+}

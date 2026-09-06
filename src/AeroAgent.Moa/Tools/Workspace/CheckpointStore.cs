@@ -7,8 +7,19 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AeroAgent.Moa.Tools.Workspace;
+
+/// <summary>
+/// manifest 增量可选元数据（A4 幂等续跑增强）：工具结果登记、上下文快照引用、任务状态。
+/// 全部可空；不传（或传 null 字段）时 manifest 落盘内容与旧格式完全一致——
+/// 旧 manifest 照常可读、照常可恢复（向后兼容硬验收）。
+/// </summary>
+public sealed record CheckpointMetadata(
+    string? ToolResult = null,
+    string? ContextSnapshotRef = null,
+    string? TaskStatus = null);
 
 /// <summary>一个检查点的只读描述（列表/恢复选择用）。</summary>
 public sealed record CheckpointInfo(
@@ -20,13 +31,22 @@ public sealed record CheckpointInfo(
 internal sealed record CheckpointFileEntry(string Path, bool Existed);
 
 /// <summary>
-/// 检查点存储。<see cref="Track"/> 由 <see cref="WorkspaceToolbox"/> 在 write/edit/delete
+/// 检查点存储。<see cref="Track(string, IReadOnlyList{string})"/> 由 <see cref="WorkspaceToolbox"/> 在 write/edit/delete
 /// 前调用；shell 命令的任意副作用不在覆盖范围（如实限制：回滚 shell 效应请用 git）。
 /// </summary>
 public sealed class CheckpointStore : ICheckpointTracker
 {
     /// <summary>单个检查点内单个文件的大小上限（>16MB 的文件不入检查点，Track 如实跳过并记录）。</summary>
     public const long MaxCapturedBytes = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// manifest 序列化选项：增量可选字段为 null 时不落盘，
+    /// 保证未携带元数据的 manifest 与旧格式逐字节兼容（旧读者照常可读）。
+    /// </summary>
+    private static readonly JsonSerializerOptions ManifestJsonOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     private readonly string _root;
     private readonly int _maxCount;
@@ -53,6 +73,17 @@ public sealed class CheckpointStore : ICheckpointTracker
 
     /// <inheritdoc/>
     public long Track(string toolName, IReadOnlyList<string> absolutePaths)
+        => TrackCore(toolName, absolutePaths, metadata: null);
+
+    /// <summary>
+    /// 带增量元数据的检查点（A4）：工具结果登记 / 上下文快照引用 / 任务状态。
+    /// 元数据全部可选；不传时 manifest 与旧格式完全一致（向后兼容硬验收）。
+    /// 既有 <see cref="Track(string, IReadOnlyList{string})"/> 签名与行为不变。
+    /// </summary>
+    public long Track(string toolName, IReadOnlyList<string> absolutePaths, CheckpointMetadata? metadata)
+        => TrackCore(toolName, absolutePaths, metadata);
+
+    private long TrackCore(string toolName, IReadOnlyList<string> absolutePaths, CheckpointMetadata? metadata)
     {
         ArgumentNullException.ThrowIfNull(absolutePaths);
         if (absolutePaths.Count == 0)
@@ -91,10 +122,14 @@ public sealed class CheckpointStore : ICheckpointTracker
             toolName,
             createdUtc = DateTime.UtcNow,
             files = entries,
+            // A4 增量可选字段：null 时不落盘（ManifestJsonOptions），旧格式逐字节兼容。
+            toolResult = metadata?.ToolResult,
+            contextSnapshotRef = metadata?.ContextSnapshotRef,
+            taskStatus = metadata?.TaskStatus,
         };
         File.WriteAllText(
             Path.Combine(dir, "manifest.json"),
-            JsonSerializer.Serialize(manifest),
+            JsonSerializer.Serialize(manifest, ManifestJsonOptions),
             new UTF8Encoding(false));
 
         lock (_sync)

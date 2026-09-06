@@ -1,0 +1,29 @@
+{
+  "$schema_note": "AeroCode Eval fixture schema v0（版本冻结，勿改写已发布任务内容；新版本走新文件/新版本戳）。顶层必填: dataset_id / metric(口径标识) / version(版本戳) / criteria(数据集级判据) / tasks[]。tasks[] 每条必填四类字段: id / metric(口径) / criteria(判据) / version(版本戳)，外加 payload(指标判题载荷)。加载器 FixtureLoader 对缺失字段 fail-fast；本文件为指标③单位成本完成率（unit_cost_completion）。",
+  "dataset_id": "unit_cost_completion_v0",
+  "metric": "unit_cost_completion",
+  "version": "v0",
+  "criteria": "每任务 token 成本 / 完成质量分口径：质量分 = required_keywords 命中比例（v0 确定性关键词启发式，0..1）；成本 = 网关 execute 返回的 total_cost（USD）与 references tokens；指标值 = Σcost / Σquality（质量分为 0 的任务记未完成并单列）。真实成本依赖网关，dry-run 为 PENDING。",
+  "tasks": [
+    {
+      "id": "cost-001",
+      "metric": "unit_cost_completion",
+      "criteria": "质量分=required_keywords 命中比例；答案应触及「模型」与「聚合」两个核心概念（v0 关键词启发式）。",
+      "version": "v0",
+      "payload": {
+        "prompt": "用不超过三句话解释 MoA（Mixture-of-Agents）编排的核心思想。",
+        "required_keywords": ["模型", "聚合"]
+      }
+    },
+    {
+      "id": "cost-002",
+      "metric": "unit_cost_completion",
+      "criteria": "质量分=required_keywords 命中比例（0..1）；成本=网关 execute 的 total_cost 与 tokens；指标=Σcost/Σquality。",
+      "version": "v0",
+      "payload": {
+        "prompt": "给出 C# 中复用 HttpClient 的两种正确做法，并说明为什么不能每次 new HttpClient（从 Socket/端口耗尽角度）。",
+        "required_keywords": ["IHttpClientFactory", "单例", "static", "Socket", "释放", "Dispose", "端口"]
+      }
+    }
+  ]
+}

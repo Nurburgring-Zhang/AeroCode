@@ -44,6 +44,13 @@ public sealed class ChatRequest
     public bool EnableThinking { get; init; } = true;
     /// <summary>thinking 强度: low / medium / high (DeepSeek V4: high/max)</summary>
     public string? ThinkingEffort { get; init; } = "high";
+    /// <summary>
+    /// B2/A3 前缀冻结联动：缓存断点候选。元素 = 消息索引（0-based，按 <see cref="Messages"/> 顺序），
+    /// 语义 = 冻结前缀边界（该索引及之前的全部消息构成可缓存前缀）。
+    /// null/空 = 现行为（请求形态与基线完全一致）。provider 按各自 cache 政策消费：
+    /// Anthropic → 显式 cache_control；OpenAI/Gemini → 隐式缓存，忽略显式断点。
+    /// </summary>
+    public IReadOnlyList<int>? CacheBreakpoints { get; init; }
 }
 
 public sealed class ChatResponse

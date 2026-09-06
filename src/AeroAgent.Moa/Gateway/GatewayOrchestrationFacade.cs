@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
+using AeroCode.AI.Capabilities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -51,6 +52,15 @@ public sealed record GatewayOrchestrationOutcome
 
     /// <summary>网关与回退双失败时的错误说明。</summary>
     public string? Error { get; init; }
+
+    /// <summary>
+    /// R3-δ 弃用监控遥测（MarkOnly，永不拦截）：本网关路径执行后 changelog 弃用关键词总提及数。
+    /// monitor 未注入 / 门控关闭（deprecation.monitor=false，默认）/ 检查失败 → null（如实 = 未检查）。
+    /// </summary>
+    public int? DeprecationMentions { get; init; }
+
+    /// <summary>R3-δ：命中弃用关键词的 changelog URL（去重；空 = 未命中或未检查）。</summary>
+    public IReadOnlyList<string> DeprecationHitUrls { get; init; } = [];
 }
 
 /// <summary>
@@ -59,6 +69,10 @@ public sealed record GatewayOrchestrationOutcome
 /// <see cref="AeroAgent.Moa"/> 既有进程内自研编排（注入的 <see cref="IOrchestrationStrategy"/>），
 /// 结果对象强制携带 <c>Degraded=true</c> + 原因——绝不静默冒充网关结果。
 /// 与自研编排是并行能力：门面不改动任何既有策略行为，只在入口层择路与标注。
+/// R3 修复（HIGH-1）后可达性如实标注：生产专家团编排走 <c>ExpertsStrategy</c> 直连
+/// <see cref="MoaGatewayClient"/>——MarkOnly 弃用检查的生产可达消费点在
+/// <c>ExpertsStrategy.CheckDeprecationsMarkOnlyAsync</c>；本门面的 monitor 支持保留为
+/// 可测试的库能力（测试覆盖），组合根不再注册本门面（不留「注册无人消费」死重）。
 /// </summary>
 public sealed class GatewayOrchestrationFacade
 {
@@ -69,25 +83,31 @@ public sealed class GatewayOrchestrationFacade
     private readonly IOrchestrationStrategy _fallback;
     private readonly ISessionService? _sessions;
     private readonly GatewaySidecar? _sidecar;
+    private readonly DeprecationMonitor? _deprecationMonitor;
     private readonly ILogger<GatewayOrchestrationFacade> _logger;
 
     /// <summary>
     /// 构造。<paramref name="fallback"/> 为网关不可用时的进程内编排
     /// （如 EnsembleStrategy/DecomposeStrategy 任一既有策略实例）；
     /// <paramref name="sessions"/> 提供时网关/回退产物落库并可回读最终内容；
-    /// <paramref name="sidecar"/> 提供时先查其可用性，避免对已知离线的网关白发请求。
+    /// <paramref name="sidecar"/> 提供时先查其可用性，避免对已知离线的网关白发请求；
+    /// <paramref name="deprecationMonitor"/> 提供时（R3-δ）网关执行路径在 execute 成功后做
+    /// MarkOnly 弃用检查——是否真正外呼由 monitor 自身的 enabled 门控（settings <c>deprecation.monitor</c>
+    /// 经组合根映射，默认 false = 完全不调 monitor）。
     /// </summary>
     public GatewayOrchestrationFacade(
         MoaGatewayClient client,
         IOrchestrationStrategy fallback,
         ISessionService? sessions = null,
         GatewaySidecar? sidecar = null,
-        ILogger<GatewayOrchestrationFacade>? logger = null)
+        ILogger<GatewayOrchestrationFacade>? logger = null,
+        DeprecationMonitor? deprecationMonitor = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _fallback = fallback ?? throw new ArgumentNullException(nameof(fallback));
         _sessions = sessions;
         _sidecar = sidecar;
+        _deprecationMonitor = deprecationMonitor;
         _logger = logger ?? NullLogger<GatewayOrchestrationFacade>.Instance;
     }
 
@@ -145,6 +165,10 @@ public sealed class GatewayOrchestrationFacade
             ? null
             : await PersistGatewayMessageAsync(context, effectiveRequest, result, mock, ct);
 
+        // ---- R3-δ：MarkOnly 弃用检查。门控关闭（默认）/未注入 = 完全不调 monitor（现行为）；
+        // 命中 deprecated 只记 WARN + 遥测字段，绝不拦截、绝不改动结果内容。----
+        var (deprecationMentions, deprecationHitUrls) = await CheckDeprecationsMarkOnlyAsync(ct);
+
         return new GatewayOrchestrationOutcome
         {
             UsedGateway = true,
@@ -153,7 +177,55 @@ public sealed class GatewayOrchestrationFacade
             Content = result.FinalContent,
             GatewayResult = result,
             MessageId = messageId,
+            DeprecationMentions = deprecationMentions,
+            DeprecationHitUrls = deprecationHitUrls,
         };
+    }
+
+    /// <summary>
+    /// R3-δ：网关执行路径的 MarkOnly 弃用检查。
+    /// 硬门：monitor 未注入或 <see cref="DeprecationMonitor.IsEnabled"/>=false（settings
+    /// <c>deprecation.monitor</c> 默认 false）→ 一次 <see cref="DeprecationMonitor.CheckAsync"/> 都不调、
+    /// 零网络。启用时检查结果只进 WARN 日志 + 遥测字段（命中 URL 列表），绝不拦截/改动本次编排结果。
+    /// 检查自身任何故障（超时/无网/解析失败）→ 遥测如实回 null（= 未检查），绝不阻塞执行路径；
+    /// 调用方取消（ct）如实向上抛。
+    /// </summary>
+    private async Task<(int? Mentions, IReadOnlyList<string> HitUrls)> CheckDeprecationsMarkOnlyAsync(
+        CancellationToken ct)
+    {
+        var monitor = _deprecationMonitor;
+        if (monitor is null || !monitor.IsEnabled)
+        {
+            return (null, Array.Empty<string>());
+        }
+
+        try
+        {
+            var results = await monitor.CheckAsync(ct);
+            var mentions = results.Sum(r => Math.Max(0, r.DeprecationMentions));
+            var urls = results
+                .Where(r => r.DeprecationMentions > 0)
+                .Select(r => r.Url)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (urls.Length > 0)
+            {
+                _logger.LogWarning(
+                    "[DeprecationMonitor] deprecated mentions detected (mentions={Mentions}, urls={Urls}); MarkOnly — result not blocked",
+                    mentions, string.Join(", ", urls));
+            }
+
+            return (mentions, urls);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 调用方取消：如实向上抛，与执行路径取消语义一致。
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[DeprecationMonitor] check failed; telemetry omitted (MarkOnly, non-blocking)");
+            return (null, Array.Empty<string>());
+        }
     }
 
     // ---------------- 回退路径 ----------------

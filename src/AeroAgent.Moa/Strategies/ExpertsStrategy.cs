@@ -6,11 +6,13 @@
 // 绝不回退到进程内策略冒充专家团结果；成功 → 产物落库（mock/兜底信封如实标 Degraded）。
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
 using AeroAgent.Moa.Gateway;
+using AeroCode.AI.Capabilities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -24,15 +26,26 @@ public sealed class ExpertsStrategy : IOrchestrationStrategy
     private readonly MoaGatewayClient _client;
     private readonly ISessionService _sessions;
     private readonly ILogger<ExpertsStrategy> _logger;
+    private readonly DeprecationMonitor? _deprecationMonitor;
 
+    /// <summary>
+    /// 构造。<paramref name="deprecationMonitor"/>（R3 修复 HIGH-1/S-MED-5）提供时，
+    /// 网关 execute 成功后做 MarkOnly 弃用检查——这是生产可达的真实消费点
+    ///（生产专家团编排走本策略直连 <see cref="MoaGatewayClient"/>）。
+    /// 是否真正外呼由 monitor 自身的 <see cref="DeprecationMonitor.IsEnabled"/> 硬门控制：
+    /// 组合根仅在 <c>deprecation.enabled &amp;&amp; deprecation.monitor</c> 双真时构造启用实例
+    ///（enabled 是"绝不外呼"总闸），未注入/门控关闭 = 一次检查都不调、零网络零开销。
+    /// </summary>
     public ExpertsStrategy(
         MoaGatewayClient client,
         ISessionService sessions,
-        ILogger<ExpertsStrategy>? logger = null)
+        ILogger<ExpertsStrategy>? logger = null,
+        DeprecationMonitor? deprecationMonitor = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _logger = logger ?? NullLogger<ExpertsStrategy>.Instance;
+        _deprecationMonitor = deprecationMonitor;
     }
 
     /// <inheritdoc />
@@ -82,6 +95,10 @@ public sealed class ExpertsStrategy : IOrchestrationStrategy
             yield return error;
             yield break;
         }
+
+        // ---- R3 修复（HIGH-1）：生产可达的 MarkOnly 弃用检查挂点。execute 成功后调用；
+        //      未注入/门控关闭 = 零开销；命中只记 WARN，绝不拦截、绝不改动结果。----
+        await CheckDeprecationsMarkOnlyAsync(ct).ConfigureAwait(false);
 
         var mock = executed.IsMock || result.Mock;
         var label = "MOA 专家团" + (mock ? " · [Mock]" : string.Empty);
@@ -142,6 +159,48 @@ public sealed class ExpertsStrategy : IOrchestrationStrategy
             CostUsd = 0,
             LatencyMs = 0,
         };
+    }
+
+    /// <summary>
+    /// R3 修复（HIGH-1/S-MED-5）：网关执行路径的 MarkOnly 弃用检查（生产可达消费点）。
+    /// 硬门：monitor 未注入或 <see cref="DeprecationMonitor.IsEnabled"/>=false
+    ///（组合根只在 deprecation.enabled &amp;&amp; deprecation.monitor 双真时注入启用实例）
+    /// → 一次 <see cref="DeprecationMonitor.CheckAsync"/> 都不调，零网络零开销。
+    /// 启用时命中 deprecated 只记 WARN（URL 剥 query 脱敏），绝不拦截/改动本次编排结果；
+    /// 检查自身任何故障 → 静默跳过不阻塞执行路径；调用方取消（ct）如实向上抛。
+    /// </summary>
+    private async Task CheckDeprecationsMarkOnlyAsync(CancellationToken ct)
+    {
+        var monitor = _deprecationMonitor;
+        if (monitor is null || !monitor.IsEnabled)
+        {
+            return; // 门控关闭（默认）/未注入：完全不调 monitor（现行为）。
+        }
+
+        try
+        {
+            var results = await monitor.CheckAsync(ct).ConfigureAwait(false);
+            var mentions = results.Sum(r => Math.Max(0, r.DeprecationMentions));
+            var urls = results
+                .Where(r => r.DeprecationMentions > 0)
+                .Select(r => DeprecationMonitor.RedactUrl(r.Url))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (urls.Length > 0)
+            {
+                _logger.LogWarning(
+                    "[DeprecationMonitor] deprecated mentions detected (mentions={Mentions}, urls={Urls}); MarkOnly — result not blocked",
+                    mentions, string.Join(", ", urls));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 调用方取消：如实向上抛，与执行路径取消语义一致。
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[DeprecationMonitor] check failed; skipped (MarkOnly, non-blocking)");
+        }
     }
 
     /// <summary>失败收尾：Failed 助手消息落库（DB 是事实源）+ MessageFailedEvent 返回给事件流。</summary>

@@ -13,6 +13,19 @@ using AeroCode.Harness.EventBus;
 namespace AeroCode.Harness.Scheduler;
 
 /// <summary>
+/// 任务级 token 预算超限后的行为（L1 消费者：JobDef.BudgetTokens 的闸门语义，显式可配置）。
+/// 默认 <see cref="Continue"/> = 基线行为（预算只留痕告警，不改变调度——无预算路径零变化）。
+/// </summary>
+public enum JobBudgetExceededAction
+{
+    /// <summary>继续触发：超限只在日志与 <see cref="SchedulerService.BudgetExceeded"/> 事件留痕，调度不变（默认）。</summary>
+    Continue = 0,
+
+    /// <summary>停用任务：跨限即停用并落盘（与一次性消耗同语义），后续轮次不再触发。</summary>
+    Stop = 1,
+}
+
+/// <summary>
 /// 一条调度任务。Cron 与 AtUtc 二选一（恰好一个非空，构造后不可变）：
 /// - Cron：5 字段 cron 表达式（分 时 日 月 周），按<b>本地时间</b>求值（用户直觉）；
 /// - AtUtc：一次性触发时刻，<b>显式 UTC</b> 存储（jobs.json 中带 Z 后缀）。
@@ -41,6 +54,22 @@ public sealed class JobDef
 
     [JsonPropertyName("timeoutSec")]
     public int TimeoutSec { get; set; } = 120;
+
+    /// <summary>
+    /// 任务级 token 预算上限（A1 预算上下文挂点）：随 JobFired 事件透出并注入子进程环境变量
+    /// <c>AEROCODE_JOB_BUDGET_TOKENS</c>（执行侧可读）；经 <see cref="SchedulerService.ReportTokenUsage"/>
+    /// 记账累计，跨限按 <see cref="BudgetExceededAction"/> 处置。null = 未配置（不限制，基线路径零变化）。必须为正。
+    /// </summary>
+    [JsonPropertyName("budgetTokens")]
+    public long? BudgetTokens { get; set; }
+
+    /// <summary>
+    /// 预算跨限行为（L1 消费者，显式可配置）：默认 <see cref="JobBudgetExceededAction.Continue"/>
+    /// （留痕继续 = 基线无闸门路径不变）；<see cref="JobBudgetExceededAction.Stop"/> = 停用任务并落盘。
+    /// 旧 jobs.json（无此字段）反序列化后同为默认值。
+    /// </summary>
+    [JsonPropertyName("budgetExceededAction")]
+    public JobBudgetExceededAction BudgetExceededAction { get; set; } = JobBudgetExceededAction.Continue;
 
     /// <summary>校验并归一（AtUtc 无时区按 UTC）：不合法抛 ArgumentException。</summary>
     public void Validate()
@@ -81,6 +110,18 @@ public sealed class JobDef
         if (TimeoutSec <= 0)
         {
             throw new ArgumentException($"job '{Id}' timeoutSec must be positive", nameof(Id));
+        }
+
+        if (BudgetTokens is { } budgetTokens && budgetTokens <= 0)
+        {
+            throw new ArgumentException($"job '{Id}' budgetTokens must be positive when set", nameof(BudgetTokens));
+        }
+
+        // System.Text.Json 对越界数值默认宽松反序列化——这里 fail-closed 拒绝未知档位。
+        if (!Enum.IsDefined(BudgetExceededAction))
+        {
+            throw new ArgumentException(
+                $"job '{Id}' budgetExceededAction has invalid value: {BudgetExceededAction}", nameof(BudgetExceededAction));
         }
     }
 }
@@ -127,6 +168,8 @@ public sealed class SchedulerService : IDisposable
     private readonly Dictionary<string, JobDef> _jobs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _lastFiredMinuteLocal = new(StringComparer.Ordinal);
     private readonly HashSet<string> _running = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _tokenUsageByJob = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _budgetExceededNotified = new(StringComparer.Ordinal);
     private Timer? _timer;
     private int _ticking;
     private bool _lastRoundWasEstopBlocked;
@@ -163,6 +206,9 @@ public sealed class SchedulerService : IDisposable
     /// <summary>任务真实触发后的回调（含 JobDef.MissionPrompt，供 Mission 接线）。</summary>
     public event Action<JobDef, JobRunResult>? JobFired;
 
+    /// <summary>任务 token 预算跨限回调（跨限转换沿恰一次；Stop 行为下任务已被停用落盘）。</summary>
+    public event Action<JobDef, long>? BudgetExceeded;
+
     /// <summary>任务因 ESTOP 哨兵被拦截时回调（每轮至多一次聚合通知见 EtopTrippedEvent）。</summary>
     public event Action<JobDef>? EstopBlocked;
 
@@ -173,6 +219,8 @@ public sealed class SchedulerService : IDisposable
         {
             _jobs.Clear();
             LastLoadError = null;
+            _tokenUsageByJob.Clear();
+            _budgetExceededNotified.Clear();
 
             if (!File.Exists(_jobsFilePath))
             {
@@ -213,6 +261,9 @@ public sealed class SchedulerService : IDisposable
         lock (_lock)
         {
             _jobs[job.Id] = job;
+            // 任务被重新配置 → 预算记账与跨限标记重置（新配置从零起算）。
+            _tokenUsageByJob.Remove(job.Id);
+            _budgetExceededNotified.Remove(job.Id);
             PersistNoLock();
         }
     }
@@ -227,6 +278,8 @@ public sealed class SchedulerService : IDisposable
                 return false;
             }
 
+            _tokenUsageByJob.Remove(id);
+            _budgetExceededNotified.Remove(id);
             PersistNoLock();
             return true;
         }
@@ -343,6 +396,60 @@ public sealed class SchedulerService : IDisposable
 
     // ---- 内部实现 ----
 
+    /// <summary>
+    /// 任务 token 用量记账（L1 消费者入口；由 mission 接线侧按次上报，本服务按任务累计）。
+    /// 未配置 <see cref="JobDef.BudgetTokens"/> 的任务只记账不设闸（无预算路径零变化）；
+    /// 累计跨限：发布 <see cref="BudgetExceeded"/>（跨限转换沿恰一次），并按
+    /// <see cref="JobDef.BudgetExceededAction"/> 处置——Continue 只留痕；Stop 停用任务并落盘。
+    /// 未知 jobId 如实忽略（不伪造记账）。
+    /// </summary>
+    public void ReportTokenUsage(string jobId, long tokens)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            throw new ArgumentException("job id must not be empty", nameof(jobId));
+        }
+
+        if (tokens < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tokens), tokens, "token usage must not be negative");
+        }
+
+        JobDef? job = null;
+        long total = 0;
+        bool exceededNow = false;
+        lock (_lock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_jobs.TryGetValue(jobId, out job) || job.BudgetTokens is not { } limit)
+            {
+                return; // 未知任务 / 未配置预算：无闸门（基线路径）。
+            }
+
+            total = _tokenUsageByJob.TryGetValue(jobId, out var known) ? known + tokens : tokens;
+            _tokenUsageByJob[jobId] = total;
+            if (total < limit || !_budgetExceededNotified.Add(jobId))
+            {
+                return; // 未跨限，或跨限已通知过（转换沿恰一次，不重复刷事件）。
+            }
+
+            exceededNow = true;
+            _log?.Invoke(
+                $"[DEGRADED] SchedulerService: job '{jobId}' token budget exceeded: {total}/{limit} " +
+                $"(action={job.BudgetExceededAction})");
+            if (job.BudgetExceededAction == JobBudgetExceededAction.Stop && job.Enabled)
+            {
+                job.Enabled = false;
+                PersistNoLock(); // 与一次性消耗同语义：停用立即落盘，重启不复燃。
+            }
+        }
+
+        if (exceededNow)
+        {
+            BudgetExceeded?.Invoke(job!, total); // 事件在锁外发布（订阅方重入不持锁）。
+        }
+    }
+
     private void Tick()
     {
         if (Interlocked.Exchange(ref _ticking, 1) == 1)
@@ -437,6 +544,13 @@ public sealed class SchedulerService : IDisposable
             StandardOutputEncoding = ConsoleOutputEncoding(),
             StandardErrorEncoding = ConsoleOutputEncoding(),
         };
+
+        if (job.BudgetTokens is { } jobBudgetTokens)
+        {
+            // L1 消费者：预算投递到执行环境（纯数字、无凭据），子进程/mission 侧可读。
+            psi.EnvironmentVariables["AEROCODE_JOB_BUDGET_TOKENS"] =
+                jobBudgetTokens.ToString(CultureInfo.InvariantCulture);
+        }
 
         using var process = new Process { StartInfo = psi };
         var stdout = new StringBuilder();

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Orchestration;
+using AeroAgent.Moa.Assignment;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Strategies;
 using Xunit;
@@ -339,5 +340,86 @@ public sealed class DecomposeStrategyTests : MoaTestBase
         Assert.DoesNotContain(messages, m => m.OrchestrationRole == StrategyRole.Worker);
         Assert.Null(squad.Analyst.LastRequestMessages);
         Assert.IsType<TurnCompletedEvent>(events[^1]);
+    }
+
+    // ---------- R2 修复 HIGH-1：四层成本排序接入真实 worker 选模点 ----------
+
+    /// <summary>带价格的四方阵容：analyst 单位成本 $2.0/M，writer $0.5/M（④层按成本可分出胜负）。</summary>
+    private void SetPricedSquad()
+    {
+        SetProfile("analyst", new[] { ModelStrength.Analysis }, costPerMIn: 2.0, costPerMOut: 0.0);
+        SetProfile("writer", new[] { ModelStrength.Writing }, costPerMIn: 0.5, costPerMOut: 0.0);
+    }
+
+    [Fact]
+    public async Task Decompose_CostTierSelectionEnabled_PeakRequested_TierFourPicksByCost()
+    {
+        // selection 注入 + peakTierEnabled=true → ④峰值档命中（①②③按诚实信号未触发），
+        // 按峰值溢价计入成本排序选 worker：writer（$0.5）胜出 analyst（$2.0），
+        // 覆盖既有强项打分——证明四层判定在生产选模点真实生效。
+        var squad = SetupSquad();
+        SetPricedSquad();
+        var strategy = MakeStrategy();
+        strategy.CostTierSelection = new CostTierSelectionOptions
+        {
+            Options = new CostTierOptions(), // 默认研究口径：阈值 100k / 峰值溢价 1.0
+            PeakTierEnabled = true,
+        };
+
+        var facade = MakeFacade(strategy);
+        var session = await NewSessionAsync(OrchestrationStrategy.Decompose);
+
+        await CollectAsync(facade.SendAsync(session.Id, "调研并写一篇文章"));
+
+        var messages = (await Sessions.GetMessagesAsync(session.Id)).Value!;
+        var s1 = messages.Single(m => m.Label == "调研");
+        var s2 = messages.Single(m => m.Label == "成文");
+        Assert.Equal("writer", s1.ProviderId); // ④层按成本选出（覆盖 analyst 的强项匹配）
+        Assert.Equal("writer", s2.ProviderId);
+        Assert.Equal("FINAL-DRAFT", s1.Content);
+    }
+
+    [Fact]
+    public async Task Decompose_CostTierSelectionEnabled_PeakOff_AllTiersMiss_FallsBackToStrengthScoring()
+    {
+        // selection 注入但 peakTierEnabled=false（默认口径）：①(输入≈2 token)②(无缓存前缀申报)
+        // ③(无 batch)④(未请求峰值) 全未命中 → Decide 回落既有打分 → 与基线分配完全一致
+        //（开关引入不改变默认选模结果，逐字节兼容的第一性验证）。
+        var squad = SetupSquad();
+        SetPricedSquad();
+        var strategy = MakeStrategy();
+        strategy.CostTierSelection = new CostTierSelectionOptions
+        {
+            Options = new CostTierOptions(),
+            PeakTierEnabled = false,
+        };
+
+        var facade = MakeFacade(strategy);
+        var session = await NewSessionAsync(OrchestrationStrategy.Decompose);
+
+        await CollectAsync(facade.SendAsync(session.Id, "调研并写一篇文章"));
+
+        var messages = (await Sessions.GetMessagesAsync(session.Id)).Value!;
+        Assert.Equal("analyst", messages.Single(m => m.Label == "调研").ProviderId); // 强项匹配胜出
+        Assert.Equal("writer", messages.Single(m => m.Label == "成文").ProviderId);
+    }
+
+    [Fact]
+    public async Task Decompose_CostTierSelectionNull_DefaultPathStrengthAssign_Unchanged()
+    {
+        // 默认（未注入 selection）= 既有 Assign 打分路径：即使候选带价格，仍按强项分配
+        //（价格不参与——四层判定未接入，现行为契约）。
+        var squad = SetupSquad();
+        SetPricedSquad();
+        var strategy = MakeStrategy(); // CostTierSelection 保持 null
+
+        var facade = MakeFacade(strategy);
+        var session = await NewSessionAsync(OrchestrationStrategy.Decompose);
+
+        await CollectAsync(facade.SendAsync(session.Id, "调研并写一篇文章"));
+
+        var messages = (await Sessions.GetMessagesAsync(session.Id)).Value!;
+        Assert.Equal("analyst", messages.Single(m => m.Label == "调研").ProviderId);
+        Assert.Equal("writer", messages.Single(m => m.Label == "成文").ProviderId);
     }
 }

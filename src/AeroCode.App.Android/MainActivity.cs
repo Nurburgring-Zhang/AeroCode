@@ -2,6 +2,9 @@
 // Android 头项目入口：AvaloniaMainActivity 承载与桌面共享的 App/MainView。
 using Android.App;
 using Android.Content.PM;
+using Android.OS;
+using AeroAgent.Autonomy.Mission;
+using AeroCode.App.Configuration;
 using AeroCode.App.Services;
 using Avalonia;
 using Avalonia.Android;
@@ -39,6 +42,101 @@ public class MainActivity : AvaloniaMainActivity<App>
         }
 
         return base.CustomizeAppBuilder(builder);
+    }
+
+    /// <summary>
+    /// R3-A：POST_NOTIFICATIONS 运行时申请的最小钩子。
+    /// 契约：请求只发生在「开关开启后首次 TryStartMission」，且必须经 Activity 发出；
+    /// 静态入口 MissionForegroundController.TryStartMission 通过 Current 取得当前 Activity。
+    /// 默认关（MissionForegroundOptions.Enabled=false）时无人消费该钩子，零行为变化。
+    /// </summary>
+    internal static MainActivity? Current { get; private set; }
+
+    protected override void OnCreate(Bundle? savedInstanceState)
+    {
+        base.OnCreate(savedInstanceState);
+        Current = this;
+
+        // R3 缝合（α S8）：mission 生命周期 → 前台保活。桌面端无此订阅（钩子在
+        // AeroAgent.Autonomy，仅 Android 头工程订阅）= 桌面零行为变化。
+        // 订阅方必须不抛：全部系统调用 try/catch 兜底，保活失败绝不阻断 mission。
+        MissionLifetimeHook.MissionStarted += OnMissionLifetimeStarted;
+        MissionLifetimeHook.MissionStopped += OnMissionLifetimeStopped;
+    }
+
+    protected override void OnDestroy()
+    {
+        MissionLifetimeHook.MissionStarted -= OnMissionLifetimeStarted;
+        MissionLifetimeHook.MissionStopped -= OnMissionLifetimeStopped;
+
+        if (ReferenceEquals(Current, this))
+        {
+            Current = null;
+        }
+
+        base.OnDestroy();
+    }
+
+    /// <summary>
+    /// R3 缝合（α S8）：mission 启动 → 前台保活。每次启动前先从 SettingsService 读
+    /// android.foregroundService 刷新 MissionForegroundOptions.Enabled（设置翻转免重启）；
+    /// 开关关时 TryStartMission 内部零系统调用直接返回 false。
+    /// 经 UI 线程执行（POST_NOTIFICATIONS 的 RequestPermissions 须在主线程）。
+    /// </summary>
+    private void OnMissionLifetimeStarted(string missionId)
+    {
+        try
+        {
+            RunOnUiThread(() =>
+            {
+                try
+                {
+                    try
+                    {
+                        var settings = App.Services.GetService<SettingsService>();
+                        Mission.MissionForegroundOptions.Enabled =
+                            settings?.Current.Android.ForegroundService ?? false;
+                    }
+                    catch
+                    {
+                        // 服务容器尚未就绪：保持开关现状（默认 false = 零行为）。
+                    }
+
+                    Mission.MissionForegroundController.TryStartMission(this, missionId);
+                }
+                catch
+                {
+                    // 保活失败不阻断 mission（契约：返回 false = 保活未生效而已）。
+                }
+            });
+        }
+        catch
+        {
+            // RunOnUiThread 本身失败（Activity 正在销毁）：放弃保活，不阻断 mission。
+        }
+    }
+
+    /// <summary>R3 缝合（α S8）：mission 结束 → 停前台保活（开关关时零系统调用）。</summary>
+    private void OnMissionLifetimeStopped()
+    {
+        try
+        {
+            RunOnUiThread(() =>
+            {
+                try
+                {
+                    Mission.MissionForegroundController.TryStopMission(this);
+                }
+                catch
+                {
+                    // 停止失败不阻断（服务侧 OnDestroy 兜底释放 wakelock）。
+                }
+            });
+        }
+        catch
+        {
+            // 同上：放弃停止动作，不抛出。
+        }
     }
 
     /// <summary>

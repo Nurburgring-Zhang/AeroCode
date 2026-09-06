@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
+using AeroAgent.Moa.Budget;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Subagent;
 using AeroAgent.Moa.Tools;
@@ -53,6 +54,37 @@ internal sealed class GatedProvider : IAiProvider
         => throw new NotSupportedException("gated provider is non-streaming by design");
 
     public Task<bool> HealthCheckAsync(CancellationToken ct = default) => Task.FromResult(false);
+}
+
+/// <summary>
+/// 测试用可编程 mission 闸门：可指定首轮实报后转 Exhausted 且**不触发事件**——
+/// 确定性建模「BudgetExhausted 转换沿落在 LaunchAsync 拒绝判定与 _inFlight 登记之间」
+/// 的竞态窗口（run 错过一次性事件 = 收不到取消通知，只能靠工具循环逐轮状态复查自纠）。
+/// </summary>
+internal sealed class ProgrammableBudgetGate : ITokenBudgetGate
+{
+    public BudgetState State { get; set; } = BudgetState.Running;
+    public long LimitTokens { get; set; } = 100;
+    public long SpentTokens { get; set; }
+    public bool DegradedToSingleAgent { get; set; }
+    public bool ExhaustAfterFirstReport { get; set; }
+
+    public event Action<BudgetSnapshot>? BudgetExhausted;
+
+    public BudgetState ReportUsage(long tokens)
+    {
+        SpentTokens += tokens;
+        if (ExhaustAfterFirstReport && State == BudgetState.Running)
+        {
+            State = BudgetState.Exhausted;
+            DegradedToSingleAgent = true;
+            // 有意不触发 BudgetExhausted：见类注释（错过事件沿的竞态窗口建模）。
+        }
+
+        return State;
+    }
+
+    public BudgetSnapshot Snapshot() => new(State, SpentTokens, LimitTokens, DegradedToSingleAgent);
 }
 
 /// <summary>
@@ -140,6 +172,23 @@ public sealed class SubagentTests : MoaTestBase
         }
 
         Assert.True(condition(), "condition not met within timeout");
+    }
+
+    /// <summary>异步条件轮询（条件本身需要 await 时使用，与同步重载语义一致）。</summary>
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition().ConfigureAwait(false))
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+        }
+
+        Assert.True(await condition().ConfigureAwait(false), "condition not met within timeout");
     }
 
     [Fact]
@@ -407,5 +456,91 @@ public sealed class SubagentTests : MoaTestBase
         await h1.DisposeAsync();
         await h2.DisposeAsync();
         await h3.DisposeAsync();
+    }
+
+    // ---- S-M1（R1 审查修复）：错过 BudgetExhausted 事件沿的竞态 → 工具循环逐轮复查自纠 ----
+
+    [Fact]
+    public async Task BudgetGateExhausted_MissedEventRace_SecondTurnHonestCancelled()
+    {
+        SetProfile("sa-gate", new[] { ModelStrength.General });
+        var provider = AddProvider("sa-gate");
+        // 首轮真实 usage 触发闸门转 Exhausted（无事件沿）；第二轮 provider 调用必须不发生。
+        provider.ResponseQueue.Enqueue(ToolCallResponse(
+            "c1", "get_note", "{}", new UsageInfo { PromptTokens = 10, CompletionTokens = 1 }));
+        provider.ThrowWhenResponseQueueEmpty =
+            new InvalidOperationException("second provider call must not happen after gate exhausted");
+
+        var events = new EventBus();
+        var received = new List<SubAgentCompletedEvent>();
+        events.Subscribe<SubAgentCompletedEvent>(received.Add);
+
+        var gate = new ProgrammableBudgetGate { ExhaustAfterFirstReport = true };
+        var runner = new SubAgentRunner(
+            Sessions, Registry, Catalog, events, tools: NewToolRouter(), budgetGate: gate);
+        var handle = await runner.LaunchAsync(Spec("sa-gate"), CancellationToken.None);
+        var summary = await handle.WaitAsync(CancellationToken.None);
+        await handle.DisposeAsync();
+
+        // 错过事件沿的第二轮被逐轮闸门复查诚实取消：与事件取消一致的 Cancelled 终态路径。
+        Assert.Equal(BudgetState.Exhausted, gate.State);
+        Assert.Equal("cancelled by user", summary);
+        var evt = Assert.Single(received);
+        Assert.False(evt.Success);
+        Assert.True(runner.DegradedToSingleAgent);
+
+        var persisted = await SubagentMessagesAsync(SessionTitlePrefix);
+        Assert.Equal(MessageStatus.Cancelled, persisted.Single(m => m.ParentMessageId is null).Status);
+        Assert.All(persisted, m => Assert.NotEqual(MessageStatus.Pending, m.Status));
+    }
+
+    // ---- S-M2（R1 审查修复）：取消落在工具执行中 → Pending 的 tool 消息落诚实终态 ----
+
+    [Fact]
+    public async Task CancelDuringToolExecution_PendingToolMessageFinalized_NoZombie()
+    {
+        SetProfile("sa-slow", new[] { ModelStrength.General });
+        var provider = AddProvider("sa-slow");
+        provider.ResponseQueue.Enqueue(ToolCallResponse("c1", "get_note", "{}", null));
+
+        // 悬挂工具：取消落在工具执行中（tool 消息已以 Pending 落库且尚未回写）。
+        var box = new ScriptedToolbox("notes", new ToolDefinition { Name = "get_note", Description = "d" })
+        {
+            DelayMs = 30_000,
+        };
+        box.SetResult("get_note", ToolInvokeResult.Ok("NOTE_BODY"));
+        var registry = new ToolboxRegistry();
+        registry.Register(box);
+        var router = new ToolRouter(
+            registry,
+            PermissionPolicy.CreateDefault(new EventBus()),
+            new ScriptedBroker(PermissionDecision.Allow));
+
+        var events = new EventBus();
+        var received = new List<SubAgentCompletedEvent>();
+        events.Subscribe<SubAgentCompletedEvent>(received.Add);
+        var runner = new SubAgentRunner(Sessions, Registry, Catalog, events, tools: router);
+        var handle = await runner.LaunchAsync(Spec("sa-slow"), CancellationToken.None);
+
+        // 等 tool 消息以 Pending 状态真实落库（僵尸窗口已存在），再取消。
+        await WaitUntilAsync(async () =>
+        {
+            var messages = await SubagentMessagesAsync(SessionTitlePrefix).ConfigureAwait(false);
+            return messages.Any(m => m.Role == ChatRole.Tool && m.Status == MessageStatus.Pending);
+        }, TimeSpan.FromSeconds(5));
+        handle.Cancel();
+
+        var summary = await handle.WaitAsync(CancellationToken.None);
+        await handle.DisposeAsync();
+
+        Assert.Equal("cancelled by user", summary);
+        Assert.False(received.Single().Success);
+
+        var persisted = await SubagentMessagesAsync(SessionTitlePrefix);
+        Assert.All(persisted, m => Assert.True(
+            m.Status is not (MessageStatus.Pending or MessageStatus.Streaming),
+            $"message {m.Id} ({m.Role}) left in {m.Status}"));
+        Assert.Equal(MessageStatus.Cancelled, persisted.Single(m => m.Role == ChatRole.Tool).Status);
+        Assert.Equal(MessageStatus.Cancelled, persisted.Single(m => m.ParentMessageId is null).Status);
     }
 }

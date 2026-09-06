@@ -31,6 +31,15 @@ public sealed class ClaudeProvider : IAiProvider
     private const string MessagesPath = "/v1/messages";
     private const string AnthropicVersion = "2023-06-01";
 
+    /// <summary>
+    /// R2 修复 HIGH-2：峰值推理档（ThinkingEffort == "extended-thinking"）选用的 thinking 预算。
+    /// 口径说明：刻意复用基线常量 5000——Anthropic 约束 budget_tokens &lt; max_tokens，而默认 MaxTokens
+    /// 为 4096，抬高预算必然 400；按档抬升预算（随 max_tokens 联动）留给 R3。默认档 "high" 与
+    /// 其他任何取值仍用基线 5000，请求体与基线逐字节一致（byte-compat 有测试钉住）。
+    /// </summary>
+    private const int PeakThinkingBudgetTokens = 5000;
+    private const int BaselineThinkingBudgetTokens = 5000;
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -178,27 +187,56 @@ public sealed class ClaudeProvider : IAiProvider
     private object BuildBody(ChatRequest request, bool stream)
     {
         // Anthropic API 字段: model, max_tokens, system, messages[], stream, tools[]
+        // B2 缓存适配：CacheBreakpoints（元素=消息索引，0-based，按 request.Messages 顺序）
+        // 命中的消息 → content 升级为 block 数组并在末尾 block 附 cache_control；
+        // TTL 取自厂商缓存政策字段（VendorCachePolicies，默认 5m）。
+        // null/空 = 现行为，请求形态与基线完全一致。
+        var bpSet = request.CacheBreakpoints is { Count: > 0 } bpList ? new HashSet<int>(bpList) : null;
+        var cacheTtl = Capabilities.VendorCachePolicies.Anthropic.SupportedTtls[0];
+        object CacheControl() => new { type = "ephemeral", ttl = cacheTtl };
+
         string? systemText = null;
+        var systemBreakpoint = false;
         var msgs = new List<object>();
-        foreach (var m in request.Messages)
+        for (var i = 0; i < request.Messages.Count; i++)
         {
-            if (m.Role == "system") { systemText = m.Content; continue; }
+            var m = request.Messages[i];
+            var bp = bpSet?.Contains(i) == true;
+            if (m.Role == "system")
+            {
+                systemText = m.Content;
+                if (bp) systemBreakpoint = true;
+                continue;
+            }
             if (m.Role == "tool")
             {
-                msgs.Add(new { role = "user", content = new object[] { new { type = "tool_result", tool_use_id = m.ToolCallId, content = m.Content } } });
+                msgs.Add(bp
+                    ? new { role = "user", content = new object[] { new { type = "tool_result", tool_use_id = m.ToolCallId, content = m.Content, cache_control = CacheControl() } } }
+                    : (object)new { role = "user", content = new object[] { new { type = "tool_result", tool_use_id = m.ToolCallId, content = m.Content } } });
                 continue;
             }
             if (m.ToolCalls is { Count: > 0 })
             {
                 var content = new List<object> { new { type = "text", text = m.Content ?? string.Empty } };
-                foreach (var tc in m.ToolCalls)
+                for (var t = 0; t < m.ToolCalls.Count; t++)
                 {
-                    content.Add(new { type = "tool_use", id = tc.Id, name = tc.FunctionName, input = JsonNode.Parse(tc.ArgumentsJson) ?? new JsonObject() });
+                    var tc = m.ToolCalls[t];
+                    var isLast = t == m.ToolCalls.Count - 1;
+                    content.Add(isLast && bp
+                        ? new { type = "tool_use", id = tc.Id, name = tc.FunctionName, input = JsonNode.Parse(tc.ArgumentsJson) ?? new JsonObject(), cache_control = CacheControl() }
+                        : (object)new { type = "tool_use", id = tc.Id, name = tc.FunctionName, input = JsonNode.Parse(tc.ArgumentsJson) ?? new JsonObject() });
                 }
                 msgs.Add(new { role = "assistant", content });
                 continue;
             }
-            msgs.Add(new { role = m.Role, content = m.Content });
+            if (bp)
+            {
+                msgs.Add(new { role = m.Role, content = new object[] { new { type = "text", text = m.Content, cache_control = CacheControl() } } });
+            }
+            else
+            {
+                msgs.Add(new { role = m.Role, content = m.Content });
+            }
         }
 
         var body = new Dictionary<string, object?>
@@ -208,7 +246,12 @@ public sealed class ClaudeProvider : IAiProvider
             ["messages"] = msgs,
             ["stream"] = stream
         };
-        if (!string.IsNullOrEmpty(systemText)) body["system"] = systemText;
+        if (!string.IsNullOrEmpty(systemText))
+        {
+            body["system"] = systemBreakpoint
+                ? new object[] { new { type = "text", text = systemText, cache_control = CacheControl() } }
+                : systemText;
+        }
         if (request.Temperature.HasValue) body["temperature"] = request.Temperature.Value;
         if (request.Tools is { Count: > 0 })
         {
@@ -221,7 +264,12 @@ public sealed class ClaudeProvider : IAiProvider
         }
         if (request.EnableThinking && SupportsThinking)
         {
-            body["thinking"] = new { type = "enabled", budget_tokens = 5000 };
+            // R2 修复 HIGH-2：峰值档（"extended-thinking"）选峰值预算槽；其余取值（含默认 "high"）
+            // 仍用基线预算，发射结构与基线逐字节一致（发射与否仍只由 EnableThinking 决定）。
+            var budgetTokens = string.Equals(request.ThinkingEffort, "extended-thinking", StringComparison.Ordinal)
+                ? PeakThinkingBudgetTokens
+                : BaselineThinkingBudgetTokens;
+            body["thinking"] = new { type = "enabled", budget_tokens = budgetTokens };
         }
         return body;
     }
@@ -232,7 +280,17 @@ public sealed class ClaudeProvider : IAiProvider
         var url = _config.BaseUrl.TrimEnd('/') + MessagesPath;
         var req = new HttpRequestMessage(HttpMethod.Post, url);
         if (ResolveApiKey() is { Length: > 0 } apiKey) req.Headers.Add("x-api-key", apiKey);
-        req.Headers.Add("anthropic-version", AnthropicVersion);
+        // B6 版本 pinning：版本锁 header 值来自 ProviderConfig.ApiVersionHeaders（配置而非硬编码）；
+        // 未配置（null）= 现行为，沿用默认 anthropic-version。
+        var pin = Capabilities.VendorVersionPin.From(_config);
+        if (pin is not null)
+        {
+            foreach (var kv in pin.Headers) req.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
+        }
+        else
+        {
+            req.Headers.TryAddWithoutValidation("anthropic-version", AnthropicVersion);
+        }
         if (_config.ExtraHeaders is { Count: > 0 })
             foreach (var kv in _config.ExtraHeaders) req.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
         req.Content = new StringContent(json, Encoding.UTF8, "application/json");

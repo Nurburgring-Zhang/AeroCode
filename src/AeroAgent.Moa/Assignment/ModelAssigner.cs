@@ -17,6 +17,9 @@ public sealed record ModelAssignment(string ProviderId, string ModelId, ModelPro
 /// 候选集 = 每个已配置 provider 的默认模型 + 画像目录中该 provider 的具名模型。
 /// 打分 = 强项匹配 &gt; 速度偏好 &gt; 可靠性/延迟（自学习）&gt; 成本（仅已知价格参与）。
 /// 同分按 providerId/modelId 字典序，保证确定性。
+/// B1 成本排序：传入 <see cref="CostRequestContext"/> 时改走四层判定
+/// （①长上下文优先 → ②缓存折扣 → ③batch 兜底 → ④峰值档，见 <see cref="CostTiers"/>），
+/// 四层全未命中回落既有打分；不传 request 保持现行为。
 /// </summary>
 public sealed class ModelAssigner
 {
@@ -38,7 +41,74 @@ public sealed class ModelAssigner
     public IReadOnlyList<ModelAssignment> RankCandidates(
         string strength,
         IReadOnlyCollection<string>? excludedKeys = null,
-        SpeedTier? preferSpeed = null)
+        SpeedTier? preferSpeed = null) =>
+        ScoredCandidates(strength, excludedKeys, preferSpeed)
+            .Select(x => x.Candidate)
+            .ToList();
+
+    /// <summary>取最优候选；无候选返回 null（调用方如实报告）。</summary>
+    public ModelAssignment? Assign(
+        string strength,
+        IReadOnlyCollection<string>? excludedKeys = null,
+        SpeedTier? preferSpeed = null,
+        CostRequestContext? request = null,
+        CostTierOptions? options = null) =>
+        request is null
+            ? RankCandidates(strength, excludedKeys, preferSpeed).FirstOrDefault() // 现行为
+            : Decide(request, strength, excludedKeys, preferSpeed, options).Assignment;
+
+    /// <summary>
+    /// B1 成本排序选模：按钉死顺序走四层判定（①长上下文优先 → ②缓存折扣 → ③batch 兜底 → ④峰值档），
+    /// 首个命中的层决定选择；四层都未命中回落既有打分行为（现行为）。结果带可解释理由。
+    /// </summary>
+    public CostTierDecision Decide(
+        CostRequestContext request,
+        string strength,
+        IReadOnlyCollection<string>? excludedKeys = null,
+        SpeedTier? preferSpeed = null,
+        CostTierOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var opts = options ?? CostTierOptions.Default;
+        var scored = ScoredCandidates(strength, excludedKeys, preferSpeed);
+        if (scored.Count == 0)
+        {
+            return new CostTierDecision(null, CostTier.None, "无候选：没有已配置 provider 或全部被排除。");
+        }
+
+        var input = scored
+            .Select(x => new CostCandidate(x.Candidate, x.Score, null))
+            .ToList();
+
+        // 顺序钉死：①→②→③→④，首个命中即出（见 CostTiers 各层纯函数）。
+        var verdicts = new[]
+        {
+            CostTiers.LongContext(input, request, opts),
+            CostTiers.CacheDiscount(input, request, opts),
+            CostTiers.Batch(input, request, opts),
+            CostTiers.Peak(input, request, opts),
+        };
+        foreach (var verdict in verdicts)
+        {
+            if (verdict.Applied && verdict.Pick is { } pick)
+            {
+                return new CostTierDecision(pick, verdict.Tier, verdict.Reason);
+            }
+        }
+
+        var baseline = input[0]; // ScoredCandidates 已按得分降序 + 字典序排好
+        return new CostTierDecision(
+            baseline.Assignment,
+            CostTier.None,
+            $"四层均未命中（长上下文/缓存/batch/峰值档），按既有强项/速度/可靠性/成本打分选出 " +
+            $"{baseline.Assignment.Key}（得分 {baseline.Score:0.#}）。");
+    }
+
+    /// <summary>枚举 + 打分 + 排序（RankCandidates/Assign/Decide 共用，行为与原 RankCandidates 一致）。</summary>
+    private List<(ModelAssignment Candidate, double Score)> ScoredCandidates(
+        string strength,
+        IReadOnlyCollection<string>? excludedKeys,
+        SpeedTier? preferSpeed)
     {
         var target = ModelStrength.Normalize(strength);
         var excluded = excludedKeys ?? Array.Empty<string>();
@@ -55,23 +125,13 @@ public sealed class ModelAssigner
         var maxCost = knownCosts.Count > 0 ? knownCosts.Max() : 0.0;
         var maxLatency = candidates.Count > 0 ? candidates.Max(c => c.Profile.Stats.AvgLatencyMs) : 0.0;
 
-        var scored = candidates
+        return candidates
             .Select(c => (Candidate: c, Score: Score(c, target, preferSpeed, maxCost, maxLatency)))
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.Candidate.ProviderId, StringComparer.Ordinal)
             .ThenBy(x => x.Candidate.ModelId, StringComparer.Ordinal)
-            .Select(x => x.Candidate)
             .ToList();
-
-        return scored;
     }
-
-    /// <summary>取最优候选；无候选返回 null（调用方如实报告）。</summary>
-    public ModelAssignment? Assign(
-        string strength,
-        IReadOnlyCollection<string>? excludedKeys = null,
-        SpeedTier? preferSpeed = null) =>
-        RankCandidates(strength, excludedKeys, preferSpeed).FirstOrDefault();
 
     private IEnumerable<ModelAssignment> EnumerateCandidates()
     {
@@ -150,7 +210,6 @@ public sealed class ModelAssigner
         return score;
     }
 
-    /// <summary>画像已知价格时给出单位参考成本（输入价+输出价），否则 null。</summary>
-    private static double? KnownUnitCost(ModelProfile profile) =>
-        profile.CostPerMIn is { } i && profile.CostPerMOut is { } o ? i + o : null;
+    /// <summary>画像已知价格时给出单位参考成本（输入价+输出价），否则 null。公式单一来源见 <see cref="CostTiers.UnitCost"/>。</summary>
+    private static double? KnownUnitCost(ModelProfile profile) => CostTiers.UnitCost(profile);
 }

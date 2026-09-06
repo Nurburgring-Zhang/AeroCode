@@ -2,5 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" android:installLocation="auto">
 	<!-- AI Provider 走 HTTPS API，需要网络权限；无任何存储权限（数据全在 app 私有目录） -->
 	<uses-permission android:name="android.permission.INTERNET" />
-	<application android:label="AeroCode" android:icon="@drawable/icon" />
+	<!-- R3-A Mission 后台运行（运行开关 android.foregroundService 默认 false；
+	     权限是静态声明，翻转开关前不产生任何运行期行为）：
+	     FOREGROUND_SERVICE/WAKE_LOCK 为 normal 权限静默授予；
+	     POST_NOTIFICATIONS（API 33+）由 MissionForegroundController 运行时申请，只弹一次；
+	     FOREGROUND_SERVICE_DATA_SYNC：targetSdk 35≥34 且 serviceType=dataSync 时强制要求。 -->
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+	<uses-permission android:name="android.permission.WAKE_LOCK" />
+	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+	<application android:label="AeroCode" android:icon="@drawable/icon">
+		<!-- Mission 前台保活服务（android:name 必须与 MissionForegroundService 的
+		     [Service(Name=...)] 一致；foregroundServiceType=dataSync 与 targetSdk=35 的
+		     强制要求对应）。android:exported=false：仅本 App 可启动。 -->
+		<service
+			android:name="com.aerocode.app.MissionForegroundService"
+			android:exported="false"
+			android:foregroundServiceType="dataSync" />
+	</application>
 </manifest>

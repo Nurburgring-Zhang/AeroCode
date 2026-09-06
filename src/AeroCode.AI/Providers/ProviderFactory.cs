@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net.Http;
+using AeroCode.AI.Capabilities;
 using AeroCode.AI.Configuration;
 using AeroCode.AI.Resilience;
 using Microsoft.Extensions.Logging;
@@ -19,6 +20,7 @@ public sealed class ProviderFactory : IProviderRegistry, IDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly IHttpClientFactory? _httpFactory;
     private readonly ResilienceOptions _resilienceOptions;
+    private readonly IVendorCapabilityProbe? _capabilityProbe;
     private readonly object _sync = new();
     private readonly Dictionary<string, IAiProvider> _cache = new();
     private readonly Dictionary<string, AiResiliencePipeline> _pipelines = new();
@@ -29,12 +31,20 @@ public sealed class ProviderFactory : IProviderRegistry, IDisposable
     /// <summary>配置热重载完成（provider 缓存已清空，UI 应刷新下拉列表等）。</summary>
     public event Action? ProvidersChanged;
 
-    public ProviderFactory(AIOptions options, ILoggerFactory loggerFactory, IHttpClientFactory? httpFactory = null, ResilienceOptions? resilienceOptions = null)
+    public ProviderFactory(
+        AIOptions options,
+        ILoggerFactory loggerFactory,
+        IHttpClientFactory? httpFactory = null,
+        ResilienceOptions? resilienceOptions = null,
+        // R3 缝合（δ Sδ2）：可选能力探测注入——组合根把已注册的 IVendorCapabilityProbe 喂入，
+        // 透传给 OpenAIProvider（O 家族 xhigh probe 门控）。null = 门控休眠，请求逐字节透传（现行为）。
+        IVendorCapabilityProbe? capabilityProbe = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _loggerFactory = loggerFactory;
         _httpFactory = httpFactory;
         _resilienceOptions = resilienceOptions ?? new ResilienceOptions();
+        _capabilityProbe = capabilityProbe;
     }
 
     /// <summary>
@@ -186,7 +196,7 @@ public sealed class ProviderFactory : IProviderRegistry, IDisposable
             "qwen" or "dashscope" or "aliyun" => new QwenProvider(http, config, CastLogger<QwenProvider>(logger), pipeline),
             "kimi" or "moonshot" => new KimiProvider(http, config, CastLogger<KimiProvider>(logger), pipeline),
             "glm" or "zhipu" or "bigmodel" => new GlmProvider(http, config, CastLogger<GlmProvider>(logger), pipeline),
-            "openai" or "gpt" => new OpenAIProvider(http, config, CastLogger<OpenAIProvider>(logger), pipeline),
+            "openai" or "gpt" => new OpenAIProvider(http, config, CastLogger<OpenAIProvider>(logger), pipeline, _capabilityProbe),
             "openrouter" => new OpenRouterProvider(http, config, CastLogger<OpenRouterProvider>(logger), pipeline),
             "ollama" => new OllamaProvider(http, config, CastLogger<OllamaProvider>(logger), pipeline),
             "lmstudio" or "lm-studio" => new LmStudioProvider(http, config, CastLogger<LmStudioProvider>(logger), pipeline),

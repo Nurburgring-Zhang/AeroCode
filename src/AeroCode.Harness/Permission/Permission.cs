@@ -20,6 +20,34 @@ public enum PermissionDecision
 public sealed record PermissionResult(PermissionDecision Decision, string? Reason = null);
 
 /// <summary>
+/// B5 GuardrailPipeline 挂点契约（R2）：工具调用裁决前的 guardrail 咨询。
+/// Harness 侧只定义契约（依赖方向：Moa → Harness，实现位于 Moa Guard/ 的适配器）。
+/// 实现约束：
+/// 1. 只升不降——返回的决策只会被 <see cref="PermissionPolicy.Check"/> 按审慎度（Allow&lt;Ask&lt;Deny）
+///    向上采纳，永远不会降级既有基线（与 Override 同一语义）；
+/// 2. 无副作用（允许自身发现收集/标记记录）且线程安全（MOA 并行 worker 并发 Check）；
+/// 3. 不得吞取消：<see cref="CancellationToken"/> 必须透传，OperationCanceledException 必须向上传播；
+/// 4. 非取消异常应由实现自行收容（返回 null = 无意见，交还原裁决链），不得打断权限裁决。
+/// </summary>
+public interface IPermissionGuardrailAdvisor
+{
+    /// <summary>
+    /// 对一次工具调用发表 guardrail 意见。null = 无意见（走原裁决链）。
+    /// 默认（MarkOnly）实现应只记录标记并返回 null（只标记不拦截）；
+    /// 返回非 null 咨询（Enforce，开关翻转只发生在设置/组合根）时给出更审慎的决策与原因。
+    /// </summary>
+    GuardrailConsult? AdviseToolCall(
+        string toolName,
+        IReadOnlyDictionary<string, object?>? args,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>Guardrail 咨询结果（B5 挂点）。</summary>
+/// <param name="Decision">建议决策（只会被向上采纳，不降级基线）。</param>
+/// <param name="Reason">人类可读原因（进入 PermissionResult.Reason；不得含密钥等敏感形态）。</param>
+public sealed record GuardrailConsult(PermissionDecision Decision, string? Reason = null);
+
+/// <summary>
 /// A permission policy for a single tool.
 /// OpenCode pattern: tool name -> (default decision, dangerous-pattern detector).
 /// </summary>
@@ -63,6 +91,31 @@ public sealed class PermissionPolicy
             lock (_sync)
             {
                 _mode = value;
+            }
+        }
+    }
+
+    private IPermissionGuardrailAdvisor? _guardrailAdvisor;
+
+    /// <summary>
+    /// B5 GuardrailPipeline 挂点（可选注入，null = 现行为）：非 null 时每次 Check 咨询一次，
+    /// 其决策按审慎度只升不降（绝不降级显式 Deny/档位基线/危险探测 Override）。
+    /// 装配与开关翻转只发生在组合根（缝合阶段）。
+    /// </summary>
+    public IPermissionGuardrailAdvisor? GuardrailAdvisor
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _guardrailAdvisor;
+            }
+        }
+        set
+        {
+            lock (_sync)
+            {
+                _guardrailAdvisor = value;
             }
         }
     }
@@ -113,44 +166,91 @@ public sealed class PermissionPolicy
 
     /// <summary>
     /// Check permission for a tool call.
-    /// 裁决序：显式 Deny &gt; 档位变换后的基线 &gt; Override 只升不降。
+    /// 裁决序：显式 Deny &gt; 档位变换后的基线 &gt; guardrail 咨询/Override 只升不降。
+    /// B5 挂点（可选注入，null = 现行为）：<see cref="GuardrailAdvisor"/> 非 null 时在档位变换后
+    /// 咨询一次，决策按审慎度只升不降；<paramref name="cancellationToken"/> 透传给 advisor。
     /// </summary>
-    public PermissionResult Check(string toolName, IReadOnlyDictionary<string, object?>? args = null)
+    public PermissionResult Check(
+        string toolName,
+        IReadOnlyDictionary<string, object?>? args = null,
+        CancellationToken cancellationToken = default)
     {
         ToolPermissionRule? rule;
         PermissionMode mode;
+        IPermissionGuardrailAdvisor? advisor;
         lock (_sync)
         {
             _rules.TryGetValue(toolName, out rule);
             mode = _mode;
+            advisor = _guardrailAdvisor;
         }
 
         if (rule is null)
         {
             // Unknown tool: ask by default (safe) — Plan 档收紧为 Deny（规划期不接受新工具）。
-            return mode == PermissionMode.Plan
+            var unknown = mode == PermissionMode.Plan
                 ? new PermissionResult(PermissionDecision.Deny, $"Unknown tool '{toolName}' in plan mode")
                 : new PermissionResult(PermissionDecision.Ask, $"Unknown tool '{toolName}'");
+            return ApplyGuardrailConsult(advisor, toolName, args, unknown, cancellationToken);
         }
 
-        // 显式 Deny 优先：用户/系统明确拒绝的工具不得被 Override 或档位翻成放行。
+        // 显式 Deny 优先：用户/系统明确拒绝的工具不得被 Override、档位或 guardrail 翻成放行
+        // （guardrail 只升不降，Deny 已是顶格审慎度，无需咨询）。
         if (rule.DefaultDecision == PermissionDecision.Deny)
         {
             return new PermissionResult(PermissionDecision.Deny, "Explicitly denied");
         }
 
         var baseline = PermissionModeTransform.Apply(mode, toolName, rule.DefaultDecision);
+        var decision = baseline;
+        string? reason = null;
+
+        // B5 guardrail 挂点：只升不降（与 Override 同一 PrudenceRank 语义），先于 Override 咨询。
+        if (advisor is not null)
+        {
+            var consult = advisor.AdviseToolCall(toolName, args, cancellationToken);
+            if (consult is not null && PrudenceRank(consult.Decision) > PrudenceRank(decision))
+            {
+                decision = consult.Decision;
+                reason = consult.Reason ?? "guardrail";
+            }
+        }
 
         if (rule.Override is not null)
         {
             var d = rule.Override(args);
             // Override 只允许升级审慎度（Allow→Ask→Deny），绝不降级：
             // 用户把默认决策设为 Ask（或档位放行）后，模式探测不得把它悄悄放行为 Allow。
-            if (PrudenceRank(d) > PrudenceRank(baseline))
-                return new PermissionResult(d, "Rule override");
+            if (PrudenceRank(d) > PrudenceRank(decision))
+            {
+                decision = d;
+                reason = "Rule override";
+            }
         }
 
-        return new PermissionResult(baseline);
+        return reason is null ? new PermissionResult(decision) : new PermissionResult(decision, reason);
+    }
+
+    /// <summary>未知工具路径的 guardrail 咨询：同样只升不降（Plan 档 Deny 不可被降格）。</summary>
+    private static PermissionResult ApplyGuardrailConsult(
+        IPermissionGuardrailAdvisor? advisor,
+        string toolName,
+        IReadOnlyDictionary<string, object?>? args,
+        PermissionResult baseline,
+        CancellationToken cancellationToken)
+    {
+        if (advisor is null)
+        {
+            return baseline;
+        }
+
+        var consult = advisor.AdviseToolCall(toolName, args, cancellationToken);
+        if (consult is not null && PrudenceRank(consult.Decision) > PrudenceRank(baseline.Decision))
+        {
+            return new PermissionResult(consult.Decision, consult.Reason ?? "guardrail");
+        }
+
+        return baseline;
     }
 
     /// <summary>审慎度阶梯：Allow(0) &lt; Ask(1) &lt; Deny(2)。Override 只许向上走。</summary>

@@ -52,12 +52,22 @@ public sealed class PermissionAdvisor : IPermissionAdvisor
     private readonly IAiProvider? _provider;
     private readonly string _model;
     private readonly TimeSpan _timeout;
+    private readonly bool _sanitizeArgs;
 
-    public PermissionAdvisor(IAiProvider? provider, string model, TimeSpan? timeout = null)
+    /// <param name="provider">判定用 provider（组合根挑选的便宜档）；null = 不可用。</param>
+    /// <param name="model">判定模型 id；空白 = 不可用。</param>
+    /// <param name="timeout">独立短超时；null/非正 = <see cref="DefaultTimeout"/>（8s）。</param>
+    /// <param name="sanitizeArgs">
+    /// R3 修复（F-MED-2）：参数进 prompt 前是否过 canonical 词表脱敏。
+    /// 默认 false = R3 前行为逐字节一致（原样序列化进 prompt）；
+    /// true = 脱敏预览（敏感原文不外送判定模型）。开关经组合根映射（safety.advisorSanitizeArgs）。
+    /// </param>
+    public PermissionAdvisor(IAiProvider? provider, string model, TimeSpan? timeout = null, bool sanitizeArgs = false)
     {
         _provider = provider;
         _model = model ?? string.Empty;
         _timeout = timeout is { } t && t > TimeSpan.Zero ? t : DefaultTimeout;
+        _sanitizeArgs = sanitizeArgs;
     }
 
     /// <inheritdoc />
@@ -144,18 +154,34 @@ public sealed class PermissionAdvisor : IPermissionAdvisor
         }
     }
 
-    private static string BuildUserPrompt(string toolName, IReadOnlyDictionary<string, object?>? args)
+    private string BuildUserPrompt(string toolName, IReadOnlyDictionary<string, object?>? args)
     {
         string preview;
-        try
+        if (_sanitizeArgs)
         {
-            preview = JsonSerializer.Serialize(args ?? new Dictionary<string, object?>());
+            // 批次 C 安全切片（开关开启）：参数进入 prompt 前过收敛词表（S-L1 canonical
+            // 单一事实源）脱敏，被脱敏部分以 [REDACTED] 占位符呈现——advisor 只读判定，
+            // 敏感原文不外送判定模型。
+            preview = AdvisorArgsSanitizer.Sanitize(args).SanitizedPreview;
+            if (string.IsNullOrEmpty(preview))
+            {
+                // null/空参数保持与既有行为一致：序列化为 "{}"。
+                preview = "{}";
+            }
         }
-        catch (Exception)
+        else
         {
-            // 参数含不可序列化对象时退化为逐项列举——绝不吞掉信息。
-            preview = string.Join("\n", (args ?? new Dictionary<string, object?>())
-                .Select(kv => $"{kv.Key} = {kv.Value ?? "null"}"));
+            // R3 修复（F-MED-2）：开关关闭（默认）= R3 前行为逐字节一致——原样序列化进 prompt。
+            try
+            {
+                preview = JsonSerializer.Serialize(args ?? new Dictionary<string, object?>());
+            }
+            catch (Exception)
+            {
+                // 参数含不可序列化对象时退化为逐项列举——绝不吞掉信息。
+                preview = string.Join("\n", (args ?? new Dictionary<string, object?>())
+                    .Select(kv => $"{kv.Key} = {kv.Value ?? "null"}"));
+            }
         }
 
         if (preview.Length > MaxArgsPreviewLength)

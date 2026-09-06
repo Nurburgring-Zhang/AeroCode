@@ -1,7 +1,9 @@
 // Copyright (c) AeroCode V3.0
 // SettingsService Load 语义测试 — 损坏 JSON / 文件缺失 / 读取期 IOException 的真实行为。
 // 结论（以 src/AeroCode.App/Configuration/SettingsService.cs 代码事实为准）：
-// LoadAsync 只 catch JsonException（降级默认且不回写磁盘）；IOException 等环境故障向上抛——符合审计预期。
+// LoadAsync 只 catch JsonException；R3-δ 起损坏 JSON 加固——改名备份 *.corrupt-<时间戳> +
+// 默认值继续运行 + LastLoadError 暴露拒载事实；IOException 等环境故障向上抛——符合审计预期。
+using System;
 using System.IO;
 using System.Threading.Tasks;
 using AeroCode.App.Configuration;
@@ -12,7 +14,8 @@ namespace AeroCode.Tests.AppTests;
 
 /// <summary>
 /// SettingsService 的加载语义：
-/// 1) 损坏 JSON → 窄 catch JsonException，降级默认配置且不回写磁盘；
+/// 1) 损坏 JSON → 窄 catch JsonException：改名备份 *.corrupt-&lt;UTC时间戳&gt;（内容字节原样）+
+///    默认值继续运行 + LastLoadError 非空；二次 Save 不丢备份；
 /// 2) 文件缺失 → 默认配置并立即持久化（LoadAsync 内部调用 SaveAsync）；
 /// 3) 文件存在但读取时被独占锁定 → IOException 向上抛（不静默吞掉）。
 /// </summary>
@@ -35,9 +38,11 @@ public sealed class SettingsLoadSemanticsTests : IDisposable
         }
     }
 
-    /// <summary>损坏 JSON：降级为默认四 provider，且不回写磁盘——损坏文件原样保留，等待用户下次保存修复。</summary>
+    /// <summary>
+    /// R3-δ 损坏 JSON 加固：改名备份 + 默认值运行 + 错误状态非空，且二次保存不丢备份、不丢损坏内容。
+    /// </summary>
     [Fact]
-    public async Task CorruptJson_FallsBackToDefaults_DoesNotOverwriteFile()
+    public async Task CorruptJson_BackupCreated_DefaultsRun_ErrorStateExposed_BackupSurvivesSave()
     {
         var svc = new SettingsService(_paths); // ctor EnsureAll 创建目录
         const string corrupt = "{这不是合法 JSON";
@@ -45,12 +50,47 @@ public sealed class SettingsLoadSemanticsTests : IDisposable
 
         await svc.LoadAsync();
 
+        // 默认值继续运行。
         Assert.Equal(4, svc.Current.Ai.Providers.Count);
         Assert.Contains(svc.Current.Ai.Providers, p => p.Id == "deepseek");
         Assert.Equal("Dark", svc.Current.Ui.Theme);
         Assert.Equal(2200, svc.Current.Ui.MemoryMaxChars);
-        // 降级不回写：静默回写默认值会擦掉用户真实配置
-        Assert.Equal(corrupt, await File.ReadAllTextAsync(_paths.SettingsFile));
+
+        // 错误状态非空（拒载事实可观测，仿 MoaOptions.LastLoadError）。
+        Assert.NotNull(svc.LastLoadError);
+        Assert.IsType<System.Text.Json.JsonException>(svc.LastLoadError);
+
+        // 备份文件存在且内容字节原样；原路径的损坏文件已被改名移走（不覆盖原文件）。
+        var backups = Directory.GetFiles(_root, "settings.json.corrupt-*");
+        var backup = Assert.Single(backups);
+        Assert.Matches(@"^settings\.json\.corrupt-\d{8}T\d{9}Z(?:-\d+)?$", Path.GetFileName(backup));
+        Assert.Equal(corrupt, await File.ReadAllTextAsync(backup));
+        Assert.False(File.Exists(_paths.SettingsFile)); // 只改名，不覆盖
+
+        // 二次保存：settings.json 重建，备份不丢、损坏内容仍原样。
+        await svc.SaveAsync();
+        Assert.True(File.Exists(_paths.SettingsFile));
+        Assert.Single(Directory.GetFiles(_root, "settings.json.corrupt-*"));
+        Assert.Equal(corrupt, await File.ReadAllTextAsync(backups[0]));
+        // 新 settings.json 是可解析的默认配置（含 R3-δ 三个代管字段节）。
+        var reloaded = new SettingsService(_paths);
+        await reloaded.LoadAsync();
+        Assert.Null(reloaded.LastLoadError);
+        Assert.Equal(4, reloaded.Current.Ai.Providers.Count);
+    }
+
+    /// <summary>成功加载清除错误状态；文件缺失分支同样不置错误状态。</summary>
+    [Fact]
+    public async Task LoadSuccess_MissingFile_ErrorStateCleared()
+    {
+        var svc = new SettingsService(_paths);
+        Assert.False(File.Exists(_paths.SettingsFile));
+        await svc.LoadAsync();
+        Assert.Null(svc.LastLoadError); // 缺失 = 未配置，不算拒载
+
+        var second = new SettingsService(_paths);
+        await second.LoadAsync(); // 文件存在且合法
+        Assert.Null(second.LastLoadError);
     }
 
     /// <summary>文件缺失：返回默认配置并立即持久化（真实行为：LoadAsync 在缺失分支调用 SaveAsync）。</summary>
@@ -94,5 +134,6 @@ public sealed class SettingsLoadSemanticsTests : IDisposable
         var recovered = new SettingsService(_paths);
         await recovered.LoadAsync();
         Assert.Equal(4, recovered.Current.Ai.Providers.Count);
+        Assert.True(Directory.GetFiles(_root, "settings.json.corrupt-*").Length == 0); // 环境故障不做损坏备份
     }
 }

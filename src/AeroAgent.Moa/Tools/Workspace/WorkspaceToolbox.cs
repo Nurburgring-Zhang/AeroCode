@@ -37,16 +37,23 @@ public sealed class WorkspaceToolbox : IWorkerToolbox
     private readonly WorkspaceContext _workspace;
     private readonly ShellRunner _shell;
     private readonly ICheckpointTracker? _checkpoints;
+    private readonly ShellSandboxOptions? _shellSandbox;
     private readonly IReadOnlyList<ToolDefinition> _definitions;
 
     public WorkspaceToolbox(
         WorkspaceContext workspace,
         ShellRunner shell,
-        ICheckpointTracker? checkpoints = null)
+        ICheckpointTracker? checkpoints = null,
+        ShellSandboxOptions? shellSandbox = null)
     {
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _shell = shell ?? throw new ArgumentNullException(nameof(shell));
         _checkpoints = checkpoints;
+        // 批次 C 安全切片（R3 波次 γ）：run_shell 沙箱门控的可选注入点。null / Enforce=false =
+        // 现行为逐字节兼容（ShellRunner 不建沙箱直跑）；Enforce=true 时由 ShellRunner fail-closed
+        // 执行（非 Windows / 沙箱创建失败 / 圈入失败一律拒绝，绝不降级直跑）。
+        // 组合根从设置（sandbox.enforce）映射注入——接线归缝合，本层只留注入点。
+        _shellSandbox = shellSandbox;
         _definitions = BuildDefinitions();
     }
 
@@ -487,7 +494,32 @@ public sealed class WorkspaceToolbox : IWorkerToolbox
         }
 
         var timeout = GetInt(args, "timeout_seconds", 0);
-        var result = await _shell.RunAsync(command, timeout, ct).ConfigureAwait(false);
+
+        ShellResult result;
+        if (_shellSandbox is { Enforce: true })
+        {
+            // 批次 C 安全切片：enforce 路径 fail-closed——沙箱不可用（非 Windows / 创建失败 /
+            // 圈入失败）时 ShellRunner 抛异常拒绝执行，绝不降级直跑。工具箱契约（域内失败如实
+            // 交还、永不抛业务异常）：把拒绝转成明确错误交还模型，不吞、不伪装成执行结果。
+            try
+            {
+                result = await _shell.RunAsync(command, timeout, ct, _shellSandbox).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // 取消向上传播（不吞）
+            }
+            catch (Exception ex) when (ex is PlatformNotSupportedException or InvalidOperationException)
+            {
+                return ToolInvokeResult.Fail($"[sandbox] execution refused (fail-closed): {ex.Message}");
+            }
+        }
+        else
+        {
+            // 默认（无注入 / Enforce=false）：现行为逐字节一致，不新增任何异常处置。
+            result = await _shell.RunAsync(command, timeout, ct).ConfigureAwait(false);
+        }
+
         var sb = new StringBuilder();
         sb.Append("exit=").Append(result.ExitCode);
         if (result.TimedOut)

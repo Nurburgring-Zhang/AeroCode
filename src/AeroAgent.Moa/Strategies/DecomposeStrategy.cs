@@ -13,6 +13,7 @@ using AeroAgent.Moa.Aggregation;
 using AeroAgent.Moa.Assignment;
 using AeroAgent.Moa.Planning;
 using AeroAgent.Moa.Profiles;
+using AeroCode.Harness.Compaction;
 using AeroCode.Harness.Graph;
 using AiChatMessage = AeroCode.AI.Models.ChatMessage;
 using PlanStep = AeroCode.Harness.Planner.PlanStep;
@@ -36,6 +37,14 @@ public sealed class DecomposeStrategy : IOrchestrationStrategy
     private readonly TaskPlanner _planner;
     private readonly Synthesizer _synthesizer;
     private readonly MoaOptions _options;
+
+    /// <summary>
+    /// B-SELECT 四层成本排序的生产接点（R2 修复 HIGH-1）：组合根在 settings costTiers.enabled=true 时注入。
+    /// null（默认）= 走既有 <see cref="ModelAssigner.Assign"/> 打分路径，行为与注入前逐字节一致；
+    /// 注入后 worker 选模改走 <see cref="ModelAssigner.Decide"/> 四层判定（①长上下文 → ②缓存折扣
+    /// → ③batch → ④峰值档），未命中时回落既有打分路径。
+    /// </summary>
+    public CostTierSelectionOptions? CostTierSelection { get; set; }
 
     public DecomposeStrategy(
         ISessionService sessions,
@@ -115,21 +124,39 @@ public sealed class DecomposeStrategy : IOrchestrationStrategy
         }
 
         // ---- 2. 子任务 DAG：每节点一个 worker 调用 ----
+        // A5 双编排原语 + F-M2 收口（R2 缝合 #20，MoaOptions.OrchestrationPrimitive 已改可空）：
+        // null（默认）= 未显式配置 → PrimitiveSelectionPolicy 形态自动判定
+        // （扇出/可并行 → AgentsAsTool=基线；纯顺序链/上下文重 → Handoff）；
+        // 显式配置（含显式 AgentsAsTool，可抑制自动判定）直接生效——过渡期
+        // 「默认标记值视为未配置」的近似映射由可空字段替代，三种状态语义完备。
+        var primitive = PrimitiveSelectionPolicy.Select(
+            PrimitiveTaskShape.FromPlan(plan.Steps), _options.OrchestrationPrimitive);
+        var handoffChain = primitive.Primitive == OrchestrationPrimitive.Handoff;
         var nodes = new Dictionary<string, TaskNode>(StringComparer.Ordinal);
         var channel = Channel.CreateUnbounded<ChatEvent>();
 
+        string? handoffPreviousId = null;
         foreach (var step in plan.Steps)
         {
             var stepCapture = step;
             var strength = TaskPlanner.KindToStrength(stepCapture.Kind);
-            var assignment = _assigner.Assign(strength);
+            var assignment = ResolveWorkerAssignment(strength, userText);
+
+            // Handoff 串接：把 planner 顺序中的前一步并入依赖（链式移交）；AgentsAsTool 不变。
+            var dependsOn = stepCapture.DependsOn;
+            if (handoffChain && handoffPreviousId is not null)
+            {
+                dependsOn = dependsOn.Append(handoffPreviousId).Distinct(StringComparer.Ordinal).ToList();
+            }
+
+            handoffPreviousId = stepCapture.Id;
 
             var node = new TaskNode
             {
                 Id = stepCapture.Id,
                 Name = stepCapture.Title,
                 Description = stepCapture.Description,
-                DependsOn = stepCapture.DependsOn,
+                DependsOn = dependsOn,
             };
             node.Execute = async nodeCt =>
             {
@@ -150,7 +177,7 @@ public sealed class DecomposeStrategy : IOrchestrationStrategy
                 var outcome = await _runner.RunAsync(
                     context, assignment, StrategyRole.Worker,
                     plannerMessageId, stepCapture.Title,
-                    BuildWorkerMessages(userText, stepCapture, nodes),
+                    BuildWorkerMessages(userText, stepCapture, dependsOn, nodes),
                     stream: false, isFinal: false, sink: channel.Writer, budget, nodeCt);
 
                 if (outcome.Cancelled)
@@ -268,6 +295,40 @@ public sealed class DecomposeStrategy : IOrchestrationStrategy
         }
     }
 
+    /// <summary>
+    /// worker 选模真实接点（R2 修复 HIGH-1）：<see cref="CostTierSelection"/> 为 null（默认）
+    /// 时走既有 <see cref="ModelAssigner.Assign"/> 打分路径（现行为，字节兼容）；
+    /// 注入后从可观测信号构造 <see cref="CostRequestContext"/>，走 <see cref="ModelAssigner.Decide"/>
+    /// 四层判定，判定无结果（无候选/四层全未命中由 Decide 内部回落打分）时回落既有 Assign。
+    /// 信号口径（全部如实，宁缺勿假）：
+    /// ①层输入 token 用 TokenCounter 估算总目标文本（未知时 null，①层不触发）；
+    /// ②层 CacheFriendly 恒为 false——本编排路径不维护冻结缓存前缀（冻结前缀机制在
+    /// WorkerRunner 工具循环内部，选模点无法保证该折扣真实兑现，按保守口径不申报）；
+    /// ③层 BatchAllowed 恒为 false——请求管线无 batch 传输，按 batch 折扣选模而照常发请求会虚增成本口径；
+    /// ④层 PeakRequested 来自 settings costTiers.peakTierEnabled（组合根注入，真实④层输入；
+    /// 峰值档实际可用性仍由 B4 EffortProfile 探测裁决）。
+    /// </summary>
+    private ModelAssignment? ResolveWorkerAssignment(string strength, string userText)
+    {
+        var selection = CostTierSelection;
+        if (selection is null)
+        {
+            return _assigner.Assign(strength); // 现行为
+        }
+
+        var decision = _assigner.Decide(
+            new CostRequestContext
+            {
+                EstimatedInputTokens = userText.Length > 0 ? TokenCounter.ApproxTokens(userText) : null,
+                CacheFriendly = false,
+                BatchAllowed = false,
+                PeakRequested = selection.PeakTierEnabled,
+            },
+            strength,
+            options: selection.Options);
+        return decision.Assignment ?? _assigner.Assign(strength);
+    }
+
     /// <summary>校验 planner 计划的结构合法性；合法返回 null，否则返回可读错误。</summary>
     private static string? ValidatePlan(IReadOnlyList<PlanStep> steps)
     {
@@ -299,9 +360,9 @@ public sealed class DecomposeStrategy : IOrchestrationStrategy
         return null;
     }
 
-    /// <summary>worker 输入 = 总目标 + 本子任务描述 + 已完成依赖的产出。</summary>
+    /// <summary>worker 输入 = 总目标 + 本子任务描述 + 已完成依赖的产出（依赖列表由调用方传入：AgentsAsTool 为计划原依赖，Handoff 为串接后的链上依赖）。</summary>
     private static IReadOnlyList<AiChatMessage> BuildWorkerMessages(
-        string goal, PlanStep step, Dictionary<string, TaskNode> nodes)
+        string goal, PlanStep step, IReadOnlyList<string> dependsOn, Dictionary<string, TaskNode> nodes)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"总目标：{goal}");
@@ -312,7 +373,7 @@ public sealed class DecomposeStrategy : IOrchestrationStrategy
             sb.AppendLine($"任务说明：{step.Description}");
         }
 
-        foreach (var depId in step.DependsOn)
+        foreach (var depId in dependsOn)
         {
             if (nodes.TryGetValue(depId, out var dep) &&
                 dep.State == TaskState.Succeeded &&
@@ -354,4 +415,17 @@ public sealed class DecomposeStrategy : IOrchestrationStrategy
         MessageId = string.Empty,
         Error = error,
     };
+}
+
+/// <summary>
+/// B-SELECT 四层成本排序的生产注入载荷（R2 修复 HIGH-1）：组合根在 settings costTiers.enabled=true
+/// 时构造并注入 <see cref="DecomposeStrategy.CostTierSelection"/>；默认不注入 = 既有 Assign 打分路径。
+/// </summary>
+public sealed record CostTierSelectionOptions
+{
+    /// <summary>四层判定的阈值与价格参数（settings costTiers 节点映射；null = ModelAssigner 内部默认）。</summary>
+    public CostTierOptions? Options { get; init; }
+
+    /// <summary>④峰值档开关（settings costTiers.peakTierEnabled；④层实际可用性仍由 EffortProfile 探测裁决）。</summary>
+    public bool PeakTierEnabled { get; init; }
 }

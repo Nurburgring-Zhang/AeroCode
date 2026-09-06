@@ -53,6 +53,9 @@ public sealed class DialogPermissionBroker : IPermissionBroker
     private readonly IPermissionDialogPresenter _presenter;
     private readonly IPermissionAdvisor? _advisor;
     private readonly bool _autoApproveLowRisk;
+    private readonly bool _tightenAutoAdopt;
+    private readonly IReadOnlySet<string>? _autoAdoptWhitelist;
+    private readonly Func<bool>? _forceInteractive;
     private readonly ILogger<DialogPermissionBroker>? _logger;
     private readonly SemaphoreSlim _dialogGate = new(1, 1);
 
@@ -62,7 +65,10 @@ public sealed class DialogPermissionBroker : IPermissionBroker
         IPermissionDialogPresenter presenter,
         ILogger<DialogPermissionBroker>? logger = null,
         IPermissionAdvisor? advisor = null,
-        bool autoApproveLowRisk = false)
+        bool autoApproveLowRisk = false,
+        bool tightenAutoAdopt = false,
+        IEnumerable<string>? autoAdoptModifiedArgsWhitelist = null,
+        Func<bool>? forceInteractive = null)
     {
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _store = store ?? throw new ArgumentNullException(nameof(store));
@@ -70,6 +76,16 @@ public sealed class DialogPermissionBroker : IPermissionBroker
         _logger = logger;
         _advisor = advisor;
         _autoApproveLowRisk = autoApproveLowRisk;
+        // 批次 C 安全切片：收紧开关默认 false = 现行为逐字节一致（现状无自动采纳白名单概念，
+        // 收紧逻辑只在显式启用时生效）。白名单 = 允许"被脱敏后仍参与自动采纳判定"的参数名集合。
+        _tightenAutoAdopt = tightenAutoAdopt;
+        _autoAdoptWhitelist = autoAdoptModifiedArgsWhitelist is null
+            ? null
+            : new HashSet<string>(autoAdoptModifiedArgsWhitelist, StringComparer.Ordinal);
+        // R3 修复（S-MED-2）：熔断强制人工信号。组合根把它接到 ApprovalCircuitBreaker.IsBroken——
+        // 熔断后该信号为真，advisor risk=low 的自动放行分支被跳过，直接弹窗人工裁决，
+        // 使"连续批准限制"对自动通道真正生效（默认 null = 无信号，行为与现行为一致）。
+        _forceInteractive = forceInteractive;
     }
 
     public async ValueTask<PermissionDecision> ResolveAsync(
@@ -102,14 +118,43 @@ public sealed class DialogPermissionBroker : IPermissionBroker
                     if (advice is not null && !string.Equals(advice.Risk, "unknown", StringComparison.Ordinal))
                     {
                         advisorNote = $"AI 建议：{advice.Recommend}（风险 {advice.Risk}）— {advice.Reason}";
-                        if (_autoApproveLowRisk
+                        // R3 修复（S-MED-2）：熔断强制人工——熔断后该信号为真时，advisor risk=low
+                        // 的自动放行分支整体跳过，直接走弹窗人工裁决（advisor 建议仍随弹窗展示供参考）。
+                        var forcedInteractive = _forceInteractive?.Invoke() == true;
+                        if (forcedInteractive)
+                        {
+                            _logger?.LogWarning(
+                                "工具 '{Tool}' 触发强制人工信号（审批熔断中）：跳过 advisor 自动放行，转弹窗人工裁决",
+                                toolName);
+                        }
+                        else if (_autoApproveLowRisk
                             && string.Equals(advice.Risk, "low", StringComparison.Ordinal)
                             && !string.Equals(advice.Recommend, "deny", StringComparison.Ordinal))
                         {
+                            if (!_tightenAutoAdopt)
+                            {
+                                // 现行为（收紧开关关闭）：与既有实现逐字节一致。
+                                _logger?.LogInformation(
+                                    "工具 '{Tool}' 智能审批自动放行（risk=low，AutoApproveLowRisk）：{Reason}",
+                                    toolName, advice.Reason);
+                                return PermissionDecision.Allow;
+                            }
+
+                            // 批次 C 收紧：args 无修改 → 采纳；被脱敏 → 须全部被脱敏参数在白名单内；
+                            // 否则转既有审批路径（弹窗人工裁决）——不静默丢弃、不静默放行。
+                            var gate = AdvisorAutoAdoptGate.Evaluate(AdvisorArgsSanitizer.Sanitize(args), _autoAdoptWhitelist);
+                            if (gate.Allow)
+                            {
+                                _logger?.LogInformation(
+                                    "工具 '{Tool}' 智能审批自动放行（risk=low，AutoApproveLowRisk，收紧校验通过：{GateReason}）：{Reason}",
+                                    toolName, gate.Reason, advice.Reason);
+                                return PermissionDecision.Allow;
+                            }
+
                             _logger?.LogInformation(
-                                "工具 '{Tool}' 智能审批自动放行（risk=low，AutoApproveLowRisk）：{Reason}",
-                                toolName, advice.Reason);
-                            return PermissionDecision.Allow;
+                                "工具 '{Tool}' 自动采纳被收紧门拒绝（{GateReason}）→ 转人工审批",
+                                toolName, gate.Reason);
+                            advisorNote = $"{advisorNote}\n[自动采纳收紧] {gate.Reason}";
                         }
                     }
                 }

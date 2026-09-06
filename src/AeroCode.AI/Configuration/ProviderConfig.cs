@@ -32,6 +32,11 @@ public sealed class ProviderConfig
     public Dictionary<string, string>? ExtraHeaders { get; set; }
     /// <summary>额外 JSON 字段,合并到请求 body 根级 (provider-specific 选项如 reasoning_split=true)</summary>
     public Dictionary<string, object>? ExtraBody { get; set; }
+    /// <summary>
+    /// B6 API 版本锁 header（按 providerId 随请求头发送；值来自本配置而非硬编码密钥）。
+    /// 例如 {"anthropic-version":"2023-06-01"}。null = 现行为（provider 沿用自身默认）。
+    /// </summary>
+    public Dictionary<string, string>? ApiVersionHeaders { get; set; }
 }
 
 /// <summary>

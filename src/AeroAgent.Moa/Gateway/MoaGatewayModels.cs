@@ -39,6 +39,27 @@ public sealed record MoaGatewayExecuteRequest
 
     /// <summary>最大生成 token（1..32000）；null = 网关默认 4096。</summary>
     public int? MaxTokens { get; init; }
+
+    /// <summary>
+    /// B2/A3 前缀冻结联动：缓存断点候选（钉名 <c>CacheBreakpoints</c>）。
+    /// 元素 = 消息索引（0-based，按 Context[..] + Query 的逻辑 messages 顺序，最后一条 = Query），
+    /// 语义 = 冻结前缀边界（该索引及之前的全部消息构成可缓存前缀）。断点候选值由 Curation/A3 侧计算，
+    /// 边界值传递归缝合波次；本端只落字段。null = 现行为（序列化时省略，请求形态与基线逐字节一致）。
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<int>? CacheBreakpoints { get; init; }
+
+    /// <summary>
+    /// ⑤ effort 边界字段（R2 缝合）：峰值推理档的厂商侧 token（B-ADAPT 映射：
+    /// O=xhigh / A=extended-thinking / G=deep-think）。
+    /// <b>边界契约（如实记录）</b>：仓库内「决策→请求」链路止于本边界——moa-gateway-pro v3.1.1
+    /// <c>routes/moa.py</c> 未定义该字段（网关忽略未知 JSON 字段，不致解析失败），即字段已在
+    /// 仓库边界落位，但<b>未闭合到外部进程</b>：网关侧档位仍按 preset 自带配置执行，本字段为
+    /// 外部进程的前瞻契约（网关升级消费后即可生效），禁宣称已闭合。
+    /// null = 现行为（序列化时省略，请求形态与基线逐字节一致）。
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Effort { get; init; }
 }
 
 /// <summary>OpenAI 式消息（role + content），用于构造 execute 请求的 messages 数组。</summary>

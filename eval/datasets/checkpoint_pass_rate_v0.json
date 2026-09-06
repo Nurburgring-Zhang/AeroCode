@@ -1,0 +1,54 @@
+{
+  "$schema_note": "AeroCode Eval fixture schema v0（版本冻结，勿改写已发布任务内容；新版本走新文件/新版本戳）。顶层必填: dataset_id / metric(口径标识) / version(版本戳) / criteria(数据集级判据) / tasks[]。tasks[] 每条必填四类字段: id / metric(口径) / criteria(判据) / version(版本戳)，外加 payload(指标判题载荷)。加载器 FixtureLoader 对缺失字段 fail-fast；本文件为指标②困难题 checkpoint 通过率（checkpoint_pass_rate）。",
+  "dataset_id": "checkpoint_pass_rate_v0",
+  "metric": "checkpoint_pass_rate",
+  "version": "v0",
+  "criteria": "CritPt 式口径：困难任务分解为有序 checkpoint，模型一次作答后逐项核验；每个 checkpoint 的 detect_any 关键词在最终答案中命中任一即该项通过。指标值 = 通过的 checkpoint 数 / checkpoint 总数（跨数据集聚合）。v0 判题为确定性关键词启发式。",
+  "tasks": [
+    {
+      "id": "cp-001",
+      "metric": "checkpoint_pass_rate",
+      "criteria": "四个 checkpoint：完整方法实现 / 分治递归 / 复杂度说明 / 空数组与单元素边界；detect_any 命中任一即通过该项。",
+      "version": "v0",
+      "payload": {
+        "prompt": "用 C# 实现快速排序 QuickSort(int[] numbers)：1) 给出完整方法实现；2) 体现分治递归（如 pivot 划分）；3) 说明时间复杂度；4) 说明空数组/单元素边界的处理。",
+        "checkpoints": [
+          { "index": 1, "name": "完整方法实现", "detect_any": ["static", "public", "private", "void", "return"] },
+          { "index": 2, "name": "分治递归", "detect_any": ["递归", "Recursive", "recursive", "Pivot", "pivot", "分治"] },
+          { "index": 3, "name": "时间复杂度说明", "detect_any": ["O(n log n)", "O(nlogn)", "n log n", "O(n²)"] },
+          { "index": 4, "name": "空数组/单元素边界", "detect_any": ["空", "empty", "Empty", "Length", "length", "边界"] }
+        ]
+      }
+    },
+    {
+      "id": "cp-002",
+      "metric": "checkpoint_pass_rate",
+      "criteria": "四个 checkpoint：重试触发条件 / 退避延迟计算 / 最大重试次数 / 重试风暴防护；detect_any 命中任一即通过该项。",
+      "version": "v0",
+      "payload": {
+        "prompt": "设计一个 HTTP 客户端重试策略：1) 指出哪些情况应触发重试；2) 给出退避延迟的计算方式；3) 给出最大重试次数参数；4) 说明如何避免重试风暴。",
+        "checkpoints": [
+          { "index": 1, "name": "重试触发条件", "detect_any": ["5xx", "502", "503", "504", "超时", "timeout", "Timeout", "HttpRequestException"] },
+          { "index": 2, "name": "退避延迟计算", "detect_any": ["Delay", "delay", "退避", "backoff", "Backoff", "指数", "Math.Pow"] },
+          { "index": 3, "name": "最大重试次数", "detect_any": ["MaxRetries", "maxRetries", "Max", "max", "上限", "次数"] },
+          { "index": 4, "name": "重试风暴防护", "detect_any": ["Jitter", "jitter", "抖动", "熔断", "circuit", "Circuit", "随机"] }
+        ]
+      }
+    },
+    {
+      "id": "cp-003",
+      "metric": "checkpoint_pass_rate",
+      "criteria": "四个 checkpoint：User/Task 实体 / 分配关系 / 删除行为 / 唯一性或索引约束；detect_any 命中任一即通过该项。",
+      "version": "v0",
+      "payload": {
+        "prompt": "为多人协作待办列表设计数据模型：1) 定义 User 与 TodoTask 实体；2) 给出用户与任务的分配关系；3) 说明删除时的级联/限制行为；4) 给出唯一性或索引约束。",
+        "checkpoints": [
+          { "index": 1, "name": "实体定义", "detect_any": ["User", "user", "用户", "TodoTask", "Task"] },
+          { "index": 2, "name": "分配关系", "detect_any": ["Assign", "assign", "分配", "外键", "ForeignKey", "多对多"] },
+          { "index": 3, "name": "删除行为", "detect_any": ["Cascade", "cascade", "级联", "Restrict", "限制", "删除"] },
+          { "index": 4, "name": "唯一性/索引约束", "detect_any": ["Unique", "unique", "唯一", "Index", "索引", "约束"] }
+        ]
+      }
+    }
+  ]
+}

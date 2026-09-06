@@ -1,18 +1,27 @@
 // Copyright (c) AeroCode
-// MissionViewModel — Autonomy Mission 面板（批次 B G2-1 + G5，builder-δ）。
+// MissionViewModel — Autonomy Mission 面板（批次 B G2-1 + G5，builder-δ；F-M5 审批/恢复 UI，R3 β）。
 // 直连 MissionController 公开 API（RunAsync 返回终态 MissionRecord，轨迹在 TransitionsJson）：
 // 内核零改造——面板只消费其真实产物。轨迹投影在运行结束后按真实 JSON 渲染
 // （控制器无逐阶段事件面，运行中如实显示"执行中"，不伪造实时阶段流）。
+// F-M5 新增（默认=现行为铁律：不改变任何既有面板行为，新 UI 只在有待审批项/用户点击时出现）：
+//   审批卡：订阅 EscalationReceived（事件 → Dispatcher.UIThread）→ OverlayService 弹卡
+//           （reason 过敏感脱敏 + 凭据恒为掩码）→ 批准 = TryApproveEscalation 一次性消费；
+//   恢复入口：「恢复上次检查点」→ ResumeLatestCheckpointAsync；无候选 checkpoint 时
+//           按钮禁用（探针与控制器恢复同源：ResumePlanner fail-closed 判定）；执行中防重入。
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AeroAgent.Autonomy.Data;
 using AeroAgent.Autonomy.Mission;
+using AeroAgent.Moa.LoopGuard;
 using AeroAgent.Moa.Tools;
+using AeroAgent.Moa.Tools.Workspace;
 using AeroCode.App.Services;
+using AeroCode.App.Views;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -34,6 +43,10 @@ public partial class MissionViewModel : ObservableObject
 
     private readonly MissionController _controller;
     private readonly PresenterClarificationResponder? _clarificationResponder;
+    private readonly OverlayService? _overlay;
+    private readonly CheckpointStore? _checkpoints;
+    private readonly Action<Action> _marshalToUi;
+    private readonly Func<long?, CancellationToken, Task<MissionResumeResult>> _resumeInvoker;
     private CancellationTokenSource? _missionCts;
 
     [ObservableProperty]
@@ -53,16 +66,69 @@ public partial class MissionViewModel : ObservableObject
     [ObservableProperty]
     private string _executionSummary = string.Empty;
 
+    /// <summary>恢复命令执行中（防重入：执行中按钮禁用 + 二次点击如实拒绝）。</summary>
+    [ObservableProperty]
+    private bool _isResuming;
+
+    /// <summary>是否存在可恢复的最近检查点（探针与控制器恢复同源；null store = 可用性未知，点击后由控制器如实判定）。</summary>
+    [ObservableProperty]
+    private bool _canResumeCheckpoint;
+
+    /// <summary>恢复按钮的工具提示（探测结论/禁用原因，如实说明）。</summary>
+    [ObservableProperty]
+    private string _resumeHint = "恢复可用性未探测";
+
+    /// <summary>当前是否有待审批卡片（决策后移除）。</summary>
+    [ObservableProperty]
+    private bool _hasPendingApprovals;
+
+    /// <summary>待审批升级卡片（每项经 OverlayService 呈现；宿主未挂载时留队列，后续触发补弹）。</summary>
+    public ObservableCollection<MissionEscalationCardViewModel> PendingApprovalCards { get; } = new();
+
     public ObservableCollection<MissionTransitionItem> Transitions { get; } = new();
 
+    /// <summary>
+    /// <paramref name="overlayService"/>：审批卡片承载（null = 卡片留队列不弹，诚实降级）；
+    /// <paramref name="checkpointStore"/>：恢复可用性探针数据源（DI 未注册 = null，可用性未知）；
+    /// <paramref name="uiMarshaller"/>：升级事件 → UI 线程（默认 Avalonia Dispatcher）；
+    /// <paramref name="resumeInvoker"/>：恢复调用点（默认直连 controller.ResumeLatestCheckpointAsync；
+    /// 测试注入闸门用，产品路径零改动）。全部可选参数——DI 未注册时按默认值解析，组合根零改动。
+    /// </summary>
     public MissionViewModel(
         MissionController controller,
-        IClarificationPresenter? clarificationPresenter = null)
+        IClarificationPresenter? clarificationPresenter = null,
+        OverlayService? overlayService = null,
+        CheckpointStore? checkpointStore = null,
+        Action<Action>? uiMarshaller = null,
+        Func<long?, CancellationToken, Task<MissionResumeResult>>? resumeInvoker = null)
     {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         _clarificationResponder = clarificationPresenter is null
             ? null
             : new PresenterClarificationResponder(clarificationPresenter);
+        _overlay = overlayService;
+        _checkpoints = checkpointStore;
+        _marshalToUi = uiMarshaller ?? (action => Avalonia.Threading.Dispatcher.UIThread.Post(action));
+        _resumeInvoker = resumeInvoker ?? ((seq, ct) => _controller.ResumeLatestCheckpointAsync(seq, ct));
+
+        // F-M5：升级事件可能来自工具循环任意线程 → 统一经 UI 线程回展示逻辑；
+        // 订阅方异常不阻断受理链路（控制器侧已兜底，这里同样自容）。
+        _controller.EscalationReceived += OnEscalationReceived;
+        PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(IsRunning) || e.PropertyName == nameof(IsResuming))
+            {
+                ResumeLastCheckpointCommand.NotifyCanExecuteChanged();
+            }
+        };
+
+        // 种子化既有待审批快照（控制器可能先于 UI 受理过升级）+ 首次恢复可用性探测。
+        foreach (var pending in _controller.PendingEscalations)
+        {
+            AcceptEscalation(pending);
+        }
+
+        RefreshResumeAvailability();
     }
 
     /// <summary>启动一次任务。运行中重入被拒（同一控制器串行语义）。</summary>
@@ -108,6 +174,9 @@ public partial class MissionViewModel : ObservableObject
             IsRunning = false;
             _missionCts.Dispose();
             _missionCts = null;
+            // 运行期间可能写入 checkpoint / 受理升级：结束后刷新恢复可用性并补弹未呈现的审批卡。
+            RefreshResumeAvailability();
+            PresentPendingCards();
         }
     }
 
@@ -156,6 +225,172 @@ public partial class MissionViewModel : ObservableObject
         StatusText = record.Outcome == MissionOutcome.Succeeded
             ? "任务完成"
             : $"任务结束（{record.Outcome}）";
+        PresentPendingCards();
+        RefreshResumeAvailability();
+    }
+
+    // ============ F-M5：升级审批卡片（PendingEscalations → 卡片 → TryApproveEscalation 全链 UI 可达）============
+
+    /// <summary>升级事件入口：工具循环任意线程触发，统一经 UI 线程回展示逻辑（自容，不阻断受理链路）。</summary>
+    private void OnEscalationReceived(EscalationRequest request)
+    {
+        _marshalToUi(() =>
+        {
+            try
+            {
+                AcceptEscalation(request);
+                PresentPendingCards();
+                RefreshResumeAvailability();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"[DEGRADED] 审批卡片呈现失败（升级 {request.Id} 已在控制器待审批队列，不丢失）: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>按 Id 去重入队一张卡片（投影全程经 MissionEscalationItem：理由脱敏、凭据恒为掩码）。</summary>
+    private void AcceptEscalation(EscalationRequest request)
+    {
+        if (PendingApprovalCards.Any(c => c.Id == request.Id))
+        {
+            return;
+        }
+
+        PendingApprovalCards.Add(new MissionEscalationCardViewModel(
+            MissionEscalationItem.From(request),
+            ApproveEscalation,
+            RejectEscalation));
+        HasPendingApprovals = PendingApprovalCards.Count > 0;
+    }
+
+    /// <summary>
+    /// 呈现所有未决策卡片：先以控制器真实待审批队列重新种子（拒绝过的凭据未消费、仍在队列，
+    /// 会随本次触发再次呈现——诚实于"没有拒绝 API"的控制器语义），再逐张经 OverlayService 弹出。
+    /// </summary>
+    private void PresentPendingCards()
+    {
+        foreach (var pending in _controller.PendingEscalations)
+        {
+            AcceptEscalation(pending);
+        }
+
+        foreach (var card in PendingApprovalCards)
+        {
+            TryPresentCard(card);
+        }
+    }
+
+    /// <summary>宿主已挂载时弹卡；未挂载（MainView 未 Loaded / 宿主缺失）→ 卡片留队列，后续触发补弹。</summary>
+    private void TryPresentCard(MissionEscalationCardViewModel card)
+    {
+        if (_overlay is null || !_overlay.HasHost)
+        {
+            return;
+        }
+
+        var overlay = _overlay;
+        var border = MissionApprovalCards.Build(card, b => overlay.CloseOverlay(b));
+        _ = PresentCardAsync(border);
+    }
+
+    private async Task PresentCardAsync(Avalonia.Controls.Border border)
+    {
+        try
+        {
+            await _overlay!.ShowAsync(border);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[DEGRADED] 审批卡片呈现失败: {ex.Message}");
+        }
+
+        // ShowAsync 返回 = 覆盖层已移除（含返回键 TryCloseTop）：未决策的卡片仍留队列，
+        // 由下一次升级事件/任务结束触发补弹（不静默丢失）。
+    }
+
+    /// <summary>批准回调：真实消费一次性凭据（controller.TryApproveEscalation），结果如实可见。</summary>
+    private bool ApproveEscalation(string escalationId)
+    {
+        var approved = _controller.TryApproveEscalation(escalationId);
+        var card = PendingApprovalCards.FirstOrDefault(c => c.Id == escalationId);
+        if (card is not null)
+        {
+            PendingApprovalCards.Remove(card);
+        }
+
+        HasPendingApprovals = PendingApprovalCards.Count > 0;
+        StatusText = approved
+            ? $"✅ 升级凭据 {ShortId(escalationId)} 已批准（一次性消费）。可用「恢复上次检查点」回到最近留存状态。"
+            : $"⚠️ 升级凭据 {ShortId(escalationId)} 审批无效（不存在或已被消费，一次性语义不重放）。";
+        return approved;
+    }
+
+    /// <summary>拒绝回调：不消费凭据（凭据仍在控制器待审批队列），卡片移出展示队列。</summary>
+    private void RejectEscalation(MissionEscalationCardViewModel card)
+    {
+        PendingApprovalCards.Remove(card);
+        HasPendingApprovals = PendingApprovalCards.Count > 0;
+        StatusText = $"✕ 升级 {ShortId(card.Id)} 已拒绝：凭据未消费、仍在待审批队列（新升级或任务结束时会再次呈现）。";
+    }
+
+    private static string ShortId(string escalationId)
+        => escalationId.Length <= 12 ? escalationId : escalationId[..12];
+
+    // ============ F-M5：恢复入口（恢复按钮 → ResumeLatestCheckpointAsync 必须可达）============
+
+    /// <summary>「恢复上次检查点」：真实 ResumeLatestCheckpointAsync；执行中/任务运行中防重入。</summary>
+    [RelayCommand(CanExecute = nameof(CanResumeCheckpointNow))]
+    private async Task ResumeLastCheckpointAsync()
+    {
+        if (IsResuming)
+        {
+            return;
+        }
+
+        IsResuming = true;
+        StatusText = "正在恢复最近检查点…";
+        try
+        {
+            var result = await _resumeInvoker(null, CancellationToken.None);
+            StatusText = result.Succeeded
+                ? $"✅ {result.Summary}"
+                : $"❌ 恢复未完成：{result.Error ?? result.Summary ?? "未知原因"}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"❌ 恢复异常：{ex.Message}";
+        }
+        finally
+        {
+            IsResuming = false;
+            RefreshResumeAvailability();
+        }
+    }
+
+    private bool CanResumeCheckpointNow() => CanResumeCheckpoint && !IsResuming && !IsRunning;
+
+    /// <summary>
+    /// 恢复可用性探测（无副作用、幂等）：checkpoint 存储已注入 → 用与控制器恢复同源的
+    /// ResumePlanner fail-closed 判定（无候选 → 按钮禁用，绝不伪造可恢复）；未注入
+    ///（DI 未注册 = LoopGuard 关闭等基线场景）→ 可用性未知，保持可点，点击后由控制器
+    /// 如实返回失败结果（不虚假禁用可达路径，契约 B-APPROVAL：恢复按钮必须可达）。
+    /// </summary>
+    public void RefreshResumeAvailability()
+    {
+        if (_checkpoints is null)
+        {
+            CanResumeCheckpoint = true;
+            ResumeHint = "恢复可用性未知：checkpoint 存储未注入（点击后由控制器如实判定）";
+            return;
+        }
+
+        var has = MissionResumeProbe.HasCandidate(_checkpoints.Root);
+        CanResumeCheckpoint = has;
+        ResumeHint = has
+            ? "检测到可恢复的最近检查点"
+            : "暂无可恢复的检查点（检查点目录为空或 manifest 无效）";
     }
 
     private static string TrySummarizeExecution(string executionJson)

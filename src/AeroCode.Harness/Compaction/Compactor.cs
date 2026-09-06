@@ -95,6 +95,57 @@ public sealed class Compactor
         return new CompactionResult(true, compacted, originalTokens, compactedTokens, "Compacted");
     }
 
+    /// <summary>
+    /// 前缀感知压缩（R1 β 扩展，只加重载不改既有行为）：<paramref name="messages"/> 开头
+    /// <paramref name="frozenPrefixCount"/> 条为冻结前缀（system/tools/命中 skill 的稳定段），
+    /// 逐字逐序原样保留（prompt 缓存不受损）；压缩只作用于其后的对话区，对话区预算 =
+    /// <paramref name="maxTokens"/> − 前缀 token（对话区低于该预算时不再压缩，宁可不压也不动前缀）。
+    /// frozenPrefixCount ≤ 0 时与既有 <see cref="Compact(IReadOnlyList{ChatMessage}, int, Func{string, Task{string}}?)"/> 行为一致。
+    /// </summary>
+    public CompactionResult Compact(IReadOnlyList<ChatMessage> messages, int maxTokens, int frozenPrefixCount, Func<string, Task<string>>? summarizer = null)
+    {
+        var originalTokens = TokenCounter.ApproxTokens(messages);
+        if (!ShouldCompact(originalTokens, maxTokens))
+            return new CompactionResult(false, messages, originalTokens, originalTokens, "Below threshold");
+
+        var prefixCount = Math.Clamp(frozenPrefixCount, 0, messages.Count);
+        if (prefixCount <= 0)
+            return Compact(messages, maxTokens, summarizer);
+
+        var prefix = messages.Take(prefixCount).ToList();
+        var dialogue = messages.Skip(prefixCount).ToList();
+        var prefixTokens = TokenCounter.ApproxTokens(prefix);
+        var dialogueBudget = maxTokens - prefixTokens;
+        if (dialogue.Count == 0 || dialogueBudget <= 0 || TokenCounter.ApproxTokens(dialogue) <= dialogueBudget)
+        {
+            // 前缀占满预算或对话区本就在预算内：无安全压缩空间（不动前缀优先于强行缩减）。
+            return new CompactionResult(false, messages, originalTokens, originalTokens, "Frozen prefix consumes the budget; dialogue zone within its share");
+        }
+
+        IReadOnlyList<ChatMessage> compactedDialogue;
+        int dialogueTokens;
+        switch (_strategy)
+        {
+            case CompactionStrategy.TruncateOldest:
+                (compactedDialogue, dialogueTokens) = TruncateOldest(dialogue, dialogueBudget);
+                break;
+            case CompactionStrategy.LlmSummarize:
+                (compactedDialogue, dialogueTokens) = LlmSummarizeIfPossible(dialogue, dialogueBudget, summarizer);
+                break;
+            case CompactionStrategy.SlidingWindow:
+            default:
+                (compactedDialogue, dialogueTokens) = SlidingWindow(dialogue);
+                break;
+        }
+
+        var combined = new List<ChatMessage>(prefix.Count + compactedDialogue.Count);
+        combined.AddRange(prefix);
+        combined.AddRange(compactedDialogue);
+        var compactedTokens = prefixTokens + dialogueTokens;
+        _eventBus.Publish(new CompactionTriggeredEvent(originalTokens, compactedTokens, DateTime.UtcNow));
+        return new CompactionResult(true, combined, originalTokens, compactedTokens, "Compacted (frozen prefix preserved)");
+    }
+
     private (IReadOnlyList<ChatMessage>, int) SlidingWindow(IReadOnlyList<ChatMessage> messages)
     {
         if (messages.Count <= _keepRecentMessages)

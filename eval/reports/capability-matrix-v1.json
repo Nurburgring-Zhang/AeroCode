@@ -1,0 +1,79 @@
+{
+  "generatedAtUtc": "2026-09-04T10:01:01.7840761\u002B00:00",
+  "mode": "offline-declarative-baseline",
+  "probeDeclaration": "mode=offline-declarative-baseline: generated without gateway/network access; every cell is a declarative baseline (Missing) or a documented degradation (Downgraded). No state was fabricated as Supported.",
+  "cells": [
+    {
+      "providerId": "A",
+      "capability": "StructuredOutputs",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "A",
+      "capability": "EffortTiers",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "A",
+      "capability": "PromptCache",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "A",
+      "capability": "Batch",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "G",
+      "capability": "StructuredOutputs",
+      "state": "Downgraded",
+      "method": "documented-degradation"
+    },
+    {
+      "providerId": "G",
+      "capability": "EffortTiers",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "G",
+      "capability": "PromptCache",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "G",
+      "capability": "Batch",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "O",
+      "capability": "StructuredOutputs",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "O",
+      "capability": "EffortTiers",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "O",
+      "capability": "PromptCache",
+      "state": "Missing",
+      "method": "offline-baseline"
+    },
+    {
+      "providerId": "O",
+      "capability": "Batch",
+      "state": "Missing",
+      "method": "offline-baseline"
+    }
+  ]
+}

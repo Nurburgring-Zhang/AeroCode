@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using AeroAgent.Autonomy.Analysis;
 using AeroAgent.Autonomy.Clarification;
@@ -17,7 +19,11 @@ using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
 using AeroAgent.Moa.Aggregation;
 using AeroAgent.Moa.Assignment;
+using AeroAgent.Moa.Budget;
+using AeroAgent.Moa.Curation;
 using AeroAgent.Moa.Gateway;
+using AeroAgent.Moa.Guard;
+using AeroAgent.Moa.LoopGuard;
 using AeroAgent.Moa.Planning;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Safety;
@@ -25,6 +31,8 @@ using AeroAgent.Moa.Strategies;
 using AeroAgent.Moa.Subagent;
 using AeroAgent.Moa.Tools;
 using AeroAgent.Moa.Tools.Workspace;
+using AeroAgent.Moa.Verify;
+using AeroCode.AI.Capabilities;
 using AeroCode.AI.Embedding;
 using AeroCode.AI.Providers;
 using AeroCode.AI.Telemetry;
@@ -39,6 +47,7 @@ using AeroCode.Core.Services;
 using AeroCode.Harness;
 using AeroCode.Harness.Agents;
 using AeroCode.Harness.Compaction;
+using AeroCode.Harness.Curation;
 using AeroCode.Harness.Hooks;
 using AeroCode.Harness.Permission;
 using AeroCode.Harness.PlanMode;
@@ -143,6 +152,16 @@ public partial class App : Application
             // Fall through with default settings
         }
 
+        // R3 修复（F-MED-1）：损坏 JSON 拒载不再静默——JsonException 被 SettingsService 内部
+        // 吞掉（fail-safe 降级），拒载事实经 LastLoadError 暴露。只记「拒载事实 + 备份文件名」，
+        // 不记异常消息（JsonException 消息可能回显 JSON 内容，直接落日志有泄敏风险）。
+        if (settings.LastLoadError is not null)
+        {
+            LogToFile("WARN",
+                "Settings JSON rejected as corrupt; running with defaults. Backup: "
+                + (settings.LastCorruptBackupPath ?? "(backup failed, original file kept in place)"));
+        }
+
         sc.AddSingleton(settings);
 
         // 1b. Apply theme (before any view is rendered)
@@ -153,7 +172,27 @@ public partial class App : Application
         // 2. Build AI options + ProviderFactory (singleton)
         var aiOptions = settings.ToAiOptions();
         var loggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
-        var providerFactory = new ProviderFactory(aiOptions, loggerFactory);
+
+        // R3 修复（F-MED-1）：settings.json 拒载事实显式 WARN（与 moaoptions :238-243 / scheduler
+        // 的可观测性口径对齐）。只记「拒载 + 备份文件名」级别信息——JsonException 消息可能回显
+        // JSON 内容，绝不打原始异常消息全文；WARN 文本再过一遍 SensitiveTextScrubber 兜底。
+        if (settings.LastLoadError is not null)
+        {
+            var backupNote = settings.LastCorruptBackupPath is null
+                ? "损坏文件未能备份（原文件保留）"
+                : $"损坏文件已备份为 {settings.LastCorruptBackupPath}";
+            loggerFactory.CreateLogger("AeroCode.Settings").LogWarning(
+                "[DEGRADED] {Detail}",
+                SensitiveTextScrubber.Scrub($"settings.json 解析失败已拒载，回退默认设置；{backupNote}"));
+        }
+        // R3 缝合（δ Sδ2）：能力探测提前于 ProviderFactory 构造（构造零网络，ProbeAsync 才外呼），
+        // 以便喂入工厂——OpenAIProvider 的 O 家族 xhigh 档由此受 probe 门控（未接线时休眠透传）。
+        // 下方 B3 节注册进容器的是同一实例（R2 既有注册点保持）。
+        var capabilityProbe = new VendorCapabilityProbe(
+            id => aiOptions.Providers.FirstOrDefault(p =>
+                string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase)),
+            logger: loggerFactory.CreateLogger("AeroCode.Capabilities"));
+        var providerFactory = new ProviderFactory(aiOptions, loggerFactory, capabilityProbe: capabilityProbe);
         sc.AddSingleton(providerFactory);
         sc.AddSingleton<IProviderRegistry>(providerFactory);
         sc.AddSingleton(loggerFactory);
@@ -217,6 +256,14 @@ public partial class App : Application
 
         var moaOptionsStore = new JsonMoaOptionsStore(paths.MoaOptionsFile);
         var moaOptions = moaOptionsStore.LoadAsync().GetAwaiter().GetResult();
+        // R2 修复 MED-3：moaoptions.json 非法时 store 会静默回退默认编排选项（预算上限、角色绑定等
+        // 全部丢失）。此处对拒载事实显式 WARN（可观测，不静默）；预算上限抢救由 store 侧 TrySalvageBudgetCap 尽力保留。
+        if (moaOptionsStore.LastLoadError is not null)
+        {
+            loggerFactory.CreateLogger("AeroCode.Moa").LogWarning(
+                "[DEGRADED] moaoptions.json 解析失败（编排选项回退默认，预算上限已尽力抢救保留）：{Error}",
+                moaOptionsStore.LastLoadError);
+        }
         sc.AddSingleton(moaOptionsStore);
         sc.AddSingleton(moaOptions);
 
@@ -255,7 +302,10 @@ public partial class App : Application
             try
             {
                 advisor = new PermissionAdvisor(
-                    providerFactory.Get(settings.Current.Ai.DefaultProviderId), advisorModel);
+                    providerFactory.Get(settings.Current.Ai.DefaultProviderId), advisorModel,
+                    // R3 修复（F-MED-2）：advisor 请求内容脱敏改由开关受控——默认 false =
+                    // R3 前行为（原样序列化进 prompt）；true = 脱敏预览（敏感原文不外送判定模型）。
+                    sanitizeArgs: settings.Current.Safety.AdvisorSanitizeArgs);
             }
             catch (Exception ex)
             {
@@ -270,17 +320,27 @@ public partial class App : Application
             sc.AddSingleton<IPermissionAdvisor>(advisor);
         }
 
+        // R3 修复（S-MED-2）：breaker 在 broker 之后构造，但 broker 的强制人工信号要在
+        // 熔断后生效——先声明局部变量，闭包捕获（ResolveAsync 真正执行时 breaker 必已赋值）。
+        ApprovalCircuitBreaker? approvalBreaker = null;
         var dialogBroker = new DialogPermissionBroker(
             harnessHost.Permission, permissionStore,
             new AvaloniaPermissionDialogPresenter(),
             loggerFactory.CreateLogger<DialogPermissionBroker>(),
             advisor,
-            settings.Current.Safety.AutoApproveLowRisk);
+            settings.Current.Safety.AutoApproveLowRisk,
+            // R3 缝合（γ S-3/S-4）：自动采纳收紧（默认 false = 现行为逐字节一致）+
+            // 被脱敏参数白名单（默认空 = 被脱敏即转人工）。
+            tightenAutoAdopt: settings.Current.Safety.AutoAdoptTighten,
+            autoAdoptModifiedArgsWhitelist: settings.Current.Safety.AutoAdoptWhitelist,
+            // R3 修复（S-MED-2）：熔断后强制人工——信号为真时 advisor risk=low 也直接弹窗，
+            // 连续批准/成本熔断对自动放行通道真正生效。
+            forceInteractive: () => approvalBreaker?.IsBroken == true);
         sc.AddSingleton(dialogBroker);
 
         // B2 审批熔断（G3）：会话内连续批准/累计成本任一超限 → 强制人工弹窗。
         // 成本通道由 ChatViewModel 在轮完成时用真实 usage 计费累计（RecordCost）。
-        var approvalBreaker = new ApprovalCircuitBreaker(
+        approvalBreaker = new ApprovalCircuitBreaker(
             interactiveBroker: dialogBroker,
             autoAdoptBroker: null,
             eventBus: harnessHost.EventBus,
@@ -299,6 +359,10 @@ public partial class App : Application
         //     检查点/大输出落盘都在 AppDataPaths 根下（尊重 Android 数据根覆盖）。
         //     注册与 ChatViewModel 可选参数（默认 null）配套：未注册即如实无工作区。
         WorkspaceContext? workspace = ResolveWorkspace(settings, paths, loggerFactory);
+        // R1 缝合（#13）：checkpoint 存储单一实例——工具箱留痕与 LoopGuard 恢复 /
+        // MissionController 续跑共用。只有 loopGuard 启用时才注入 WorkerRunner/MissionController
+        //（默认关闭 = 基线不注入，行为不变）。
+        CheckpointStore? checkpointStore = null;
         var planWorkflow = workspace is null
             ? null
             : new PlanWorkflow(harnessHost.Permission, workspace.Root);
@@ -309,10 +373,9 @@ public partial class App : Application
             sc.AddSingleton(workspace);
             sc.AddSingleton(planWorkflow!);
 
-            ICheckpointTracker? checkpoints = null;
             try
             {
-                checkpoints = new CheckpointStore(Path.Combine(paths.RootDirectory, "checkpoints"));
+                checkpointStore = new CheckpointStore(Path.Combine(paths.RootDirectory, "checkpoints"));
             }
             catch (Exception ex)
             {
@@ -320,12 +383,34 @@ public partial class App : Application
                     "[DEGRADED] 检查点目录不可用，写类工具将不留检查点：{Error}", ex.Message);
             }
 
+            if (checkpointStore is not null)
+            {
+                // R3 缝合（β S1）：同一实例注册进容器——MissionViewModel 的可选构造参数
+                // checkpointStore 由此解析到与 MissionController 恢复路径同源的实例，
+                // 恢复按钮可用性探针（ResumePlanner fail-closed）与控制器恢复完全同源。
+                sc.AddSingleton(checkpointStore);
+            }
+
+            // R3 缝合（γ S-1/S-2）：run_shell 沙箱门控注入点。Enforce 映射 settings.sandbox.enforce
+            //（默认 false = 现行为逐字节一致：ShellRunner 不建沙箱直跑）；Enforce=true 时由
+            // ShellRunner 逐次创建/释放 Job Object，fail-closed 拒绝事件经 Audit 委托记 WARN 审计。
+            var sandboxAuditLogger = loggerFactory.CreateLogger("AeroCode.Sandbox");
             toolboxRegistry.Register(new WorkspaceToolbox(
                 workspace,
                 new ShellRunner(
                     workspace.Root,
                     TimeSpan.FromSeconds(settings.Current.Workspace.ShellTimeoutSeconds)),
-                checkpoints));
+                checkpointStore,
+                new ShellSandboxOptions
+                {
+                    Enforce = settings.Current.Sandbox.Enforce,
+                    Audit = msg => sandboxAuditLogger.LogWarning("[sandbox-audit] {Message}", msg),
+                }));
+            if (settings.Current.Sandbox.Enforce)
+            {
+                sandboxAuditLogger.LogInformation(
+                    "sandbox.enforce=true：run_shell 走 Job Object 沙箱（fail-closed，非 Windows/创建失败/圈入失败一律拒绝直跑）");
+            }
             toolboxRegistry.Register(new GitToolbox(new GitWorkflow(workspace.Root)));
             toolboxRegistry.Register(new PlanToolbox(planWorkflow!));
         }
@@ -428,12 +513,203 @@ public partial class App : Application
 
         // B2 子代理（规格 2.5）：ISubAgentLauncher 单例，独立会话 + 继承 ToolRouter
         // （同一策略/守卫/授权代理实例，权限显式继承）。设置节映射进 SubagentOptions。
+        // R1 缝合（#13，C-GATE）：parallelEnabled 显式下传（默认 true = 现行为，翻转只经设置层）；
+        // mission 级 token 闸门按设置装配（未启用 = GetService 返回 null = 基线行为）。
         var subagentOptions = new SubagentOptions
         {
             Enabled = settings.Current.Subagent.Enabled,
             MaxDepth = Math.Clamp(settings.Current.Subagent.MaxDepth, 1, SubAgentSpec.MaxDepth),
             MaxParallel = Math.Max(1, settings.Current.Subagent.MaxParallel),
+            ParallelEnabled = settings.Current.Subagent.ParallelEnabled,
         };
+
+        // ---- R1 缝合窗口（#13）：C-GATE / C-LOOP 接线。两能力默认全关：
+        //      不注册实例 → WorkerRunner/SubAgentRunner 的可选构造参数保持 null，
+        //      行为与基线完全一致；翻转只能经 settings.json 显式配置发生。----
+        var budgetLogger = loggerFactory.CreateLogger("AeroCode.Budget");
+        if (settings.Current.Budget.Enabled)
+        {
+            if (settings.Current.Budget.LimitTokens > 0)
+            {
+                var warningRatio = settings.Current.Budget.WarningRatio;
+                if (double.IsNaN(warningRatio) || warningRatio is <= 0 or > 1)
+                {
+                    budgetLogger.LogWarning(
+                        "[DEGRADED] budget.warningRatio={Value} 非法（须在 (0,1]），回退默认 0.8",
+                        warningRatio);
+                    warningRatio = 0.8;
+                }
+
+                var budgetGate = new TokenBudgetGate(settings.Current.Budget.LimitTokens, warningRatio);
+                budgetGate.BudgetExhausted += snap => budgetLogger.LogWarning(
+                    "token 预算耗尽（{Spent}/{Limit}）：mission 降级单 agent，在飞并行子代理将被取消",
+                    snap.SpentTokens, snap.LimitTokens);
+                sc.AddSingleton<ITokenBudgetGate>(budgetGate);
+                budgetLogger.LogInformation(
+                    "mission 级 token 预算闸门已启用（limit={Limit} tokens, warning={Ratio:P0}）",
+                    settings.Current.Budget.LimitTokens, warningRatio);
+            }
+            else
+            {
+                budgetLogger.LogWarning(
+                    "[DEGRADED] budget.enabled=true 但 limitTokens 非正，闸门未启用（行为与关闭一致）");
+            }
+        }
+        else
+        {
+            budgetLogger.LogInformation("Budget.Enabled=false，mission 级 token 预算闸门未启用（默认行为）");
+        }
+
+        HumanPauseEscalationPolicy? escalationPolicy = null;
+        if (settings.Current.LoopGuard.Enabled)
+        {
+            var loopGuardLogger = loggerFactory.CreateLogger("AeroCode.LoopGuard");
+            sc.AddSingleton(new LoopGuardOptions
+            {
+                GoalAnchoringEnabled = settings.Current.LoopGuard.GoalAnchoringEnabled,
+                MaxStrikes = Math.Max(1, settings.Current.LoopGuard.MaxStrikes),
+                CheckpointSummaryChars = Math.Max(40, settings.Current.LoopGuard.CheckpointSummaryChars),
+            });
+            sc.AddSingleton<IDeviationDetector>(new DefaultKeywordDetector(
+                settings.Current.LoopGuard.OffGoalKeywords is { Count: > 0 }
+                    ? settings.Current.LoopGuard.OffGoalKeywords
+                    : null));
+            escalationPolicy = new HumanPauseEscalationPolicy(harnessHost.EventBus);
+            sc.AddSingleton<IEscalationPolicy>(escalationPolicy);
+            if (checkpointStore is null)
+            {
+                loopGuardLogger.LogWarning(
+                    "[DEGRADED] LoopGuard.Enabled=true 但 checkpoint 存储不可用（无工作区），" +
+                    "偏离升级时不做 checkpoint 恢复（如实标注，链路不中断）");
+            }
+            // checkpointStore 非空时：LoopGuard 连续偏离的 checkpoint 恢复与锚定段摘要消费真实检查点
+            //（同一实例，容器注册已在 checkpointStore 创建处统一完成——R3 缝合 β S1）。
+
+            loopGuardLogger.LogInformation(
+                "LoopGuard 已启用（锚定={Anchor}, maxStrikes={Strikes}）；升级凭据由 MissionController 受理供人审批",
+                settings.Current.LoopGuard.GoalAnchoringEnabled,
+                Math.Max(1, settings.Current.LoopGuard.MaxStrikes));
+        }
+        else
+        {
+            loggerFactory.CreateLogger("AeroCode.LoopGuard").LogInformation(
+                "LoopGuard.Enabled=false，目标锚定与偏离升级未启用（默认行为）");
+        }
+
+        // ---- R2 缝合窗口（#20）：B3 能力探测 / B6 版本 pin·弃用监控 / B5 guardrail /
+        //      C2 critique 验证器 / B1 成本排序选项。默认值全部 = 现行为：
+        //      探测构造零网络（ProbeAsync 才外呼）；弃用监控默认关（绝不外呼）；
+        //      guardrail 默认 MarkOnly；critique 默认不注入（null = 基线）。
+        //      翻转只经 settings.json 显式配置发生。----
+        var capabilitiesLogger = loggerFactory.CreateLogger("AeroCode.Capabilities");
+
+        // B3 能力探测：实例已在 ProviderFactory 之前提前构造（R3 缝合 δ Sδ2，工厂喂同一实例）；
+        // 构造不发网络，ProbeAsync 时才外呼（fail-closed 三态）。
+        sc.AddSingleton<IVendorCapabilityProbe>(capabilityProbe);
+
+        // B6 版本 pin（ApiVersionHeaders）：无独立注入点——pin 数据随 aiOptions 进入
+        // ProviderConfig，由 ClaudeProvider/OpenAICompatibleProvider 内部经 VendorVersionPin.From 消费；
+        // 本波次已修 SettingsService 快照丢弃 pin 的真实断点（Copy() 此前不拷 ApiVersionHeaders）。
+
+        // B6 弃用监控（R3 修复 HIGH-1/S-MED-5）：真实消费点 = ExpertsStrategy 的网关
+        // execute 路径（生产可达）。外呼总闸语义：deprecation.enabled=false → 绝不外呼
+        //（与 enabled 字段自身文档一致）；deprecation.monitor 是网关路径消费开关。
+        // 双真才构造启用实例并注入 ExpertsStrategy——任一为 false → 不构造 → 执行路径
+        // 零外呼零开销（策略侧另有 monitor null/IsEnabled=false 硬门兜底）。
+        DeprecationMonitor? gatewayDeprecationMonitor = null;
+        if (settings.Current.Deprecation.Enabled && settings.Current.Deprecation.Monitor)
+        {
+            gatewayDeprecationMonitor = new DeprecationMonitor(
+                enabled: true,
+                settings.Current.Deprecation.UrlAllowlist,
+                logger: capabilitiesLogger);
+            capabilitiesLogger.LogInformation(
+                "弃用监控已启用（enabled && monitor 双真；白名单 {Count} 条；空白名单 = 即使启用也不外呼）",
+                settings.Current.Deprecation.UrlAllowlist.Count);
+        }
+        else
+        {
+            capabilitiesLogger.LogInformation(
+                "Deprecation.Enabled={Enabled}, Deprecation.Monitor={Monitor}：双真才外呼，当前不外呼（默认行为）",
+                settings.Current.Deprecation.Enabled, settings.Current.Deprecation.Monitor);
+        }
+
+        // B5 guardrail：无条件装配（默认 MarkOnly → 只标记不拦截，权限裁决行为与基线一致）；
+        // Enforce 只经 settings 翻转。R3 缝合（γ S-5）起工具段装配独立验证器
+        // ToolCallGuardrailValidator（敏感形态 + 不可逆破坏命令 finding）；MarkOnly 语义不变
+        //（finding 只标记，是否升级为拦截仍只经 guardrail.mode=Enforce 显式翻转）。
+        var guardrailLogger = loggerFactory.CreateLogger("AeroCode.Guardrail");
+        var guardrailModeRaw = settings.Current.Guardrail.Mode?.Trim() ?? string.Empty;
+        if (!string.Equals(guardrailModeRaw, "MarkOnly", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(guardrailModeRaw, "Enforce", StringComparison.OrdinalIgnoreCase))
+        {
+            guardrailLogger.LogWarning(
+                "[DEGRADED] guardrail.mode={Mode} 非法（MarkOnly|Enforce），回退 MarkOnly",
+                settings.Current.Guardrail.Mode);
+            guardrailModeRaw = "MarkOnly";
+        }
+
+        var guardrailPipeline = new GuardrailPipeline(
+            new GuardrailOptions
+            {
+                Mode = string.Equals(guardrailModeRaw, "Enforce", StringComparison.OrdinalIgnoreCase)
+                    ? GuardrailMode.Enforce
+                    : GuardrailMode.MarkOnly,
+            },
+            loggerFactory.CreateLogger<GuardrailPipeline>());
+        guardrailPipeline.AddValidator(GuardrailStage.Input, new FactAssertionValidator());
+        guardrailPipeline.AddValidator(GuardrailStage.ToolCall, new ToolCallGuardrailValidator());
+        harnessHost.Permission.GuardrailAdvisor = new GuardrailPermissionAdvisor(
+            guardrailPipeline,
+            loggerFactory.CreateLogger("AeroCode.Guardrail"));
+        guardrailLogger.LogInformation(
+            "guardrail 已装配（mode={Mode}）：输入段 FactAssertion + 工具段 tool-call（敏感形态/不可逆破坏命令 finding）；" +
+            "MarkOnly 默认只标记不拦截，Enforce 翻转只经 settings",
+            guardrailPipeline.Mode);
+        sc.AddSingleton(guardrailPipeline);
+
+        // C2 critique 校验循环（可选，默认关 = 基线）：启用且默认 provider 可用时装配 LLM 验证器；
+        // SubAgentRunner 工厂经 GetService 惰性解析（未注册 = null = 现行为）。
+        if (settings.Current.Critique.Enabled)
+        {
+            var critiqueLlm = new AutonomyLlmClient(providerFactory);
+            if (critiqueLlm.IsAvailable)
+            {
+                sc.AddSingleton<ICompletionVerifier>(new LlmCompletionVerifier(
+                    critiqueLlm, loggerFactory.CreateLogger("AeroCode.Critique")));
+                sc.AddSingleton(new CritiqueLoopOptions
+                {
+                    MaxCritiqueRounds = Math.Clamp(settings.Current.Critique.MaxCritiqueRounds, 1, 2),
+                });
+                loggerFactory.CreateLogger("AeroCode.Critique").LogInformation(
+                    "critique 校验循环已启用（≤{Rounds} 轮，判定不信自报）",
+                    Math.Clamp(settings.Current.Critique.MaxCritiqueRounds, 1, 2));
+            }
+            else
+            {
+                loggerFactory.CreateLogger("AeroCode.Critique").LogWarning(
+                    "[DEGRADED] critique.enabled=true 但无可用 provider，完成判定未启用（行为与关闭一致）");
+            }
+        }
+        else
+        {
+            loggerFactory.CreateLogger("AeroCode.Critique").LogInformation(
+                "Critique.Enabled=false，完成判定未启用（默认行为）");
+        }
+
+        // B1 成本排序选项（可配置数据，DI 载体）：B1 四层判定为纯函数。R2 修复 HIGH-1 起，
+        // settings costTiers.enabled=true 时经 ApplyR2Wave 把本选项注入 DecomposeStrategy 的
+        // 真实 worker 选模点（ModelAssigner.Decide 四层判定）；默认 false = 既有 Assign 打分路径
+        //（现行为，请求形态不变）。进入生产请求面的开关另有
+        // effort.enabled（→ 峰值档裁决）与 costTiers.cacheBreakpointsEnabled（→ 缓存断点），
+        // 均由 ApplyR2Wave 装配。
+        sc.AddSingleton(new CostTierOptions
+        {
+            LongContextTokenThreshold = settings.Current.CostTiers.LongContextTokenThreshold ?? 100_000,
+            BatchDiscountMultiplier = settings.Current.CostTiers.BatchDiscountMultiplier ?? 0.5,
+            PeakPremiumMultiplier = settings.Current.CostTiers.PeakPremiumMultiplier ?? 1.0,
+        });
+
         sc.AddSingleton<ISubAgentLauncher>(sp => new SubAgentRunner(
             sp.GetRequiredService<ISessionService>(),
             providerFactory,
@@ -441,7 +717,10 @@ public partial class App : Application
             harnessHost.EventBus,
             subagentOptions,
             toolRouter,
-            loggerFactory.CreateLogger<SubAgentRunner>()));
+            loggerFactory.CreateLogger<SubAgentRunner>(),
+            sp.GetService<ITokenBudgetGate>(),
+            sp.GetService<ICompletionVerifier>(),    // R2 C2：critique 启用才有实现（null = 基线）
+            sp.GetService<CritiqueLoopOptions>()));  // R2 C2：轮数上限（null = 默认 ≤2 轮 + AcceptWithFindings）
 
         // B2 会话级组件：Steer 插话队列（G3 消费点在 ChatOrchestrationFacade）+ Todo 持久化
         //（短生命周期 DbContext 工厂——与 SessionService 的互斥锁模型解并发竞争）。
@@ -469,8 +748,18 @@ public partial class App : Application
         // B2 G2-2 专家团策略：真实调 moa-gateway-pro（MOA_GATEWAY_URL/MOA_GATEWAY_KEY
         // 环境变量约定，与官方 CLI 一致）；网关不可达时诚实失败（不静默回退）。
         sc.AddSingleton(new MoaGatewayClient(MoaGatewayClientOptions.FromEnvironment()));
-        sc.AddSingleton<IOrchestrationStrategy, ExpertsStrategy>();
+        // R3 修复（HIGH-1/S-MED-5）：专家团策略是生产可达的网关执行路径——MarkOnly
+        // 弃用监控经此注入（双真门控的 monitor 实例在 B6 节构造；未启用 = null = 零开销）。
+        sc.AddSingleton<IOrchestrationStrategy>(sp => new ExpertsStrategy(
+            sp.GetRequiredService<MoaGatewayClient>(),
+            sp.GetRequiredService<ISessionService>(),
+            loggerFactory.CreateLogger<ExpertsStrategy>(),
+            gatewayDeprecationMonitor));
         sc.AddSingleton<IChatOrchestrationFacade, ChatOrchestrationFacade>();
+        // 注：GatewayOrchestrationFacade 不再注册进容器（R3 修复 HIGH-1）——生产聊天走
+        // ChatOrchestrationFacade/ExpertsStrategy，门面此前「注册无人消费」；其 MarkOnly
+        // 弃用检查能力保留为库内可测试组件（测试覆盖），消费点移至 ExpertsStrategy。
+
         sc.AddSingleton<ChatViewModel>();
 
         // ---- B2 G2-1 Mission 控制器接线（内核零改造，只装配其既有依赖）----
@@ -499,7 +788,9 @@ public partial class App : Application
             new ExperienceInjector(missionStore),
             autonomyLlm,
             autonomyPaths,
-            loggerFactory.CreateLogger<MissionController>()));
+            loggerFactory.CreateLogger<MissionController>(),
+            escalationPolicy,   // R1 C-LOOP：升级凭据受理订阅（null = 不订阅，基线行为）
+            checkpointStore));  // R1 C-RESUME：恢复路径（null = 恢复不可用，诚实降级）
         sc.AddSingleton<MissionViewModel>();
 
         // ---- B2 G2-3 会话记忆：学习库（四型沉淀的真实存储）+ 召回/沉淀服务 ----
@@ -546,16 +837,10 @@ public partial class App : Application
                 "agents 目录不存在，跳过声明式 agent 加载（{Dir}）", agentsRoot);
         }
 
-        // ---- B2 G4 WindowsJobSandbox：ShellRunner 构造无沙箱参数（builder 所有权约束，
-        //      不碰其文件）→ 无法在不改动 ShellRunner 的前提下真实挂接。诚实处置：
-        //      注册单例工厂（惰性，解析即真实创建 Job Object）+ 启动日志记录待挂接状态，
-        //      绝不伪造挂接。详见 batchB_delta_report.md。
-        sc.AddSingleton(_ => new WindowsJobSandbox(
-            processMemoryLimitBytes: 1L << 30,
-            maxActiveProcesses: 32));
-        loggerFactory.CreateLogger("AeroCode.Sandbox").LogWarning(
-            "[DEGRADED] WindowsJobSandbox 已注册但未挂接：ShellRunner 构造签名无沙箱参数，" +
-            "run_shell 仍走 ShellRunner 原生路径（不伪造挂接）");
+        // ---- B2 G4 WindowsJobSandbox 退役（R3 缝合 γ S-6）：批次 B 曾在此注册单例工厂并
+        //      标「[DEGRADED] 已注册但未挂接」。批次 C 起沙箱生命周期由 ShellRunner 逐次管理
+        //      （ShellSandboxOptions.Enforce=true 时按次创建/Dispose，fail-closed），
+        //      该单例不再是挂接路径，移除以免双源歧义。----
 
         // 4. Core services
         sc.AddSingleton<ITagService, TagService>();
@@ -585,9 +870,262 @@ public partial class App : Application
         sc.AddSingleton<MainWindow>();
 
         var serviceProvider = sc.BuildServiceProvider(validateScopes: false);
+        ApplyContextCuration(serviceProvider, settings, providerFactory, loggerFactory);
+        ApplyR2Wave(serviceProvider, settings, loggerFactory);
         RegisterToolboxes(serviceProvider, settings, loggerFactory);
         ApplyPersistedPermissions(serviceProvider, loggerFactory);
         return serviceProvider;
+    }
+
+    /// <summary>
+    /// R1 缝合（#13，C-CURATE）：启用策展设置时构造真实 <see cref="ContextCurator"/> 并绑定到
+    /// WorkerRunner 单例的 Curator 注入点（β 契约的唯一 settable 注入点；null = 不策展 = 基线）。
+    /// 可选 LLM 摘要：useLlmSummary 且默认 provider 可用 → ContextCuratorLlmAdapter 桥接
+    /// （输出统一敏感形态过滤 + 长度封顶）；不可用 → 确定性模板降级并记 WARN，绝不阻塞启动。
+    /// </summary>
+    private static void ApplyContextCuration(
+        ServiceProvider services,
+        SettingsService settings,
+        IProviderRegistry providerRegistry,
+        ILoggerFactory loggerFactory)
+    {
+        var logger = loggerFactory.CreateLogger("AeroCode.Curation");
+        var curation = settings.Current.Curation;
+        if (!curation.Enabled)
+        {
+            logger.LogInformation("Curation.Enabled=false，上下文策展未启用（默认行为）");
+            return;
+        }
+
+        CurationSummarizer? summarizer = null;
+        if (curation.UseLlmSummary)
+        {
+            var summaryLlm = new AutonomyLlmClient(providerRegistry);
+            if (summaryLlm.IsAvailable)
+            {
+                var adapter = new ContextCuratorLlmAdapter(
+                    async (text, ct) =>
+                    {
+                        var completion = await summaryLlm.CompleteAsync(
+                            "把对话历史压缩为不超过 200 字的进展摘要：保留关键事实、结论与未完成项，不要输出其他内容。",
+                            text, temperature: 0.2, ct).ConfigureAwait(false);
+                        return completion?.Content ?? string.Empty;
+                    },
+                    maxOutputChars: 400);
+                // Func<string,Task<string>> 与 CurationSummarizer 是不同委托类型，需经 lambda 适配。
+                summarizer = text => adapter.Summarize(text);
+            }
+            else
+            {
+                logger.LogWarning(
+                    "[DEGRADED] curation.useLlmSummary=true 但无可用 provider，LLM 摘要降级为确定性模板（策展仍可用）");
+            }
+        }
+
+        var curator = new ContextCurator(new CurationOptions
+        {
+            WatermarkThresholdTokens = curation.WatermarkThresholdTokens,
+            KeepRecentMessages = Math.Max(1, curation.KeepRecentMessages),
+            MaxStateBlockChars = Math.Max(64, curation.MaxStateBlockChars),
+            Summarizer = summarizer,
+        });
+        services.GetRequiredService<WorkerRunner>().Curator = curator;
+        logger.LogInformation(
+            "上下文策展已启用并绑定 WorkerRunner（水位 {Threshold} tokens，保留最近 {Keep} 条，LLM 摘要={Llm}）",
+            curation.WatermarkThresholdTokens, curation.KeepRecentMessages,
+            summarizer is not null ? "启用" : "关闭（确定性模板）");
+    }
+
+    /// <summary>
+    /// R2 缝合（#20，⑤⑥）：把进入生产请求面的 R2 开关绑定到 WorkerRunner 单例的 settable
+    /// 注入点（Curator 同款模式；默认全关 = 请求与基线逐字节一致）。
+    /// ⑤ effort：settings.effort.enabled → PeakEffortProfile（探测 fail-closed，Peak 命中才发射
+    /// 厂商 token；未注入 probe / Standard 档不发射任何字段）。
+    /// ⑥ 缓存断点：costTiers.cacheBreakpointsEnabled → 工具循环冻结前缀边界写入
+    /// ChatRequest.CacheBreakpoints（0-based，断点 = 最后一条冻结 system 消息）。
+    /// </summary>
+    private static void ApplyR2Wave(
+        ServiceProvider services,
+        SettingsService settings,
+        ILoggerFactory loggerFactory)
+    {
+        var logger = loggerFactory.CreateLogger("AeroCode.R2");
+        var worker = services.GetRequiredService<WorkerRunner>();
+
+        worker.CacheBreakpointsEnabled = settings.Current.CostTiers.CacheBreakpointsEnabled;
+        if (settings.Current.CostTiers.CacheBreakpointsEnabled)
+        {
+            logger.LogInformation(
+                "缓存断点传递已启用：工具循环冻结前缀边界 → ChatRequest.CacheBreakpoints（0-based）");
+        }
+
+        if (settings.Current.Effort.Enabled)
+        {
+            var probe = services.GetService<IVendorCapabilityProbe>();
+            if (probe is not null)
+            {
+                worker.PeakEffortProfile = new EffortProfile(probe);
+                worker.PeakEffortRequested = true;
+                logger.LogInformation(
+                    "effort 峰值档已启用：档位经能力探测 fail-closed 裁决（Standard 档不发射任何字段，请求与基线一致）");
+            }
+            else
+            {
+                logger.LogWarning(
+                    "[DEGRADED] effort.enabled=true 但能力探测不可用，峰值档未装配（请求与基线一致）");
+            }
+        }
+        else
+        {
+            logger.LogInformation(
+                "Effort.Enabled=false，effort 峰值档未启用（默认行为，不发射任何字段）");
+        }
+
+        // ---- R2 修复 HIGH-1：settings costTiers.enabled=true 时把 B1 四层成本排序接入
+        // DecomposeStrategy 的真实 worker 选模点（ModelAssigner.Decide）；默认 false = 不注入，
+        // 选模走既有 Assign 打分路径（现行为）。costTiers.peakTierEnabled 作为④层真实输入传递
+        //（④层实际可用性仍由 effort 探测裁决）。----
+        if (settings.Current.CostTiers.Enabled)
+        {
+            var decompose = services.GetServices<IOrchestrationStrategy>()
+                .OfType<DecomposeStrategy>()
+                .FirstOrDefault();
+            if (decompose is not null)
+            {
+                decompose.CostTierSelection = new CostTierSelectionOptions
+                {
+                    Options = services.GetRequiredService<CostTierOptions>(),
+                    PeakTierEnabled = settings.Current.CostTiers.PeakTierEnabled,
+                };
+                logger.LogInformation(
+                    "B1 成本排序已接入 DecomposeStrategy worker 选模点（四层判定，peakTierEnabled={PeakTier}）",
+                    settings.Current.CostTiers.PeakTierEnabled);
+            }
+            else
+            {
+                logger.LogWarning(
+                    "[DEGRADED] costTiers.enabled=true 但 DecomposeStrategy 不可用，worker 选模保持既有打分路径");
+            }
+        }
+
+        // ---- R2 修复 MED-5：C2 critique 钩子接进 WorkerRunner（组合根只在 critique.enabled=true
+        // 且验证器可用时注册 ICompletionVerifier/CritiqueLoopOptions——未注册 = null = 现行为）。
+        // 工具循环最终答复经独立 critique（判定不信自报，≤2 轮有界重试）。----
+        worker.CompletionVerifier = services.GetService<ICompletionVerifier>();
+        worker.CritiqueOptions = services.GetService<CritiqueLoopOptions>();
+        if (worker.CompletionVerifier is not null)
+        {
+            logger.LogInformation(
+                "C2 critique 已接入 WorkerRunner（判定不信自报，有界重试）");
+        }
+
+        // ---- R2 修复 MED-4：B5 输入/输出段 guardrail 接进 WorkerRunner（注入才生效，null = 现行为）。
+        // 发现仅记录 + WARN（MarkOnly 语义，不阻断、不改变流程走向）；工具段经
+        // GuardrailPermissionAdvisor → PermissionPolicy 挂点（上方既有装配）。----
+        worker.Guardrail = services.GetService<GuardrailPipeline>();
+    }
+
+    /// <summary>
+    /// R2 缝合（#20，C2）：组合根内建的 LLM 完成判定验证器（γ 契约的默认实现；可选装配，
+    /// critique.enabled=false = 不注册 = 现行为）。判定不信自报：任务目标、产出与独立佐证
+    /// 一并交给默认 provider 裁决，产出须为 JSON {"accepted":bool,"reason":string,"feedback":string}；
+    /// 无产出/解析失败 = Reject（诚实有界收敛：不冒充通过；重试轮真实用量由 CritiqueLoop
+    /// 调用方逐轮核算）。文本过敏感形态过滤（安全硬门 #4）。
+    /// </summary>
+    private sealed class LlmCompletionVerifier : ICompletionVerifier
+    {
+        private const int MaxEvidenceItems = 5;
+        private const int MaxFeedbackChars = 500;
+        private readonly AutonomyLlmClient _llm;
+        private readonly ILogger _logger;
+
+        public LlmCompletionVerifier(AutonomyLlmClient llm, ILogger logger)
+        {
+            _llm = llm;
+            _logger = logger;
+        }
+
+        public async ValueTask<CompletionVerdict> VerifyAsync(
+            CompletionVerificationRequest request, CancellationToken cancellationToken)
+        {
+            var evidence = request.Evidence is { Count: > 0 }
+                ? string.Join("\n---\n", request.Evidence.Take(MaxEvidenceItems))
+                : "（无独立佐证）";
+            var prompt =
+                "判断下面的「产出」是否完成了「任务目标」。判定必须基于独立佐证，不信产出自报。" +
+                "只输出 JSON：{\"accepted\":true|false,\"reason\":\"…\",\"feedback\":\"…\"}。" +
+                $"\n[任务目标]\n{request.TaskGoal}" +
+                $"\n[产出]\n{SensitiveTextScrubber.Scrub(request.Output)}" +
+                $"\n[独立佐证]\n{SensitiveTextScrubber.Scrub(evidence)}";
+            try
+            {
+                var completion = await _llm.CompleteAsync(
+                    "你是严格的完成判定审查员，只输出 JSON。",
+                    prompt,
+                    temperature: 0.0,
+                    cancellationToken).ConfigureAwait(false);
+                var text = completion?.Content;
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    return CompletionVerdict.Reject("验证器无产出（诚实拒绝，不冒充通过）");
+                }
+
+                var json = ExtractJsonObject(text);
+                if (json is null)
+                {
+                    return CompletionVerdict.Reject(
+                        "验证器输出无法解析为 JSON（诚实拒绝，不冒充通过）",
+                        Truncate(SensitiveTextScrubber.Scrub(text)));
+                }
+
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                var accepted = root.TryGetProperty("accepted", out var a) && a.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.String => string.Equals(a.GetString(), "true", StringComparison.OrdinalIgnoreCase),
+                    _ => false,
+                };
+                var reason = root.TryGetProperty("reason", out var r) && r.ValueKind == JsonValueKind.String
+                    ? SensitiveTextScrubber.Scrub(r.GetString() ?? string.Empty)
+                    : null;
+                if (accepted)
+                {
+                    return CompletionVerdict.Accept(string.IsNullOrWhiteSpace(reason) ? null : reason);
+                }
+
+                var feedback = root.TryGetProperty("feedback", out var f) && f.ValueKind == JsonValueKind.String
+                    ? SensitiveTextScrubber.Scrub(f.GetString() ?? string.Empty)
+                    : reason;
+                return CompletionVerdict.Reject(
+                    string.IsNullOrWhiteSpace(reason) ? "critique 未通过" : reason,
+                    string.IsNullOrWhiteSpace(feedback) ? null : feedback);
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // 取消不吞。
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    "[DEGRADED] critique 验证器调用失败，按拒绝收敛（不冒充通过）：{Error}", ex.Message);
+                return CompletionVerdict.Reject(
+                    "验证器调用失败（诚实拒绝，不冒充通过）",
+                    Truncate(SensitiveTextScrubber.Scrub(ex.Message)));
+            }
+        }
+
+        private static string? ExtractJsonObject(string text)
+        {
+            var start = text.IndexOf('{');
+            var end = text.LastIndexOf('}');
+            return start >= 0 && end > start ? text[start..(end + 1)] : null;
+        }
+
+        private static string? Truncate(string text) =>
+            string.IsNullOrEmpty(text) ? null
+                : text.Length <= MaxFeedbackChars ? text
+                : text[..MaxFeedbackChars] + "…";
     }
 
     /// <summary>

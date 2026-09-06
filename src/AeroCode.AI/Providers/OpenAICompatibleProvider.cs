@@ -28,18 +28,22 @@ public abstract class OpenAICompatibleProvider : IAiProvider
     protected readonly ILogger Logger;
     protected readonly AiResiliencePipeline? Resilience;
 
+    /// <summary>R3-δ：可选能力探测（null = 现行为，xhigh 不做 probe 门控）。</summary>
+    private readonly Capabilities.IVendorCapabilityProbe? _capabilityProbe;
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    protected OpenAICompatibleProvider(HttpClient http, ProviderConfig config, ILogger logger, AiResiliencePipeline? resilience = null)
+    protected OpenAICompatibleProvider(HttpClient http, ProviderConfig config, ILogger logger, AiResiliencePipeline? resilience = null, Capabilities.IVendorCapabilityProbe? capabilityProbe = null)
     {
         Http = http;
         Config = config;
         Logger = logger;
         Resilience = resilience;
+        _capabilityProbe = capabilityProbe;
         if (config.RequiresApiKey && string.IsNullOrWhiteSpace(config.ApiKeyEnvVar))
             Logger.LogWarning("Provider {Id}: RequiresApiKey=true but ApiKeyEnvVar is empty", config.Id);
         if (config.TimeoutSeconds > 0) http.Timeout = TimeSpan.FromSeconds(config.TimeoutSeconds);
@@ -139,7 +143,9 @@ public abstract class OpenAICompatibleProvider : IAiProvider
 
     public virtual async Task<ChatResponse> ChatAsync(ChatRequest request, CancellationToken ct = default)
     {
-        var body = BuildRequestBody(request);
+        // R3-δ：xhigh probe 门控（可选链路；probe 未注入 = 请求原样透传，行为与基线一致）。
+        var effectiveRequest = await ApplyProbeGatedXHighAsync(request, ct).ConfigureAwait(false);
+        var body = BuildRequestBody(effectiveRequest);
         var json = JsonSerializer.Serialize(body, JsonOpts);
         // Use resilience pipeline if available (retry + circuit breaker + rate limit).
         if (Resilience is null)
@@ -173,6 +179,62 @@ public abstract class OpenAICompatibleProvider : IAiProvider
             throw new AiProviderException(ProviderId, 504, $"timeout: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// R3-δ（可选链路）：O 家族 xhigh probe-gated 发射。仅当注入了 <see cref="Capabilities.IVendorCapabilityProbe"/>
+    /// 且请求显式携带峰值档 token "xhigh" 时生效——probe 证实该端点 EffortTiers（Supported/Downgraded）
+    /// 才在 wire 层发射 reasoning_effort=xhigh；探测 Missing（离线/未证实/失败，fail-closed）→ 回落基线档
+    /// "high"（维持现行为的请求形态，绝不发射未证实的 xhigh）。probe 未注入（null = 现行为）或
+    /// effort 值非 "xhigh" 时请求逐字节透传（R2 钉死的 reasoning_effort 发射点不变）。
+    /// </summary>
+    private async Task<ChatRequest> ApplyProbeGatedXHighAsync(ChatRequest request, CancellationToken ct)
+    {
+        var probe = _capabilityProbe;
+        if (probe is null || !string.Equals(request.ThinkingEffort, "xhigh", StringComparison.Ordinal))
+        {
+            return request;
+        }
+
+        try
+        {
+            var state = await probe.ProbeAsync(Config.Id, Capabilities.VendorCapability.EffortTiers, ct).ConfigureAwait(false);
+            if (state != Capabilities.VendorCapabilityState.Missing)
+            {
+                return request; // probe 证实（Supported/Downgraded）：按请求发射 xhigh。
+            }
+
+            Logger.LogInformation(
+                "Provider {Id}: xhigh effort not verified by capability probe (Missing, fail-closed); falling back to baseline \"high\"",
+                Config.Id);
+            return CloneWithBaselineEffort(request);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 调用方取消如实上抛（内建 probe 不会抛，此为对探测实现的兜底契约）。
+        }
+        catch (Exception ex)
+        {
+            // 探测通道故障一律 fail-closed：绝不发射未证实的 xhigh，回落基线档。
+            Logger.LogWarning(
+                "Provider {Id}: capability probe failed during xhigh gating ({Error}); falling back to baseline \"high\" (fail-closed)",
+                Config.Id, ex.GetType().Name);
+            return CloneWithBaselineEffort(request);
+        }
+    }
+
+    /// <summary>浅拷贝请求并把 ThinkingEffort 落回基线档 "high"（其余字段原样，请求形态 = 基线 high 请求）。</summary>
+    private static ChatRequest CloneWithBaselineEffort(ChatRequest request) => new()
+    {
+        Model = request.Model,
+        Messages = request.Messages,
+        Tools = request.Tools,
+        Temperature = request.Temperature,
+        MaxTokens = request.MaxTokens,
+        Stream = request.Stream,
+        EnableThinking = request.EnableThinking,
+        ThinkingEffort = "high",
+        CacheBreakpoints = request.CacheBreakpoints,
+    };
 
     private async Task<ChatResponse> SendOnceAsync(string json, CancellationToken ct)
     {
@@ -269,6 +331,13 @@ public abstract class OpenAICompatibleProvider : IAiProvider
         var httpReq = new HttpRequestMessage(HttpMethod.Post, url);
         if (ResolveApiKey() is { Length: > 0 } apiKey) httpReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         ConfigureRequestHeaders(httpReq.Headers);
+        // B6 版本 pinning：API 版本锁 header 值来自 ProviderConfig.ApiVersionHeaders（配置而非硬编码）；
+        // 未配置（null）= 现行为（无额外 header）。置于 ExtraHeaders 之后，与既有自定义头合并。
+        var pin = Capabilities.VendorVersionPin.From(Config);
+        if (pin is not null)
+        {
+            foreach (var kv in pin.Headers) httpReq.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
+        }
         httpReq.Content = new StringContent(json, Encoding.UTF8, "application/json");
         if (stream) httpReq.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
         return httpReq;
@@ -353,6 +422,15 @@ public abstract class OpenAICompatibleProvider : IAiProvider
         int c = uEl.TryGetProperty("completion_tokens", out var cEl) ? cEl.GetInt32() : 0;
         int t = uEl.TryGetProperty("total_tokens", out var tEl) ? tEl.GetInt32() : p + c;
         int? cached = uEl.TryGetProperty("prompt_cache_hit_tokens", out var caEl) ? caEl.GetInt32() : null;
+        // B2 缓存适配（OpenAI 官方形态）：implicit prompt caching 命中数在
+        // usage.prompt_tokens_details.cached_tokens（DeepSeek 用 prompt_cache_hit_tokens）。
+        // 仅在前者缺位时补读，不改变既有解析结果。
+        if (cached is null && uEl.TryGetProperty("prompt_tokens_details", out var ptdEl) &&
+            ptdEl.ValueKind == JsonValueKind.Object &&
+            ptdEl.TryGetProperty("cached_tokens", out var ctEl) && ctEl.ValueKind == JsonValueKind.Number)
+        {
+            cached = ctEl.GetInt32();
+        }
         int? reasoning = null;
         if (uEl.TryGetProperty("completion_tokens_details", out var dEl) &&
             dEl.TryGetProperty("reasoning_tokens", out var rEl))

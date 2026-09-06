@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,6 +14,9 @@ using AeroAgent.Autonomy.Llm;
 using AeroAgent.Autonomy.Retrospective;
 using AeroAgent.Autonomy.Steelman;
 using AeroAgent.Conversation.Models;
+using AeroAgent.Moa.LoopGuard;
+using AeroAgent.Moa.Tools.Workspace;
+using AeroCode.Harness.Curation;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -40,6 +46,11 @@ public sealed class MissionController
     private readonly AutonomyLlmClient _llm;
     private readonly AutonomyDataPaths _paths;
     private readonly ILogger<MissionController> _logger;
+    private readonly IEscalationPolicy? _escalationPolicy;
+    private readonly CheckpointStore? _checkpoints;
+    private readonly ResumePlanner? _resumePlanner;
+    private readonly ConcurrentDictionary<string, EscalationRequest> _pendingEscalations = new();
+    private int _escalationCount;
 
     public MissionController(
         TaskAnalyzer analyzer,
@@ -52,7 +63,9 @@ public sealed class MissionController
         ExperienceInjector experience,
         AutonomyLlmClient llm,
         AutonomyDataPaths paths,
-        ILogger<MissionController>? logger = null)
+        ILogger<MissionController>? logger = null,
+        IEscalationPolicy? escalationPolicy = null,
+        CheckpointStore? checkpoints = null)
     {
         _analyzer = analyzer ?? throw new ArgumentNullException(nameof(analyzer));
         _strategySelector = strategySelector ?? throw new ArgumentNullException(nameof(strategySelector));
@@ -65,10 +78,142 @@ public sealed class MissionController
         _llm = llm ?? throw new ArgumentNullException(nameof(llm));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? NullLogger<MissionController>.Instance;
+        _escalationPolicy = escalationPolicy;
+        _checkpoints = checkpoints;
+        _resumePlanner = checkpoints is null ? null : new ResumePlanner(checkpoints.Root);
+        if (_escalationPolicy is not null)
+        {
+            // C-LOOP 接线（R1 缝合 #13）：订阅一次性审批凭据。凭据只在人显式审批时消费
+            //（TryApproveEscalation → TryConsume 一次性语义）；本类绝不自动代批、绝不重复消费。
+            _escalationPolicy.EscalationRaised += OnEscalationRaised;
+        }
+    }
+
+    /// <summary>偏离升级受理事件（UI/观测可订阅；订阅方异常不影响受理链路）。</summary>
+    public event Action<EscalationRequest>? EscalationReceived;
+
+    /// <summary>待人工审批的升级请求快照（Id → 一次性凭据；顺序不保证）。</summary>
+    public IReadOnlyList<EscalationRequest> PendingEscalations => _pendingEscalations.Values.ToArray();
+
+    /// <summary>累计受理的升级请求数（诊断）。</summary>
+    public int EscalationCount => Volatile.Read(ref _escalationCount);
+
+    /// <summary>
+    /// 升级凭据受理（C-LOOP）：入队留痕 + 转发观测事件 + 日志可见。
+    /// 任务的「暂停」由上游升级决定（PauseForHuman → 工具循环诚实终止）承载，
+    /// 本类负责把凭据真实保存到人可审批的位置，绝不自动代批。
+    /// </summary>
+    private void OnEscalationRaised(EscalationRequest request)
+    {
+        _pendingEscalations[request.Id] = request;
+        Interlocked.Increment(ref _escalationCount);
+        // S-L2（硬门约定）：Reason 进入日志前过既有敏感形态脱敏器（复用 SensitiveTextScrubber，
+        // 不新造第二套）——升级理由可能拼接自模型/工具输出，凭据形态不得原样入日志。
+        _logger.LogWarning(
+            "任务升级待人工审批：id={EscalationId} turn={Turn} strikes={Strikes} reason={Reason}（凭据一次性，待审批）",
+            request.Id, request.Turn, request.Strikes, SensitiveTextScrubber.Scrub(request.Reason));
+        try
+        {
+            EscalationReceived?.Invoke(request);
+        }
+        catch
+        {
+            // 订阅方（UI）异常不阻断升级受理链路。
+        }
+    }
+
+    /// <summary>
+    /// 人工审批一次升级请求（一次性消费语义的显式消费点）：凭据
+    /// <see cref="EscalationRequest.TryConsume"/> 首次消费返回 true 并移出待审批队列；
+    /// 已消费/不存在 → false（不重复消费、不伪造成功）。本方法只消费凭据，
+    /// 不代批任务语义；后续恢复由人显式调用 <see cref="ResumeLatestCheckpointAsync"/>。
+    /// </summary>
+    public bool TryApproveEscalation(string escalationId)
+    {
+        if (string.IsNullOrWhiteSpace(escalationId))
+        {
+            return false;
+        }
+
+        if (!_pendingEscalations.TryGetValue(escalationId, out var request))
+        {
+            _logger.LogWarning("升级审批被拒：凭据 {EscalationId} 不存在或已移出待审批队列", escalationId);
+            return false;
+        }
+
+        if (!request.TryConsume())
+        {
+            _pendingEscalations.TryRemove(escalationId, out _);
+            _logger.LogWarning("升级审批被拒：凭据 {EscalationId} 已被消费（一次性语义，不可重放）", escalationId);
+            return false;
+        }
+
+        _pendingEscalations.TryRemove(escalationId, out _);
+        _logger.LogInformation("升级凭据 {EscalationId} 已被人审批消费（一次性）", escalationId);
+        return true;
+    }
+
+    /// <summary>
+    /// C-RESUME 恢复路径（R1 缝合 #13）：用 <see cref="ResumePlanner"/> 构建最近有效
+    /// checkpoint 的续跑计划（fail-closed），再重放该 checkpoint（CheckpointStore.Restore）。
+    /// 未接线 checkpoint 存储 / 无有效 checkpoint / 重放失败均如实返回失败结果——
+    /// 可见、不抛出、不阻断调用方；恢复动作只依据显式计划，不伪造恢复。
+    /// </summary>
+    public async Task<MissionResumeResult> ResumeLatestCheckpointAsync(
+        long? checkpointSeq = null, CancellationToken ct = default)
+    {
+        if (_checkpoints is null || _resumePlanner is null)
+        {
+            _logger.LogWarning("[DEGRADED] 恢复请求被拒：MissionController 未接线 checkpoint 存储（组合根未提供）");
+            return MissionResumeResult.Failed("checkpoint store not wired; resume unavailable");
+        }
+
+        ResumePlan? plan;
+        try
+        {
+            plan = _resumePlanner.TryBuildResumePlan(checkpointSeq);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("[DEGRADED] 续跑计划构建失败（如实可见，不阻断）：{Error}", ex.Message);
+            return MissionResumeResult.Failed($"resume plan build failed: {ex.Message}");
+        }
+
+        if (plan is null)
+        {
+            _logger.LogInformation(
+                "无有效 checkpoint 可恢复（seq={Seq}）——如实返回，不伪造恢复",
+                checkpointSeq?.ToString(CultureInfo.InvariantCulture) ?? "latest");
+            return MissionResumeResult.Failed("no valid checkpoint available");
+        }
+
+        var skipped = plan.Actions.Count(a => a.Kind == ResumeActionKind.SkipUntracked);
+        try
+        {
+            var restored = await Task.Run(() => _checkpoints.Restore(plan.CheckpointSeq), ct).ConfigureAwait(false);
+            var summary =
+                $"checkpoint {plan.CheckpointSeq} 已重放（{plan.ToolName}）：恢复 {restored} 个文件，" +
+                $"计划动作 {plan.Actions.Count} 项，如实跳过 {skipped} 项（超大文件未被捕获）";
+            _logger.LogInformation(
+                "checkpoint {Seq} 重放完成：restored={Restored} planned={Planned} skipped={Skipped}",
+                plan.CheckpointSeq, restored, plan.Actions.Count, skipped);
+            return new MissionResumeResult(true, plan.CheckpointSeq, restored, plan.Actions.Count, null, summary);
+        }
+        catch (OperationCanceledException)
+        {
+            return MissionResumeResult.Failed("resume cancelled");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "[DEGRADED] checkpoint {Seq} 重放失败（如实可见，不阻断）：{Error}", plan.CheckpointSeq, ex.Message);
+            return MissionResumeResult.Failed($"checkpoint {plan.CheckpointSeq} restore failed: {ex.Message}");
+        }
     }
 
     /// <summary>
     /// 运行一次完整任务。返回终态 MissionRecord（含全部阶段产物与转移轨迹）。
+    /// R3 缝合（α S8）：mission 生命周期钩子在入口/finally 触发——桌面端无订阅者 = 零行为变化。
     /// </summary>
     public async Task<MissionRecord> RunAsync(string taskText, MissionRunOptions? options = null, CancellationToken ct = default)
     {
@@ -77,10 +222,66 @@ public sealed class MissionController
             throw new ArgumentException("任务文本不能为空。", nameof(taskText));
         }
 
-        options ??= new MissionRunOptions();
+        var effectiveOptions = options ?? new MissionRunOptions();
+        var record = new MissionRecord { TaskText = taskText };
+
+        // R3 缝合（α S8）：mission 生命周期钩子（Android 前台保活的触发面）。
+        // 触发一律 try/catch 吞异常，绝不阻断 mission；无订阅者 null 检查短路（零开销）。
+        FireMissionStarted(record.Id);
+        try
+        {
+            return await RunCoreAsync(taskText, record, effectiveOptions, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            FireMissionStopped();
+        }
+    }
+
+    /// <summary>R3 缝合（α S8）：触发 mission 启动钩子（无订阅者零开销；异常吞掉绝不阻断 mission）。</summary>
+    private static void FireMissionStarted(string missionId)
+    {
+        var hook = MissionLifetimeHook.MissionStarted;
+        if (hook is null)
+        {
+            return;
+        }
+
+        try
+        {
+            hook(missionId);
+        }
+        catch
+        {
+            // 契约：订阅方必须不抛；即便抛了也绝不阻断 mission 本身。
+        }
+    }
+
+    /// <summary>R3 缝合（α S8）：触发 mission 结束钩子（成功/失败/取消统一；异常吞掉）。</summary>
+    private static void FireMissionStopped()
+    {
+        var hook = MissionLifetimeHook.MissionStopped;
+        if (hook is null)
+        {
+            return;
+        }
+
+        try
+        {
+            hook();
+        }
+        catch
+        {
+            // 契约：订阅方必须不抛；即便抛了也绝不阻断 mission 收尾。
+        }
+    }
+
+    /// <summary>R3 缝合（α S8）：mission 状态机本体（原 RunAsync 实现，钩子层在其外包裹）。</summary>
+    private async Task<MissionRecord> RunCoreAsync(
+        string taskText, MissionRecord record, MissionRunOptions options, CancellationToken ct)
+    {
         var transitions = new List<MissionTransition>();
 
-        var record = new MissionRecord { TaskText = taskText };
         try
         {
             await _store.EnsureCreatedAsync(ct);
@@ -521,4 +722,21 @@ public sealed class MissionController
 
     private static string Truncate(string? s, int max)
         => string.IsNullOrEmpty(s) ? string.Empty : (s.Length <= max ? s : s[..max]);
+}
+
+/// <summary>
+/// checkpoint 恢复结果（C-RESUME，R1 缝合 #13）：成败都在结果里，不抛出。
+/// RestoredFiles 为实际恢复的文件数；PlannedActions 为计划动作总数
+/// （含如实跳过的未捕获超大文件项）。
+/// </summary>
+public sealed record MissionResumeResult(
+    bool Succeeded,
+    long? CheckpointSeq,
+    int RestoredFiles,
+    int PlannedActions,
+    string? Error,
+    string? Summary)
+{
+    /// <summary>诚实失败结果（恢复未发生或未完成；Error 人类可读，不含敏感信息）。</summary>
+    public static MissionResumeResult Failed(string error) => new(false, null, 0, 0, error, error);
 }

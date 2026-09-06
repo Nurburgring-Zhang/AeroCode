@@ -2,8 +2,10 @@
 // 子代理契约（批次 B G1 契约钉死）+ SubAgentRunner 实现（builder-α）。
 // 对标 opencode task.ts / claude-code [逆 08/21]：独立上下文、权限继承、完成回注、深度硬上限。
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,11 +13,14 @@ using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Services;
 using AeroAgent.Moa.Accounting;
 using AeroAgent.Moa.Assignment;
+using AeroAgent.Moa.Budget;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Tools;
 using AeroAgent.Moa.Strategies;
+using AeroAgent.Moa.Verify;
 using AeroCode.AI.Models;
 using AeroCode.AI.Providers;
+using AeroCode.Harness.Curation;
 using AeroCode.Harness.EventBus;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -56,6 +61,12 @@ public interface ISubAgentHandle : IAsyncDisposable
 /// 3. 完成时 Publish <see cref="SubAgentCompletedEvent"/>（成本真实核算，未知不估算）；
 /// 4. Depth ≥ MaxDepth 的派发请求直接诚实失败；
 /// 5. 并行实例数受设置上限（Settings.Subagent.MaxParallel）约束，超限排队。
+/// 6.（A1，契约 C-GATE）可选挂接 mission 级 token 预算闸门 <see cref="ITokenBudgetGate"/>：
+///    派发前过闸门（Exhausted → 诚实拒绝，降级单 agent）；逐轮向闸门实报真实 usage；
+///    闸门 Exhausted 转换沿 → 取消在飞并行子代理（无孤儿任务/无半写状态）。
+/// 7.（C2，R2 波次 γ）可选挂接完成判定验证器 <see cref="ICompletionVerifier"/>：最终答复须经
+///    独立 critique（判定不信自报），拒绝时有界重试（critique ≤2 轮，重试消耗照常逐轮核算进
+///    任务预算与闸门，不绕过），轮耗尽按策略收敛。null = 现行为。
 /// </summary>
 public interface ISubAgentLauncher
 {
@@ -93,6 +104,10 @@ public sealed class SubAgentRunner : ISubAgentLauncher
     private readonly ToolRouter? _tools;
     private readonly ILogger<SubAgentRunner> _logger;
     private readonly SemaphoreSlim _slots;
+    private readonly ITokenBudgetGate? _budgetGate;
+    private readonly ICompletionVerifier? _completionVerifier;
+    private readonly CritiqueLoopOptions? _critiqueOptions;
+    private readonly ConcurrentDictionary<string, SubAgentRun> _inFlight = new();
     private int _active;
 
     public SubAgentRunner(
@@ -102,7 +117,10 @@ public sealed class SubAgentRunner : ISubAgentLauncher
         EventBus events,
         SubagentOptions? options = null,
         ToolRouter? tools = null,
-        ILogger<SubAgentRunner>? logger = null)
+        ILogger<SubAgentRunner>? logger = null,
+        ITokenBudgetGate? budgetGate = null,
+        ICompletionVerifier? completionVerifier = null,
+        CritiqueLoopOptions? critiqueOptions = null)
     {
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _providers = providers ?? throw new ArgumentNullException(nameof(providers));
@@ -111,17 +129,31 @@ public sealed class SubAgentRunner : ISubAgentLauncher
         _options = options ?? new SubagentOptions();
         _tools = tools;
         _logger = logger ?? NullLogger<SubAgentRunner>.Instance;
+        _budgetGate = budgetGate;
+        _completionVerifier = completionVerifier;
+        _critiqueOptions = critiqueOptions;
 
         if (_options.MaxParallel < 1)
         {
             throw new ArgumentException("MaxParallel must be >= 1", nameof(options));
         }
 
-        _slots = new SemaphoreSlim(_options.MaxParallel, _options.MaxParallel);
+        // 并行开关（C-GATE）：false = 降级单 agent，信号量收紧为 1（Moa 层默认保持并行可用）。
+        var effectiveParallel = _options.EffectiveMaxParallel;
+        _slots = new SemaphoreSlim(effectiveParallel, effectiveParallel);
+
+        if (_budgetGate is not null)
+        {
+            // 预算熔断转换沿：取消在飞并行子代理（无孤儿/半写，见 OnBudgetExhausted）。
+            _budgetGate.BudgetExhausted += OnBudgetExhausted;
+        }
     }
 
     /// <inheritdoc/>
     public int ActiveCount => Volatile.Read(ref _active);
+
+    /// <summary>mission token 预算熔断后的降级标志（true = 后续并行派发被诚实拒绝）。</summary>
+    public bool DegradedToSingleAgent => _budgetGate is { DegradedToSingleAgent: true };
 
     /// <inheritdoc/>
     public Task<ISubAgentHandle> LaunchAsync(SubAgentSpec spec, CancellationToken ct)
@@ -133,6 +165,14 @@ public sealed class SubAgentRunner : ISubAgentLauncher
         {
             throw new InvalidOperationException(
                 "subagent dispatch is disabled by settings (Subagent.Enabled = false)");
+        }
+
+        // ---- mission 级 token 预算闸门（A1，C-GATE）：派发前过闸门。
+        // Exhausted = 已降级单 agent：并行派发诚实拒绝（编排者回退单 agent 路径）。----
+        if (_budgetGate is { State: BudgetState.Exhausted })
+        {
+            throw new InvalidOperationException(
+                "token budget exhausted: mission degraded to single-agent mode, subagent dispatch refused");
         }
 
         if (string.IsNullOrWhiteSpace(spec.Description))
@@ -182,8 +222,39 @@ public sealed class SubAgentRunner : ISubAgentLauncher
         var budget = new TurnBudget(spec.MaxCostUsd == 0 ? null : spec.MaxCostUsd);
 
         var run = new SubAgentRun(spec, budget);
-        run.Start(ExecuteAsync(run, parentCt: ct));
+        _inFlight[run.Id] = run;
+        run.Start(ExecuteWatchedAsync(run, ExecuteAsync(run, parentCt: ct)));
         return Task.FromResult<ISubAgentHandle>(run);
+    }
+
+    /// <summary>在飞登记解除包装：执行任务完成（含取消/失败/崩溃）后从在飞表移除。</summary>
+    private async Task<string> ExecuteWatchedAsync(SubAgentRun run, Task<string> execution)
+    {
+        try
+        {
+            return await execution.ConfigureAwait(false);
+        }
+        finally
+        {
+            _inFlight.TryRemove(run.Id, out _);
+        }
+    }
+
+    /// <summary>
+    /// 预算熔断处理（A1，安全硬门 #4）：取消在飞并行子代理并保持降级标志。
+    /// 无孤儿任务：每个 run 的执行任务必然完成并回填 WaitAsync（排队/运行中的取消路径都诚实收场）；
+    /// 无半写状态：取消路径把进行中消息落 Cancelled 终态（DB 是事实源，不留 Pending 僵尸）。
+    /// </summary>
+    private void OnBudgetExhausted(BudgetSnapshot snapshot)
+    {
+        _logger.LogWarning(
+            "token budget exhausted ({Spent}/{Limit} tokens): cancelling {Count} in-flight subagent(s); " +
+            "mission degraded to single-agent dispatch",
+            snapshot.SpentTokens, snapshot.LimitTokens, _inFlight.Count);
+        foreach (var run in _inFlight.Values)
+        {
+            run.Cancel();
+        }
     }
 
     /// <summary>执行主体：排队取槽 → 建独立会话 → 工具循环 → 发布完成事件。永不抛出。</summary>
@@ -292,6 +363,7 @@ public sealed class SubAgentRunner : ISubAgentLauncher
         {
             new() { Role = "user", Content = spec.Prompt },
         };
+        var evidence = new List<string>(); // C2：工具输出作为独立佐证（判定不信自报）
         var runSw = Stopwatch.StartNew();
         var totalCost = 0.0;
 
@@ -307,6 +379,21 @@ public sealed class SubAgentRunner : ISubAgentLauncher
                     return await FailRunPersistedAsync(
                         run, finalMessage, assignment, error, totalCost, (int)runSw.ElapsedMilliseconds,
                         countInStats: true).ConfigureAwait(false);
+                }
+
+                // ---- S-M1 竞态修复（A1，C-GATE）：LaunchAsync 的 Exhausted 拒绝判定与
+                // _inFlight 登记之间存在竞态窗口——若 BudgetExhausted 转换沿恰好落在其间，
+                // 本 run 会错过一次性事件。工具循环逐轮复查闸门状态兜底：
+                // Exhausted → 诚实取消自身（与事件取消一致的 Cancelled 终态路径）。
+                // 闸门未启用（null）时此检查不成立，零开销零行为变化。----
+                if (_budgetGate is { State: BudgetState.Exhausted })
+                {
+                    _logger.LogWarning(
+                        "subagent {Id} detected exhausted budget gate at turn {Turn}: cancelling honestly",
+                        run.Id, turn);
+                    var cancelled = await CancelRunPersistedAsync(
+                        run, finalMessage, (int)runSw.ElapsedMilliseconds).ConfigureAwait(false);
+                    return (cancelled, false, 0);
                 }
 
                 // ---- 预算闸门：逐轮检查（此前各轮的真实花费已计入）----
@@ -335,24 +422,109 @@ public sealed class SubAgentRunner : ISubAgentLauncher
                 totalCost += turnCost;
                 run.Budget.AddActual(turnCost);
 
+                // ---- mission 级 token 预算闸门（A1，C-GATE）：逐轮实报真实 usage。
+                // 超限时闸门在转换沿触发 BudgetExhausted → 本 runner 取消在飞并行子代理
+                // （含本 run），后续 provider 调用经 linked token 诚实取消（终态落库）。----
+                _budgetGate?.ReportUsage(turnTokensIn + turnTokensOut);
+
                 if (response.ToolCalls.Count == 0)
                 {
+                    // ---- C2 完成判定（可选注入，null = 现行为）：最终答复经独立 critique
+                    // （判定不信自报，佐证=工具输出），拒绝时有界重试（critique ≤2 轮），
+                    // 轮耗尽按策略收敛。重试产出经 reproduce 委托产生：真实 usage/成本照常逐轮
+                    // 核算（run.Budget.AddActual / _budgetGate.ReportUsage / totalCost），
+                    // 消耗计入既有任务预算语义不绕过；预算不足时不再重试，诚实收敛。----
+                    var verifier = _completionVerifier;
+                    var finalContent = response.Content;
+                    var finalTokensIn = turnTokensIn;
+                    var finalTokensOut = turnTokensOut;
+                    var finalCost = turnCost;
+                    string? verificationNote = null;
+                    if (verifier is not null)
+                    {
+                        var loop = new CritiqueLoop(verifier, _critiqueOptions);
+                        var outcome = await loop.RunAsync(
+                            spec.Prompt,
+                            response.Content,
+                            async (feedback, retryCt) =>
+                            {
+                                if (!run.Budget.HasBudget)
+                                {
+                                    return null; // 任务预算不足：不再重试（重试消耗计入预算，不绕过）。
+                                }
+
+                                var retryMessages = new List<AiChatMessage>(conversation.Count + 2);
+                                retryMessages.AddRange(conversation);
+                                retryMessages.Add(new AiChatMessage { Role = "assistant", Content = response.Content });
+                                retryMessages.Add(new AiChatMessage
+                                {
+                                    Role = "user",
+                                    Content = BuildCritiqueFeedbackText(feedback),
+                                });
+                                var retryResponse = await provider.ChatAsync(new ChatRequest
+                                {
+                                    Model = assignment.ModelId,
+                                    Messages = retryMessages,
+                                    Stream = false, // 重试是纯文本产出：不带工具
+                                    ThinkingEffort = request.ThinkingEffort, // R2 修复 L3：与主请求同档，重试不静默掉档
+                                }, retryCt).ConfigureAwait(false);
+
+                                var retryIn = retryResponse.Usage?.PromptTokens ?? 0;
+                                var retryOut = retryResponse.Usage?.CompletionTokens ?? 0;
+                                var retryCost = CostTracker.Estimate(assignment.Profile, retryIn, retryOut) ?? 0.0;
+                                totalCost += retryCost;
+                                run.Budget.AddActual(retryCost);
+                                _budgetGate?.ReportUsage(retryIn + retryOut);
+                                finalTokensIn = retryIn;
+                                finalTokensOut = retryOut;
+                                finalCost = retryCost;
+                                return retryResponse.Content;
+                            },
+                            evidence,
+                            ct).ConfigureAwait(false);
+
+                        if (!outcome.Accepted)
+                        {
+                            // Fail 策略收敛：诚实失败（不冒充完成）。
+                            return await FailRunPersistedAsync(
+                                run, finalMessage, assignment,
+                                $"completion verification failed after {outcome.CritiqueRoundsUsed} critique round(s): {outcome.Summary}",
+                                totalCost, (int)runSw.ElapsedMilliseconds,
+                                countInStats: true).ConfigureAwait(false);
+                        }
+
+                        finalContent = outcome.Output;
+                        if (!outcome.VerificationPassed)
+                        {
+                            // AcceptWithFindings 收敛：接受产出，但未决发现必须可见（不静默）。
+                            verificationNote = outcome.Summary;
+                            _logger.LogWarning(
+                                "[DEGRADED] subagent {Id} completion converged by policy after {Rounds} critique round(s): {Summary}",
+                                run.Id, outcome.CritiqueRoundsUsed, outcome.Summary);
+                        }
+                    }
+
                     // ---- 最终答复：写回占位消息，真实用量/成本落库 ----
                     runSw.Stop();
-                    finalMessage.Content = response.Content;
+                    finalMessage.Content = finalContent;
                     finalMessage.Status = MessageStatus.Completed;
-                    finalMessage.TokensIn = turnTokensIn;
-                    finalMessage.TokensOut = turnTokensOut;
-                    finalMessage.CostUsd = turnCost;
+                    finalMessage.TokensIn = finalTokensIn;
+                    finalMessage.TokensOut = finalTokensOut;
+                    finalMessage.CostUsd = finalCost;
                     finalMessage.LatencyMs = turnLatency;
                     await _sessions.UpdateMessageAsync(finalMessage).ConfigureAwait(false);
 
                     _catalog.RecordUsage(assignment.ProviderId, assignment.ModelId, turnLatency, failed: false);
                     await SaveCatalogQuietlyAsync().ConfigureAwait(false);
 
-                    var summary = string.IsNullOrWhiteSpace(response.Content)
+                    var summary = string.IsNullOrWhiteSpace(finalContent)
                         ? "（子代理返回空答复）"
-                        : response.Content;
+                        : finalContent;
+                    if (verificationNote is not null)
+                    {
+                        summary = $"{summary}\n[verification] {verificationNote}";
+                    }
+
                     return (summary, true, totalCost);
                 }
 
@@ -418,6 +590,8 @@ public sealed class SubAgentRunner : ISubAgentLauncher
                         ? ToolInvokeResult.Fail($"Tool '{call.FunctionName}' not found: no tool router attached")
                         : await _tools.InvokeAsync(call.FunctionName, call.ArgumentsJson, ct).ConfigureAwait(false);
 
+                    evidence.Add(toolResult.Output); // C2：独立佐证（判定不信自报）
+
                     toolMessage.Content = toolResult.Output;
                     toolMessage.Status = toolResult.Success ? MessageStatus.Completed : MessageStatus.Degraded;
                     toolMessage.Error = toolResult.Success ? null : toolResult.Error;
@@ -436,12 +610,11 @@ public sealed class SubAgentRunner : ISubAgentLauncher
         catch (OperationCanceledException)
         {
             runSw.Stop();
-            finalMessage.Status = MessageStatus.Cancelled;
-            finalMessage.LatencyMs = (int)runSw.ElapsedMilliseconds;
-            await _sessions.UpdateMessageAsync(finalMessage).ConfigureAwait(false);
 
             // 与 WorkerRunner 取消语义一致：不计画像统计、不产生成本（未计价不猜）。
-            return ("cancelled by user", false, 0);
+            var cancelled = await CancelRunPersistedAsync(
+                run, finalMessage, (int)runSw.ElapsedMilliseconds).ConfigureAwait(false);
+            return (cancelled, false, 0);
         }
         catch (Exception ex)
         {
@@ -454,6 +627,47 @@ public sealed class SubAgentRunner : ISubAgentLauncher
                 run, finalMessage, assignment, error, totalCost, (int)runSw.ElapsedMilliseconds,
                 countInStats: true).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// 取消收尾（S-M1/S-M2，R1 审查修复）：占位消息落 Cancelled 终态，并把该 run
+    /// 独立会话内滞留 Pending/Streaming 的消息（典型：取消落在工具执行中时的 tool 消息，
+    /// 已落库但停在 Pending）一并落诚实 Cancelled 终态——DB 是事实源，不留 Pending 僵尸，
+    /// 与 OnBudgetExhausted 的契约注释一致。复用既有 session store 读写 API
+    /// （GetMessagesAsync/UpdateMessageAsync），不新增 store 面。
+    /// gate 为 null（未启用）时取消路径无闸门检查，本 helper 只在取消发生时被调用。
+    /// </summary>
+    private async Task<string> CancelRunPersistedAsync(
+        SubAgentRun run,
+        ConvChatMessage finalMessage,
+        int latencyMs)
+    {
+        finalMessage.Status = MessageStatus.Cancelled;
+        finalMessage.LatencyMs = latencyMs;
+        await _sessions.UpdateMessageAsync(finalMessage).ConfigureAwait(false);
+
+        if (run.SessionId is not null)
+        {
+            var messages = await _sessions.GetMessagesAsync(run.SessionId).ConfigureAwait(false);
+            if (messages.IsSuccess && messages.Value is not null)
+            {
+                foreach (var stalled in messages.Value
+                    .Where(m => !string.Equals(m.Id, finalMessage.Id, StringComparison.Ordinal)
+                                && (m.Status == MessageStatus.Pending || m.Status == MessageStatus.Streaming)))
+                {
+                    stalled.Status = MessageStatus.Cancelled;
+                    await _sessions.UpdateMessageAsync(stalled).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "[DEGRADED] subagent {Id} cancel path could not read session messages: {Error}",
+                    run.Id, messages.Error ?? "unknown");
+            }
+        }
+
+        return "cancelled by user";
     }
 
     /// <summary>失败收尾：占位消息落 Failed 终态 + 画像统计（可选）。</summary>
@@ -494,6 +708,18 @@ public sealed class SubAgentRunner : ISubAgentLauncher
             costUsd,
             success,
             DateTime.UtcNow));
+    }
+
+    /// <summary>
+    /// critique 重试反馈的用户消息文本。反馈文本过 <see cref="SensitiveTextScrubber"/>
+    /// （安全硬门 #4：验证器产出的文本不得把密钥等敏感形态带进模型上下文/日志）。
+    /// </summary>
+    private static string BuildCritiqueFeedbackText(string? feedback)
+    {
+        var scrubbed = SensitiveTextScrubber.Scrub(feedback ?? string.Empty);
+        return string.IsNullOrWhiteSpace(scrubbed)
+            ? "[completion-critique] 上一个最终答复未通过独立校验，请修正并重新给出最终答复。"
+            : $"[completion-critique] 上一个最终答复未通过独立校验，请根据以下反馈修正并重新给出最终答复：\n{scrubbed}";
     }
 
     private async Task SaveCatalogQuietlyAsync()
