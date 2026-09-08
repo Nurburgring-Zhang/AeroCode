@@ -20,6 +20,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ACS v2.3.0 阈值单一真相源（内嵌资源，AcsThresholds 加载） -->
+    <EmbeddedResource Include="Acs/thresholds.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\AeroCode.AI\AeroCode.AI.csproj" />
     <ProjectReference Include="..\AeroCode.Core\AeroCode.Core.csproj" />
     <ProjectReference Include="..\AeroCode.Skills\AeroCode.Skills.csproj" />

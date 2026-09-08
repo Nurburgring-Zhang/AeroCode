@@ -123,6 +123,15 @@ public sealed class EngineeringLoopOptions
     /// failure and turn each research-grounded candidate into a guided fix attempt.
     /// </summary>
     public BlockadeResolver? BlockadeResolver { get; init; }
+
+    /// <summary>
+    /// ACS 成本闸门（可选注入）：每轮开始前检查四道成本闸门（窄步/回灌/空转/思考预算），
+    /// BLOCK 即终止环（AcsGateBlocked）——未验证 = 未完成，绝不带病继续。
+    /// </summary>
+    public AeroCode.Harness.Acs.CostGovernor? CostGovernor { get; init; }
+
+    /// <summary>ACS 每轮度量提供器（与 CostGovernor 配套）：返回本轮度量报告；null = 本轮跳过闸门检查。</summary>
+    public Func<int, CancellationToken, Task<AeroCode.Harness.Acs.AcsStepReport?>>? AcsStepReportProvider { get; init; }
 }
 
 /// <summary>Why the engineering loop terminated.</summary>
@@ -141,6 +150,8 @@ public enum LoopTerminationReason
     NoFixAvailable,
     /// <summary>The run was cancelled.</summary>
     Cancelled,
+    /// <summary>ACS cost gate blocked the loop (spin guard / refeed ban / narrow step / think budget).</summary>
+    AcsGateBlocked,
 }
 
 /// <summary>Context handed to a <see cref="FixProposer"/> so it can produce concrete patches.</summary>
@@ -346,6 +357,24 @@ public sealed class EngineeringLoop
             {
                 return Finalize(trace, tracePath, false, LoopTerminationReason.BudgetExhausted,
                     $"LLM call budget exhausted before round {round} ({_budget.LlmCallsUsed}/{_budget.MaxLlmCalls} used).");
+            }
+
+            // ACS 成本闸门（可选）：四道闸门检查，BLOCK 即终止（未验证 = 未完成）。
+            if (_options.CostGovernor is { } governor && _options.AcsStepReportProvider is { } reportProvider)
+            {
+                var stepReport = await reportProvider(round, ct);
+                if (stepReport is not null)
+                {
+                    var gateResult = governor.CheckStep(stepReport);
+                    if (!gateResult.Passed)
+                    {
+                        var acsDetail = string.Join(" | ", gateResult.Violations.Where(v => !v.IsWarningOnly).Select(v => v.Message));
+                        _logger?.LogWarning("EngineeringLoop {LoopId} round {Round}: ACS cost gate BLOCK: {Detail}",
+                            trace.LoopId, round, acsDetail);
+                        return Finalize(trace, tracePath, false, LoopTerminationReason.AcsGateBlocked,
+                            $"ACS cost gate blocked before round {round}: {acsDetail}");
+                    }
+                }
             }
 
             var roundTrace = new RoundTrace { Round = round };

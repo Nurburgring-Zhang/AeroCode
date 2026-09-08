@@ -1,0 +1,585 @@
+{
+  "spec_version": "2.3.0",
+  "_readme": [
+    "阈值单一真相源（single source of truth）。",
+    "Python 门禁、Node 门禁、文档与 CI 一律从本文件取值，任何实现都不得自带同名常量。",
+    "改阈值只改这里；改完必跑 tests/test_gates.py，跨实现一致性测试会拦住漂移。",
+    "缺失本文件 = 拿不到阈值 = 无法计量，门禁一律 USAGE_ERROR(2)，不得用内置默认值静默继续。"
+  ],
+  "exit_codes": {
+    "pass": 0,
+    "block": 1,
+    "usage_error": 2
+  },
+  "tiers": {
+    "T0": {
+      "n": 0,
+      "r": 0,
+      "threshold": 0.0,
+      "max_rounds": 1,
+      "max_minutes": 5
+    },
+    "T1": {
+      "n": 1,
+      "r": 1,
+      "threshold": 14.0,
+      "max_rounds": 3,
+      "max_minutes": 15
+    },
+    "T2": {
+      "n": 1,
+      "r": 2,
+      "threshold": 16.0,
+      "max_rounds": 6,
+      "max_minutes": 45
+    },
+    "T3": {
+      "n": 3,
+      "r": 3,
+      "threshold": 17.0,
+      "max_rounds": 10,
+      "max_minutes": 120
+    }
+  },
+  "loop": {
+    "max_outputs_per_step": 1,
+    "max_budget_min": 30,
+    "max_context_bytes": 20000,
+    "max_files_read": 5,
+    "max_summary_chars": 1000,
+    "max_think_ratio": 0.4,
+    "spin_strikes": 2,
+    "summary_chars_tolerance": 20,
+    "required_step_fields": [
+      "budget_min",
+      "context_bytes_proxy",
+      "refeed_full_history",
+      "summary_chars",
+      "think_ratio",
+      "evidence_delta"
+    ]
+  },
+  "handoff": {
+    "_why": [
+      "每步结束写一份压缩交接是「无损 + 不跑偏」的落点：全量状态外置在 task-state.json（无损），handoff 只携带目标/已完成/下一步（防跑偏）。",
+      "上下文会被截断/压缩，跨步唯一可靠载体是外置交接文件；口口相传=回灌历史=烧 token。",
+      "压缩必须有硬上限：否则『总结』会膨胀成第二份历史，回灌禁令形同虚设；目标 400 字是省 token 主力。",
+      "无损 = 当前目标/已完成/下一步三要素齐全且非空话；缺任一即视为有损压缩，下一步无从接续。",
+      "防跑偏 = 每步交接必须复述唯一『当前目标』锚点并置 drift_checked=true；锚点缺失或空话即 BLOCK，这是压缩不跑偏的机检底座。",
+      "语义级跑偏判定仍属原生能力；本层只拦『跳过/写空话/超字数/无目标锚点/未做偏离自检』，与其余硬化项同一诚实口径。",
+      "仅检查三个子串会让空壳或陈旧交接假 PASS；故必须绑定 state.task_id 与 steps 最后一项 id，并校验三个精确段落的内容骨架。",
+      "最小长度也会被重复占位词绕过；三个段落均禁止待补/TODO/TBD/待定/暂无，出现即 BLOCK。",
+      "只有证据/完成标准标签仍会放行「相关记录/确认完成」式空壳；已完成与下一步还必须含退出码、测试计数、完整 SHA-256、审查 verdict 或带路径特征的反引号指针之一。",
+      "禁止把裸 PASS/BLOCK 或任意反引号文本当证据：前者没有验证对象，后者可把空话伪装成指针。这些模式只证明存在可核验细节，不宣称判断自然语言真实性或质量；真实性仍需独立审查。",
+      "触发方式分两层：portable 纪律 + gate_checklist 机检（跨终端生效）；终端若有 post-turn hook 可自动触发（见 adapters.json，未实证则尽力而为）。",
+      "v2.3 合并：两版把交接拆成 handoff_compression（校验载体文件形状）与 handoff（校验状态镜像内容）两个节，二者互补不竞争，但分成两个 key 会让 1000/400 这类数字在两处各自漂移（v2.2 实际已发生该漂移）。故统一为本节，单一真相源。",
+      "max_chars（载体文件全文，零容差）与 max_chars_hard + chars_tolerance（镜像自报整数 chars，±50）量的是不同对象，故并存且两侧数值都不放宽；target_chars 为软目标，超出仅 warn 不 BLOCK。",
+      "required_sections 必须与 section_requirements 的键序全等：前者被渲染器与校验器消费，后者被载体 H2 全等门消费，两处不等即是无解契约（机检见 merge-tools/audit.py handoff-names）。",
+      "drift_marker 提到 spec：该字面量原先硬编码在渲染器里，门与渲染器各持一份必然漂移。"
+    ],
+    "path": ".acs/handoff.md",
+    "max_chars": 1000,
+    "target_chars": 400,
+    "max_chars_hard": 1000,
+    "chars_tolerance": 50,
+    "min_goal_anchor_chars": 4,
+    "min_next_chars": 4,
+    "require_goal_anchor": true,
+    "require_drift_checked": true,
+    "drift_marker": "drift_checked=true",
+    "single_file_handoff": true,
+    "required_markers": [
+      "目标",
+      "已完成",
+      "下一步"
+    ],
+    "forbidden_fillers": [
+      "待补",
+      "TODO",
+      "TBD",
+      "待定",
+      "暂无"
+    ],
+    "verifiable_detail_patterns": [
+      "(^|[^A-Za-z0-9_])exit\\s*=\\s*[0-9]+($|[^A-Za-z0-9_])",
+      "(^|[^A-Za-z0-9_])[0-9]+\\s+passed($|[^A-Za-z0-9_])",
+      "(^|[^A-Za-z0-9_])SHA-256\\s*[:=]\\s*[0-9a-fA-F]{64}($|[^A-Za-z0-9_])",
+      "(^|[^A-Za-z0-9_])verdict\\s*=\\s*(?:approve|reject)($|[^A-Za-z0-9_])",
+      "`(?:[^`\\r\\n]*[/\\\\][^`\\r\\n]+|[^`\\s]+\\.[A-Za-z][A-Za-z0-9]{0,7})`"
+    ],
+    "binding_fields": [
+      "task_id",
+      "step_id"
+    ],
+    "required_sections": [
+      "当前目标",
+      "已完成",
+      "下一步"
+    ],
+    "section_requirements": {
+      "当前目标": {
+        "min_chars": 8,
+        "required_markers": [],
+        "require_verifiable_detail": false
+      },
+      "已完成": {
+        "min_chars": 12,
+        "required_markers": [
+          "证据"
+        ],
+        "require_verifiable_detail": true
+      },
+      "下一步": {
+        "min_chars": 12,
+        "required_markers": [
+          "完成标准"
+        ],
+        "require_verifiable_detail": true
+      }
+    },
+    "apply_tiers": [
+      "T1",
+      "T2",
+      "T3"
+    ]
+  },
+  "per_step_review": {
+    "_why": [
+      "双 AI 对抗审核原先只在 gate/tier 级（G3/G5）触发；逐步执行时无人自查=错误累积到门才暴露，返工成本最高。",
+      "每步收尾必须做一次 builder/verifier 分离的自对抗审核 + 自查自检自监督，规模按 tier 缩放（T3 需 ≥2 轮）。",
+      "审核结论必须落到 steps[].review；verdict=fail 表示该步未过自审，禁止进入下一步。",
+      "发现问题必须闭环：issues_found 非空则 issues_closed 必须等量覆盖且写 recheck，与 G3 互审闭环同规矩。",
+      "reviewer 不得等于该步 builder，否则自对抗退化成自评（与双盲审查同一角色分离纪律）。"
+    ],
+    "apply_tiers": [
+      "T1",
+      "T2",
+      "T3"
+    ],
+    "verdict_values": [
+      "pass",
+      "pass_with_fixes",
+      "fail"
+    ],
+    "require_verifier_ne_builder": true,
+    "min_self_check_chars": 4,
+    "min_issue_chars": 4,
+    "t3_min_rounds": 2
+  },
+  "checklist": {
+    "min_adversarial_reviews": 2,
+    "min_release_tests": 2,
+    "required_gates_by_tier": {
+      "T0": [],
+      "T1": [
+        "G0",
+        "G3",
+        "G4"
+      ],
+      "T2": [
+        "G0",
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6"
+      ],
+      "T3": [
+        "G0",
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6"
+      ]
+    },
+    "hardened": {
+      "_why": [
+        "原先这 7 条只写在 reference-gates.md 里标 [软]，靠模型自觉，会漂移。",
+        "搬成结构化字段后由 gate_checklist 机检：缺字段 = 无法核查 = 视同未做，直接 BLOCK。",
+        "字段只承载可核查的骨架，不规定行文；深度思考仍由原生能力完成，本层只拦「跳过」。"
+      ],
+      "min_steelman_pro": 3,
+      "min_steelman_con": 3,
+      "max_key_questions": 3,
+      "min_claim_chars": 4,
+      "min_basis_chars": 6,
+      "min_reviews": 1,
+      "cognition_fields": [
+        "goal",
+        "boundary",
+        "dependencies",
+        "impact",
+        "acceptance",
+        "risks"
+      ],
+      "plan_fields": [
+        "phases",
+        "design_standards",
+        "stage_goals",
+        "boundary"
+      ],
+      "report_fields": [
+        "deliverables",
+        "evidence",
+        "risks",
+        "next_steps"
+      ],
+      "rsi_fields": [
+        "problem",
+        "root_cause",
+        "action",
+        "verification",
+        "stored_at"
+      ],
+      "field_owner_gate": {
+        "steelman": "G0",
+        "key_questions": "G0",
+        "questions_compressed_reason": "G0",
+        "cognition": "G1",
+        "plan": "G2",
+        "reviews": "G3",
+        "report": "G5",
+        "blind_reviews": "G5",
+        "arbitration": "G5",
+        "rsi": "G6"
+      },
+      "required_by_tier": {
+        "T0": [],
+        "T1": [
+          "G4_acceptance_actual"
+        ],
+        "T2": [
+          "G0_steelman",
+          "G1_cognition",
+          "G2_plan",
+          "G3_review_closure",
+          "G4_acceptance_actual",
+          "G5_report"
+        ],
+        "T3": [
+          "G0_steelman",
+          "G1_cognition",
+          "G2_plan",
+          "G3_review_closure",
+          "G4_acceptance_actual",
+          "G5_report",
+          "G5_blind_reviews",
+          "G6_rsi"
+        ]
+      }
+    }
+  },
+  "verify_rank": {
+    "pivot_k": 2,
+    "spread_limit": 5,
+    "weight_tol": 0.001,
+    "weighted_tol": 0.05,
+    "min_criteria": 5,
+    "t3_hard_floor": {
+      "correctness": 17.0,
+      "risk": 16.0
+    }
+  },
+  "reality_scan": {
+    "allow_marker": "ACS-ALLOW",
+    "default_max_findings": 200
+  },
+  "vague_phrases": {
+    "acceptance": [
+      "功能正常",
+      "已完善",
+      "应该可以",
+      "逻辑无误",
+      "符合预期",
+      "没有问题",
+      "运行良好",
+      "基本完成",
+      "大致",
+      "看起来",
+      "works fine",
+      "looks good",
+      "should work"
+    ],
+    "evidence": [
+      "已完成",
+      "没问题",
+      "已检查",
+      "已确认无误",
+      "应该可以",
+      "符合要求",
+      "都过了",
+      "ok",
+      "done",
+      "fine",
+      "passed all"
+    ]
+  },
+  "self_consistency": {
+    "_why": [
+      "拿不到 logits，但「同一份 rubric 重复评分的分歧度」是 agent 侧唯一可得的置信度代理。",
+      "冠亚分差很小时直接定案，等于把噪声当结论；此时必须重采样再定案。",
+      "重采样是花 token 的，所以只在真可能改判的区间触发，不无脑全量采样。"
+    ],
+    "enabled_tiers": [
+      "T3"
+    ],
+    "trigger_score_gap": 1.5,
+    "extra_samples": 2,
+    "max_extra_samples": 4
+  },
+  "cost_metering": {
+    "_why": [
+      "proxy 不是计量，只是可测的替代物；能拿到真账就必须回填真账，否则降维就从「权宜」变成「永久」。",
+      "回填必须交代来源与可复查证据，否则一个数字与一句「我觉得」等价。",
+      "来源不可审计时字段名必须留在 *_proxy，不得改叫 actual 冒充计量。",
+      "tokens_actual 上限取自反面基线：同框架对照模型 9 个任务共 956,630 token（均 ~106k/任务），T3 给到 1.2M 已是 11 倍宽容。"
+    ],
+    "sources": [
+      "unavailable",
+      "self_reported",
+      "terminal_ui",
+      "api_usage",
+      "cli_usage"
+    ],
+    "auditable_sources": [
+      "api_usage",
+      "cli_usage"
+    ],
+    "declare_required_tiers": [
+      "T2",
+      "T3"
+    ],
+    "min_evidence_chars": 6,
+    "max_tokens_actual_by_tier": {
+      "T1": 100000,
+      "T2": 400000,
+      "T3": 1200000
+    }
+  },
+  "edge_gates": {
+    "_why": [
+      "边是数据契约：上游产出放行下游前必须先过验证，否则一个错沿着拓扑流进所有下游节点。",
+      "schema 只能保证边门形状合法，不能保证图里真的用了门；T3 高风险图若一条边门都没有，验证就形同虚设。",
+      "边门 kind=cmd 与节点/步骤验收同规矩：没有 expect_exit 的命令验证无法判成败，等于没有验证。"
+    ],
+    "required_tiers": [
+      "T3"
+    ],
+    "min_edge_gates": 1
+  },
+  "retry": {
+    "_why": [
+      "FinBot 实战教训：生成→报错→原样再生成是永动机，重试必须有硬上限（默认 2 次）。",
+      "重试必须留痕（retry_reason）并声明换打法（delta_from_last）：同一打法重跑两轮即空转，这正是 loop-until-dry 的收敛条件。",
+      "上限放 spec 而非代码：不同团队可按任务分级调整，但任何环境都不允许静默无限重试。"
+    ],
+    "max_retries": 2,
+    "min_reason_chars": 4,
+    "min_delta_chars": 4
+  },
+  "acceptance_binding": {
+    "_why": [
+      "SWE Refactor Bench 教训：行为测试全绿 ≠ 有产出——原系统本来就能过，交白卷也满分；尺子量的是『改没改坏』不是『有没有改』。",
+      "验收命令必须直接打到声明的产出物上（子串可核验），否则它证明的是『没改坏』而不是『真的交付了』。",
+      "只对文件型产出物强制（含路径或扩展名特征）；纯逻辑名产出无法用子串绑定，不误伤。"
+    ],
+    "apply_tiers": [
+      "T1",
+      "T2",
+      "T3"
+    ],
+    "min_basename_chars": 3
+  },
+  "double_blind": {
+    "_why": [
+      "Anthropic 图工程第 6 步：两个互相看不见对方推理的独立审查者；同一个人审两轮不是双盲。",
+      "审批者与建造者不得兼任盲审：角色不分离，双盲就退化成自评。",
+      "分歧不是噪音是信号：verdict 冲突 = 验收标准有歧义，必须仲裁留痕（arbitration），否则规则手册的歧义永远不暴露。"
+    ],
+    "required_tiers": [
+      "T3"
+    ],
+    "min_reviewers": 2
+  },
+  "artifacts": {
+    "_why": [
+      "Artifact Memory vs Transcript Memory：transcript 不是数据库，产出物必须登记为带溯源的工件（produced_by 指向生产节点）。",
+      "supersedes 链就是最小版本谱系：改了契约/决策系统立刻知道新旧关系（ADR 同构，Tutti 数据契约版本化的落点）。",
+      "回答『这份输出为什么值得相信』：能溯源到节点、能查到前代版本的工件，才叫交付物。"
+    ],
+    "required_tiers": [
+      "T3"
+    ],
+    "min_artifacts": 1
+  },
+  "contract": {
+    "_why": [
+      "Tutti 教训：数据契约演进必须可追溯，v2.3.0→v2.4.0 一眼可查，改了规矩系统立刻知道。",
+      "状态文件自带版本，校验器才能识别『来自更新套件的文件』并提示升级，而不是报一堆莫名字段错误。",
+      "旧版本文件照常通过（向后兼容）：只有格式非法才拦，版本高于已知只告警不拦。"
+    ],
+    "known_version": "2.3.0",
+    "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+  },
+  "model_tier": {
+    "_why": [
+      "图让模型分层看得见：无聊节点跑便宜模型、判断节点跑强模型；不上图、不登记，这笔账永远糊涂。",
+      "T3 高风险图里凡调模型的节点必须声明档位，否则『贵模型干杂活』的浪费无人可见。",
+      "档位只登记不评判：这是计量字段（让成本可见），不是性能门（不拦你用强模型）。"
+    ],
+    "required_tiers": [
+      "T3"
+    ]
+  },
+  "evidence_basis": {
+    "_why": [
+      "来源：caveman docs/technical/accounting-and-evidence.md 的七档 basis。",
+      "原有 cost_metering.source 只区分「有/无」；但 inferred（本地估算）、provider_reported（回包）、benchmark_counterfactual（受控对照）、observed（前后相关）强度完全不同，混为一谈就是把弱证据当强证据用。",
+      "硬规则：值必须与 basis 并列；聚合时 basis 取各分量的下界，禁止静默换档（弱证据聚合出强结论是最常见的造假路径）。",
+      "价格/数量未知记 0 并标 unpriced：0 防编造，标签防误读为免费。"
+    ],
+    "levels": [
+      "measured",
+      "provider_reported",
+      "cli_usage",
+      "benchmark_counterfactual",
+      "observed",
+      "inferred",
+      "self_reported",
+      "unpriced",
+      "unavailable"
+    ],
+    "strength_order": {
+      "measured": 8,
+      "provider_reported": 7,
+      "cli_usage": 6,
+      "benchmark_counterfactual": 5,
+      "observed": 4,
+      "inferred": 3,
+      "self_reported": 2,
+      "unpriced": 1,
+      "unavailable": 0
+    },
+    "strong_levels": [
+      "measured",
+      "provider_reported",
+      "cli_usage"
+    ],
+    "require_evidence_ref_levels": [
+      "measured",
+      "provider_reported",
+      "cli_usage",
+      "benchmark_counterfactual"
+    ],
+    "min_evidence_chars": 6,
+    "declare_required_tiers": [
+      "T2",
+      "T3"
+    ],
+    "no_silent_upgrade": true
+  },
+  "degradation_ledger": {
+    "_why": [
+      "来源：ponytail skills/ponytail-debt 的 `ponytail:` 注释约定。",
+      "比裸 TODO 强的关键：强制写明天花板与升级触发条件，缺触发条件即标 no-trigger。",
+      "并入既有「降级必须标 [DEGRADED]」纪律，让降级可被 grep 汇总成台账，而不是散落在各份报告里。"
+    ],
+    "markers": [
+      "[DEGRADED]",
+      "[降维实现]"
+    ],
+    "required_fields": [
+      "what",
+      "ceiling",
+      "upgrade_path"
+    ],
+    "min_field_chars": 4,
+    "required_tiers": [
+      "T2",
+      "T3"
+    ]
+  },
+  "subagent_contract": {
+    "_why": [
+      "来源：caveman docs/technical/exploration-and-delegation.md 与 skills/cavecrew。",
+      "关键做法：硬文件数上限（builder 拒绝 ≥3 文件的任务）+ 强制空结果字面量（无结果必须写固定串而非猜测）。",
+      "强制空结果字面量可机检，直接对症「子 agent 编造引用」这一最难发现的失败模式。"
+    ],
+    "roles": [
+      "investigator",
+      "builder",
+      "reviewer",
+      "verifier"
+    ],
+    "max_files_per_builder_task": 3,
+    "empty_result_literals": [
+      "no relevant locations found",
+      "No issues.",
+      "未找到相关位置",
+      "无问题"
+    ],
+    "require_output_contract_tiers": [
+      "T3"
+    ]
+  },
+  "judge_selftest": {
+    "_why": [
+      "来源：ponytail benchmarks/agentic/judge.py 的 --selftest 硬规则。",
+      "LLM 裁判必须先把已知好/坏参考样本排对，否则拒绝评判整个矩阵；不验证打分器本身，排序结论就没有地基。",
+      "落到 self-verify-scaling：T3 打分排序前必须记录一次裁判自证。"
+    ],
+    "required_tiers": [
+      "T3"
+    ],
+    "required_fields": [
+      "known_good",
+      "known_bad",
+      "ranked_correctly"
+    ],
+    "refuse_message": "refusing to rank without judge selftest"
+  },
+  "behavior_eval": {
+    "_why": [
+      "来源：caveman evals/README.md 三臂设计与 anthropics/skills 的 with/without 基线评测。",
+      "只对比「有规则 vs 无提示」会把通用效应算成自家功劳（caveman 自陈踩过这个坑，早期数字虚高）。",
+      "故必须有中间臂：同等强度的朴素指令。诚实 delta = skill 臂 vs 朴素臂，而非 vs 空白臂。"
+    ],
+    "arms": [
+      "baseline_none",
+      "baseline_terse",
+      "with_skill"
+    ],
+    "honest_delta_pair": [
+      "with_skill",
+      "baseline_terse"
+    ],
+    "min_queries": 4,
+    "min_near_miss_negatives": 2,
+    "required_fields": [
+      "arm",
+      "query",
+      "passed",
+      "evidence"
+    ]
+  },
+  "creed_evidence": {
+    "_why": [
+      "v2.0（DESIGN.md 5.3）：十八条守则从文本条款硬化为结构化证据登记。",
+      "只检『存在 + 非空 + 指针可达』，不检质量：思考深度/检索广度/RSI 成效不可机检，诚实标软约束，不造假门。",
+      "分级豁免：T0/T1 省略 creed_evidence 字段即 PASS（分级省 token，不误伤小任务）。"
+    ],
+    "min_articles": {
+      "T2": 6,
+      "T3": 10
+    },
+    "article_range": [
+      1,
+      18
+    ],
+    "check_pointer_reachability": true,
+    "_note": "evidence_ref 三类：文件路径（相对 --root 必须存在）/ http(s) URL（仅格式校验）/ cmd: 前缀（登记命令文本，脚本纯只读不代执行）"
+  }
+}

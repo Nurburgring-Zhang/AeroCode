@@ -99,6 +99,65 @@ public sealed class AppSettings
     /// <summary>R3-δ 代管字段（γ：沙箱强制执行开关）。默认 false = 现行为。契约钉死名与默认值。</summary>
     [JsonPropertyName("sandbox")]
     public SandboxSettings Sandbox { get; set; } = new();
+
+    /// <summary>ACS v2.3.0 纪律运行时设置节（分级/成本闸门/有界重试/交接/诚实台账）。默认值镜像 ACS thresholds。</summary>
+    [JsonPropertyName("acs")]
+    public AcsSettings Acs { get; set; } = new();
+}
+
+/// <summary>
+/// ACS v2.3.0 纪律运行时设置节。默认值镜像 ACS spec/thresholds.json（单一真相源为内嵌资源，
+/// 本节是用户可调投影；Enabled=false 时全部纪律组件不注入，现行为逐字节不变）。
+/// </summary>
+public sealed class AcsSettings
+{
+    /// <summary>总开关：false = ACS 纪律组件不注入（现行为）；true = 成本闸门/分级/台账生效。</summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    /// <summary>窄步闸：单步可验证产出上限（默认 1）。</summary>
+    [JsonPropertyName("maxOutputsPerStep")]
+    public int MaxOutputsPerStep { get; set; } = 1;
+
+    /// <summary>窄步闸：单步预算分钟（默认 30）。</summary>
+    [JsonPropertyName("maxBudgetMin")]
+    public int MaxBudgetMin { get; set; } = 30;
+
+    /// <summary>回灌禁令：单步引用上文字节上限（默认 20000）。</summary>
+    [JsonPropertyName("maxContextBytes")]
+    public int MaxContextBytes { get; set; } = 20000;
+
+    /// <summary>回灌禁令：单步读文件数上限（默认 5）。</summary>
+    [JsonPropertyName("maxFilesRead")]
+    public int MaxFilesRead { get; set; } = 5;
+
+    /// <summary>回灌禁令：跨步总结字符上限（默认 1000）。</summary>
+    [JsonPropertyName("maxSummaryChars")]
+    public int MaxSummaryChars { get; set; } = 1000;
+
+    /// <summary>思考预算闸：思考占比警戒线（默认 0.40）。</summary>
+    [JsonPropertyName("maxThinkRatio")]
+    public double MaxThinkRatio { get; set; } = 0.40;
+
+    /// <summary>空转闸：连续无新证据 strike 上限（two-strike，默认 2）。</summary>
+    [JsonPropertyName("spinStrikes")]
+    public int SpinStrikes { get; set; } = 2;
+
+    /// <summary>有界重试：最大重试次数（默认 2）。</summary>
+    [JsonPropertyName("maxRetries")]
+    public int MaxRetries { get; set; } = 2;
+
+    /// <summary>压缩交接：字数硬上限（默认 1000）。</summary>
+    [JsonPropertyName("handoffMaxCharsHard")]
+    public int HandoffMaxCharsHard { get; set; } = 1000;
+
+    /// <summary>压缩交接：字数目标（默认 400）。</summary>
+    [JsonPropertyName("handoffTargetChars")]
+    public int HandoffTargetChars { get; set; } = 400;
+
+    /// <summary>诚实台账：必填字段最小字符数（默认 4）。</summary>
+    [JsonPropertyName("honestyMinFieldChars")]
+    public int HonestyMinFieldChars { get; set; } = 4;
 }
 
 /// <summary>B1 成本排序选模设置节（R2 缝合 #20；R2 修复 HIGH-1 起 enabled=true 时接入生产选模点）。</summary>
