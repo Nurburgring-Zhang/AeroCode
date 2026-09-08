@@ -44,14 +44,14 @@
                                         <CheckBox Grid.Column="0" VerticalAlignment="Center"
                                                   IsChecked="{Binding IsCompleted, Mode=TwoWay}"
                                                   ToolTip.Tip="勾选/取消完成（真实落库）"
-                                                  Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).ToggleTodoCommand}"
+                                                  Command="{Binding $parent[ListBox].DataContext.ToggleTodoCommand}"
                                                   CommandParameter="{Binding}" />
                                         <TextBlock Grid.Column="1" Text="{Binding Content}" FontSize="12"
                                                    TextWrapping="Wrap" VerticalAlignment="Center"
                                                    Foreground="{StaticResource ChatFg}" />
                                         <Button Grid.Column="2" Content="🗑" FontSize="10" Padding="3"
                                                 VerticalAlignment="Center" ToolTip.Tip="删除待办"
-                                                Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).DeleteTodoCommand}"
+                                                Command="{Binding $parent[ListBox].DataContext.DeleteTodoCommand}"
                                                 CommandParameter="{Binding}" />
                                     </Grid>
                                 </DataTemplate>
@@ -78,15 +78,15 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
                                     <Button Content="📌" FontSize="10" Padding="3"
                                             ToolTip.Tip="置顶/取消置顶"
-                                            Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).TogglePinCommand}"
+                                            Command="{Binding $parent[ListBox].DataContext.TogglePinCommand}"
                                             CommandParameter="{Binding}" />
                                     <Button Content="🌿" FontSize="10" Padding="3"
                                             ToolTip.Tip="分叉会话（复制元数据与全部消息为新会话，标题带 fork）"
-                                            Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).ForkSessionCommand}"
+                                            Command="{Binding $parent[ListBox].DataContext.ForkSessionCommand}"
                                             CommandParameter="{Binding}" />
                                     <Button Content="🗑" FontSize="10" Padding="3"
                                             ToolTip.Tip="删除会话"
-                                            Command="{Binding $parent[ListBox].((vm:ChatViewModel)DataContext).DeleteSessionCommand}"
+                                            Command="{Binding $parent[ListBox].DataContext.DeleteSessionCommand}"
                                             CommandParameter="{Binding}" />
                                 </StackPanel>
                             </Grid>
@@ -273,7 +273,7 @@
                                             </TextBlock.Text>
                                         </TextBlock>
                                         <Button Content="✕" FontSize="9" Padding="2"
-                                                Command="{Binding $parent[UserControl].((vm:ChatViewModel)DataContext).RemoveAttachmentCommand}"
+                                                Command="{Binding $parent[UserControl].DataContext.RemoveAttachmentCommand}"
                                                 CommandParameter="{Binding}"
                                                 Background="Transparent" BorderThickness="0"
                                                 Foreground="{StaticResource ChatRed}"
