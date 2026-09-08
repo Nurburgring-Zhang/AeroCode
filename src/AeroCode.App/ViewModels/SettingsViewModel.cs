@@ -380,6 +380,32 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _extraBodyJson = string.Empty;
 
+    // ==================== ACS 纪律运行时段 ====================
+
+    /// <summary>ACS 纪律运行时总开关（false = 纪律组件不注入，现行为）。</summary>
+    [ObservableProperty]
+    private bool _acsEnabled;
+
+    /// <summary>窄步闸：单步预算（分钟）。</summary>
+    [ObservableProperty]
+    private int _acsMaxBudgetMin = 30;
+
+    /// <summary>回灌禁令：跨步总结字符上限。</summary>
+    [ObservableProperty]
+    private int _acsMaxSummaryChars = 1000;
+
+    /// <summary>空转闸：连续无新证据 strike 上限（two-strike）。</summary>
+    [ObservableProperty]
+    private int _acsSpinStrikes = 2;
+
+    /// <summary>有界重试：最大重试次数。</summary>
+    [ObservableProperty]
+    private int _acsMaxRetries = 2;
+
+    /// <summary>思考预算闸：思考占比警戒线（0-1）。</summary>
+    [ObservableProperty]
+    private double _acsMaxThinkRatio = 0.40;
+
     /// <summary>模型画像编辑段（Save 时 Upsert/合并删除并落盘 moa-profiles.json）。</summary>
     public ObservableCollection<ProfileEditorItem> ProfileEditors { get; } = new();
 
@@ -655,6 +681,14 @@ public sealed partial class SettingsViewModel : ObservableObject
         IsSchedulerRunning = _scheduler is not null && s.Scheduler.Enabled;
         RefreshHookItems();
         RefreshJobs();
+
+        // ACS 纪律运行时段
+        AcsEnabled = s.Acs.Enabled;
+        AcsMaxBudgetMin = Math.Clamp(s.Acs.MaxBudgetMin, 1, 240);
+        AcsMaxSummaryChars = Math.Clamp(s.Acs.MaxSummaryChars, 100, 10000);
+        AcsSpinStrikes = Math.Clamp(s.Acs.SpinStrikes, 1, 10);
+        AcsMaxRetries = Math.Clamp(s.Acs.MaxRetries, 0, 10);
+        AcsMaxThinkRatio = Math.Clamp(s.Acs.MaxThinkRatio, 0.05, 1.0);
     }
 
     /// <summary>切走 provider 前把在编辑的 Extra* 文本提交回旧 config（合法写字，非法暂存原文）。</summary>
@@ -974,6 +1008,13 @@ public sealed partial class SettingsViewModel : ObservableObject
             // 钩子加载发生在组合根启动，调度启停用段内 Start/Stop 按钮即时生效）。
             s.Hooks.Enabled = HooksEnabled;
             s.Scheduler.Enabled = SchedulerEnabled;
+            // ACS 纪律运行时段落盘
+            s.Acs.Enabled = AcsEnabled;
+            s.Acs.MaxBudgetMin = Math.Clamp(AcsMaxBudgetMin, 1, 240);
+            s.Acs.MaxSummaryChars = Math.Clamp(AcsMaxSummaryChars, 100, 10000);
+            s.Acs.SpinStrikes = Math.Clamp(AcsSpinStrikes, 1, 10);
+            s.Acs.MaxRetries = Math.Clamp(AcsMaxRetries, 0, 10);
+            s.Acs.MaxThinkRatio = Math.Clamp(AcsMaxThinkRatio, 0.05, 1.0);
             await _settings.SaveAsync();
             _theme.Apply(SelectedTheme);
 

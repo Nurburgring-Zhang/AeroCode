@@ -5,6 +5,7 @@
 // invoke→record→auto-patch learning loop through real public APIs.
 using AeroCode.Skills.AutoCreate;
 using AeroCode.Skills.Bundled.Analysis;
+using AeroCode.Skills.Bundled.Acs;
 using AeroCode.Skills.Bundled.Engineering;
 using AeroCode.Skills.Bundled.Productivity;
 using AeroCode.Skills.Bundled.Research;
@@ -79,6 +80,13 @@ public sealed class SkillHub
         TryRegister(() => new EmbeddingSkill());
         TryRegister(() => new RoslynAnalyzerSkill());
         TryRegister(() => new AcquireDeploySkill());
+        // ACS v2.3.0 技能束（纪律 SOP，内嵌 SKILL.md）
+        TryRegister(() => new UniversalTaskCodeSkill());
+        TryRegister(() => new LoopEngineeringSkill());
+        TryRegister(() => new GraphEngineeringSkill());
+        TryRegister(() => new SelfVerifyScalingSkill());
+        TryRegister(() => new TokenThriftSkill());
+        TryRegister(() => new QoderNativeIntegrationSkill());
     }
 
     private void TryRegister(Func<ISkill> factory)

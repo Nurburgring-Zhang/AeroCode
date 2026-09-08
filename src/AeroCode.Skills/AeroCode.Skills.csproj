@@ -25,4 +25,9 @@
     <ProjectReference Include="..\AeroCode.AI\AeroCode.AI.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- ACS v2.3.0 技能束（内嵌 SKILL.md，AcsSkill 运行时加载） -->
+    <EmbeddedResource Include="Bundled/Acs/*.md" />
+  </ItemGroup>
+
 </Project>

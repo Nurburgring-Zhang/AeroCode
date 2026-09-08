@@ -435,6 +435,35 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ACS 纪律运行时 -->
+                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="ACS 纪律运行时" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                        <Grid ColumnDefinitions="Auto,Auto">
+                            <CheckBox Grid.Column="0" Content="启用 ACS 纪律运行时（分级/成本闸门/有界重试/交接/诚实台账）"
+                                      IsChecked="{Binding AcsEnabled, Mode=TwoWay}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="160,*,160,*">
+                            <TextBlock Grid.Column="0" Text="单步预算（分钟）" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" />
+                            <NumericUpDown Grid.Column="1" Value="{Binding AcsMaxBudgetMin, Mode=TwoWay}" Minimum="1" Maximum="240" Increment="5" FontSize="12" />
+                            <TextBlock Grid.Column="2" Text="总结字符上限" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                            <NumericUpDown Grid.Column="3" Value="{Binding AcsMaxSummaryChars, Mode=TwoWay}" Minimum="100" Maximum="10000" Increment="100" FontSize="12" />
+                        </Grid>
+                        <Grid ColumnDefinitions="160,*,160,*">
+                            <TextBlock Grid.Column="0" Text="空转 strike 上限" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" />
+                            <NumericUpDown Grid.Column="1" Value="{Binding AcsSpinStrikes, Mode=TwoWay}" Minimum="1" Maximum="10" Increment="1" FontSize="12" />
+                            <TextBlock Grid.Column="2" Text="最大重试次数" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                            <NumericUpDown Grid.Column="3" Value="{Binding AcsMaxRetries, Mode=TwoWay}" Minimum="0" Maximum="10" Increment="1" FontSize="12" />
+                        </Grid>
+                        <Grid ColumnDefinitions="160,*">
+                            <TextBlock Grid.Column="0" Text="思考占比警戒线" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" />
+                            <NumericUpDown Grid.Column="1" Value="{Binding AcsMaxThinkRatio, Mode=TwoWay}" Minimum="0.05" Maximum="1.0" Increment="0.05" FontSize="12" />
+                        </Grid>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                                   Text="ACS v2.3.0 纪律运行时：T0-T3 任务分级、四道成本闸门（窄步/回灌/空转/思考预算）、有界重试、压缩交接、诚实台账。阈值默认镜像 ACS spec/thresholds.json；关闭时纪律组件不注入，现行为不变。随 Save 落盘。" />
+                    </StackPanel>
+                </Border>
+
             </StackPanel>
         </ScrollViewer>
     </DockPanel>
