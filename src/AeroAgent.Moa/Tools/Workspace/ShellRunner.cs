@@ -22,8 +22,12 @@ public sealed record ShellResult(int ExitCode, string StdOut, string StdErr, boo
 /// </summary>
 public sealed record ShellSandboxOptions
 {
-    /// <summary>是否强制沙箱。默认 false = 现行为（直接执行）。</summary>
-    public bool Enforce { get; init; }
+    /// <summary>
+    /// 是否强制沙箱。默认 false = 现行为（直接执行）。
+    /// R4 γ-2：可写（非 init-only）——ShellRunner/ShellSandboxGate 逐次调用读取当前值，
+    /// 组合根经 SettingsChanged 订阅更新即可运行时生效不重启（S-LOW-6 enforce 快照语义修复）。
+    /// </summary>
+    public bool Enforce { get; set; }
 
     /// <summary>单进程提交内存上限（字节）；null = 不设。默认 1GB。</summary>
     public long? ProcessMemoryLimitBytes { get; init; } = 1L << 30;
@@ -158,11 +162,12 @@ public sealed class ShellRunner
         {
             var psi = BuildShellStartInfo(command);
 
-            // ---- fail-closed #3：Start+Assign 原子化（WindowsJobSandbox.Start：圈入失败先杀刚拉起的进程再抛）----
-            Process process;
+            // ---- fail-closed #3：挂起圈入（S-MED-4 修复：CREATE_SUSPENDED → Assign → Resume，
+            // 进程第一条用户态指令执行前必已在 job 内，Start→Assign 竞态窗口归零）----
+            SandboxedStartResult started;
             try
             {
-                process = job.Start(psi);
+                started = job.StartSuspended(psi, ConsoleOutputEncoding());
             }
             catch (Exception ex)
             {
@@ -172,18 +177,69 @@ public sealed class ShellRunner
                     "sandbox.enforce=true but sandboxed process start failed; execution refused (fail-closed, no unsandboxed fallback).", ex);
             }
 
-            try
+            using (started)
             {
-                var stdout = new StringBuilder();
-                var stderr = new StringBuilder();
-                process.OutputDataReceived += (_, e) => AppendCapped(stdout, e.Data);
-                process.ErrorDataReceived += (_, e) => AppendCapped(stderr, e.Data);
-                return await CollectOutputAsync(process, stdout, stderr, timeout, ct, command);
+                return await CollectSandboxedOutputAsync(started, timeout, ct, command);
             }
-            finally
-            {
-                try { process.Dispose(); } catch { /* 进程可能已退 */ }
-            }
+        }
+    }
+
+    /// <summary>
+    /// 沙箱路径输出收集（自管管道泵读）：与 <see cref="CollectOutputAsync"/> 同语义——
+    /// 超时杀树、取消传播、如实标注；区别仅在输出来自 StartSuspended 的自管 StreamReader
+    ///（Process 由 pid 包装而来，无 .NET 内建的 OutputDataReceived 事件面）。
+    /// </summary>
+    private static async Task<ShellResult> CollectSandboxedOutputAsync(
+        SandboxedStartResult started, TimeSpan timeout, CancellationToken ct, string command)
+    {
+        var process = started.Process;
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
+        var stdoutTask = PumpReaderAsync(started.StandardOutput, stdout);
+        var stderrTask = PumpReaderAsync(started.StandardError, stderr);
+
+        var timedOut = false;
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(timeout);
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            timedOut = true;
+            KillTree(process);
+        }
+
+        if (ct.IsCancellationRequested)
+        {
+            KillTree(process);
+            throw new OperationCanceledException(ct);
+        }
+
+        // 进程退出后管道读端收 EOF；泵读任务收尾（杀树场景给一小段宽限，不无限等）。
+        await Task.WhenAny(Task.WhenAll(stdoutTask, stderrTask), Task.Delay(2000));
+
+        var stdoutText = stdout.ToString();
+        var stderrText = stderr.ToString();
+        if (timedOut)
+        {
+            stderrText = $"{stderrText}\n[aerocode] command timed out after {timeout.TotalSeconds:N0}s and was killed".Trim();
+        }
+
+        return new ShellResult(
+            timedOut ? -1 : process.ExitCode,
+            stdoutText,
+            stderrText,
+            timedOut);
+    }
+
+    /// <summary>逐行泵读一个 StreamReader 进 StringBuilder（封顶同 AppendCapped；EOF 自然结束）。</summary>
+    private static async Task PumpReaderAsync(StreamReader reader, StringBuilder sb)
+    {
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            AppendCapped(sb, line);
         }
     }
 

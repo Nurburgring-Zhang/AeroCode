@@ -306,7 +306,7 @@ public sealed class MissionApprovalRoutingTests : IDisposable
     }
 
     [Fact]
-    public void RejectThenNewEscalation_ReSeedsStillPendingCard()
+    public void RejectThenNewEscalation_RejectedRemembered_NotReSeeded()
     {
         var policy = new HumanPauseEscalationPolicy();
         var controller = _host.BuildController(policy);
@@ -317,10 +317,27 @@ public sealed class MissionApprovalRoutingTests : IDisposable
 
         _host.Raise(policy, "第二次偏离");
 
-        // 拒绝过的凭据未消费仍在队列：新升级触发补弹时如实重新呈现（不静默吞掉待审批项）。
+        // F-LOW-1 拒绝记忆：拒绝过的凭据在控制器侧仍未消费（不丢失、仍可经 API 批准），
+        // 但补弹种子不再重新入卡（不重复打扰）；新凭据照常呈现。
         Assert.Equal(2, controller.PendingEscalations.Count);
-        Assert.Equal(2, vm.PendingApprovalCards.Count);
-        Assert.Contains(vm.PendingApprovalCards, c => c.Id == firstId);
+        var card = Assert.Single(vm.PendingApprovalCards);
+        Assert.NotEqual(firstId, card.Id);
+        Assert.True(controller.TryApproveEscalation(firstId)); // 被拒凭据批准 API 仍可达
+    }
+
+    [Fact]
+    public void MissionEventStream_StatusTextUpdatesLive_CredentialMasked()
+    {
+        var policy = new HumanPauseEscalationPolicy();
+        var controller = _host.BuildController(policy);
+        var vm = _host.BuildViewModel(controller, marshaller: a => a());
+
+        _host.Raise(policy, "偏离升级");
+
+        // 实时事件流：升级事件 → StatusText 呈现（Detail 只含截断凭据 id，全量凭据不入 UI 状态）。
+        Assert.Contains("升级待人工审批", vm.StatusText, StringComparison.Ordinal);
+        var fullId = controller.PendingEscalations.Single().Id;
+        Assert.DoesNotContain(fullId, vm.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -348,7 +365,8 @@ public sealed class MissionApprovalRoutingTests : IDisposable
         _host.Raise(policy, "任意线程触发");
 
         Assert.Empty(vm.PendingApprovalCards); // 未经 UI 线程编组，不入展示队列
-        Assert.Single(queued);
+        // 两条编组动作：审批卡（EscalationReceived）+ 实时事件流（MissionEventRaised，R4 β）。
+        Assert.Equal(2, queued.Count);
         foreach (var action in queued)
         {
             action(); // 模拟 UI 线程执行

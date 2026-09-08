@@ -255,6 +255,9 @@ public class CapabilityMatrixTests
             // v1 结构延续：文件名 / 表头 / 图例逐项保留。
             Assert.Contains("| ProviderId |", md);
             Assert.Contains("State legend:", md);
+            // R4 δ-5：EffortTiers 行判定依据补注（配置/模型 id，非运行时验证）。
+            Assert.Contains("EffortTiers note:", md);
+            Assert.Contains("not runtime-verified", md);
         }
         finally
         {

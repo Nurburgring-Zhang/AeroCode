@@ -155,14 +155,22 @@ public sealed class DeprecationMonitor
     }
 
     /// <summary>
-    /// 日志脱敏：URL 只保留 host+path（剥离 query，可能含 key 参数）。
+    /// 日志脱敏：URL 只保留 scheme+host(+port)+path——剥离 query（可能含 key 参数）、
+    /// fragment 与 userinfo（实测 GetLeftPart(Path) 原样携带 user:pass@ 凭据，R4 审查加固）。
     /// 公开供消费方（如网关执行路径的 MarkOnly 检查）复用同一脱敏口径，避免各自记录完整 URL。
     /// </summary>
     public static string RedactUrl(string url)
     {
         if (Uri.TryCreate(url, UriKind.Absolute, out var u))
         {
-            return u.GetLeftPart(UriPartial.Path);
+            var builder = new UriBuilder(u)
+            {
+                UserName = string.Empty,
+                Password = string.Empty,
+                Query = string.Empty,
+                Fragment = string.Empty,
+            };
+            return builder.Uri.GetLeftPart(UriPartial.Path);
         }
         return "<unparsed-url>";
     }

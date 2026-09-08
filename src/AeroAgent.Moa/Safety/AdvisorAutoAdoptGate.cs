@@ -28,15 +28,29 @@ public sealed record AutoAdoptGateResult(AutoAdoptDecision Decision, string Reas
 /// 白名单最小化：允许"被脱敏后仍参与自动采纳判定"的参数名集合；默认空集 =
 /// 任何被脱敏参数都转人工审批。注意：收紧逻辑只在显式启用新开关时生效，
 /// 默认（开关关闭）行为与现状逐字节一致（现状无白名单概念，故白名单不参与默认路径）。
+/// R4 δ-2：recommend 语义钉死——advisor 提示词定义 recommend = 人应该怎么裁决，
+/// 故仅 recommend=allow 可参与自动采纳；ask/deny 一律转人工审批。
 /// </summary>
 public static class AdvisorAutoAdoptGate
 {
     /// <summary>
     /// 裁决。<paramref name="modifiedArgsWhitelist"/> 为 null 或空 = 空集（被脱敏即转人工）。
+    /// <paramref name="advisorRecommend"/> 为 null = 无建议信息（不参与裁决，兼容既有调用方）；
+    /// 非 null 时必须为 "allow" 才允许自动采纳（R4 δ-2：ask = 应人工裁决，绝不自动采纳）。
     /// </summary>
     public static AutoAdoptGateResult Evaluate(
-        AdvisorArgsSanitizationReport? report, IReadOnlySet<string>? modifiedArgsWhitelist)
+        AdvisorArgsSanitizationReport? report, IReadOnlySet<string>? modifiedArgsWhitelist,
+        string? advisorRecommend = null)
     {
+        // R4 δ-2：recommend 非 allow（ask/deny/其它）→ 自动采纳拒绝，转人工审批。
+        if (advisorRecommend is not null &&
+            !string.Equals(advisorRecommend, "allow", StringComparison.Ordinal))
+        {
+            return new AutoAdoptGateResult(
+                AutoAdoptDecision.FallThroughToApproval,
+                $"advisor recommended '{advisorRecommend}'; auto-adopt refused, human approval required");
+        }
+
         // args 无修改（或无参数）：不存在"基于被篡改/被脱敏视图做自动采纳"的风险，按现行为采纳。
         if (report is null || !report.Modified)
         {

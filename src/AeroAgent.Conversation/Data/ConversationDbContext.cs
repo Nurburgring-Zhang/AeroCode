@@ -58,6 +58,7 @@ public class ConversationDbContext : DbContext
             ("ToolCallsJson", "ALTER TABLE chat_messages ADD COLUMN \"ToolCallsJson\" TEXT NULL;"),
             ("ToolCallId", "ALTER TABLE chat_messages ADD COLUMN \"ToolCallId\" TEXT NULL;"),
             ("Name", "ALTER TABLE chat_messages ADD COLUMN \"Name\" TEXT NULL;"),
+            ("AttachmentsJson", "ALTER TABLE chat_messages ADD COLUMN \"AttachmentsJson\" TEXT NULL;"),
         };
 
         foreach (var (column, ddl) in missing)
@@ -135,6 +136,7 @@ CREATE INDEX IF NOT EXISTS ix_todo_items_sessionid ON todo_items (SessionId);";
             e.Property(m => m.ToolCallsJson).HasColumnType("TEXT");
             e.Property(m => m.ToolCallId).HasMaxLength(128);
             e.Property(m => m.Name).HasMaxLength(128);
+            e.Property(m => m.AttachmentsJson).HasColumnType("TEXT");
             e.Property(m => m.Error).HasColumnType("TEXT");
             e.HasIndex(m => m.SessionId);
             e.HasIndex(m => m.CreatedAtUtc);

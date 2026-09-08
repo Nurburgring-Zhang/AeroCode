@@ -244,6 +244,12 @@ internal sealed class ClusterFakeFacade : IChatOrchestrationFacade
         }
     }
 
+    public IAsyncEnumerable<ChatEvent> SendAsync(
+        string sessionId, string userText,
+        IReadOnlyList<MessageAttachment>? attachments,
+        CancellationToken ct = default)
+        => SendAsync(sessionId, userText, ct);
+
     public static AssistantMessageStarted Started(string sessionId, string messageId) => new()
     {
         SessionId = sessionId,

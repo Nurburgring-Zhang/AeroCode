@@ -76,6 +76,25 @@ public sealed class DeprecationConsumerTests
     }
 
     [Fact]
+    public async Task MonitorEnabled_UrlWithQuery_TelemetryRedactedToHostPathOnly()
+    {
+        // R4 δ-3：命中 URL 的 query 可能含 key 参数——遥测字段只留 host+path（RedactUrl 同一口径）。
+        const string fullUrl = "http://aerocode.test/changelog?token=secret-key-123";
+        var handler = new GatewayFakeHttpHandler(
+            (_, _) => GatewayTestData.JsonResponse("deprecated model v1", HttpStatusCode.OK));
+        var monitor = new DeprecationMonitor(
+            enabled: true, urlAllowlist: new[] { fullUrl }, http: new HttpClient(handler));
+
+        var outcome = await ExecuteViaGatewayAsync(monitor);
+
+        Assert.NotNull(outcome.DeprecationMentions);
+        Assert.True(outcome.DeprecationMentions >= 1);
+        var hit = Assert.Single(outcome.DeprecationHitUrls);
+        Assert.Equal("http://aerocode.test/changelog", hit); // query 已剥离
+        Assert.DoesNotContain("secret-key-123", hit, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task MonitorGateOff_Default_CompletelySkipsMonitor()
     {
         // deprecation.monitor 默认 false = 现行为：完全不调 monitor（零外呼、零遥测）。

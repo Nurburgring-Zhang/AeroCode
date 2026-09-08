@@ -137,6 +137,50 @@ public sealed class AutoAdoptTighteningTests : IDisposable
     }
 
     [Fact]
+    public async Task RecommendAsk_LowRisk_NotAutoAdopted_FallsThroughToDialog()
+    {
+        // R4 δ-2：advisor 说 ask（语义=应由人裁决）时，即便 risk=low 且 AutoApproveLowRisk 开启，
+        // 也绝不自动采纳——转弹窗人工裁决（收紧开关关闭路径同样生效）。
+        _provider.DefaultContent = "{\"recommend\":\"ask\",\"risk\":\"low\",\"reason\":\"double-check this\"}";
+        _presenter.Enqueue(new PermissionDialogResult(Approved: true, Remember: false));
+        var broker = CreateBroker(); // tightenAutoAdopt 默认 false
+
+        var decision = await broker.ResolveAsync("write_file", CleanArgs(), CancellationToken.None);
+
+        Assert.Equal(PermissionDecision.Allow, decision); // 人工放行生效（非自动采纳）
+        var prompt = Assert.Single(_presenter.Prompts);   // 确实弹了窗
+        Assert.NotNull(prompt.AdvisorNote);
+        Assert.Contains("ask", prompt.AdvisorNote, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RecommendAsk_TighteningOn_AlsoFallsThroughToDialog()
+    {
+        // 收紧开启路径：ask 在外层条件即被排除，弹窗展示 advisor 建议。
+        _provider.DefaultContent = "{\"recommend\":\"ask\",\"risk\":\"low\",\"reason\":\"double-check this\"}";
+        _presenter.Enqueue(new PermissionDialogResult(Approved: false, Remember: false));
+        var broker = CreateBroker(tightenAutoAdopt: true);
+
+        var decision = await broker.ResolveAsync("write_file", CleanArgs(), CancellationToken.None);
+
+        Assert.Equal(PermissionDecision.Deny, decision); // 人工拒绝生效
+        Assert.Single(_presenter.Prompts);
+    }
+
+    [Fact]
+    public async Task RecommendAllow_LowRisk_StillAutoAdopts()
+    {
+        // δ-2 不误伤允许路径：recommend=allow + risk=low 照旧自动采纳、不弹窗。
+        _provider.DefaultContent = "{\"recommend\":\"allow\",\"risk\":\"low\",\"reason\":\"harmless\"}";
+        var broker = CreateBroker();
+
+        var decision = await broker.ResolveAsync("write_file", CleanArgs(), CancellationToken.None);
+
+        Assert.Equal(PermissionDecision.Allow, decision);
+        Assert.Empty(_presenter.Prompts);
+    }
+
+    [Fact]
     public async Task TighteningOn_NonLowRiskAdvice_ExistingPathUnaffected()
     {
         // 收紧门只管"低风险自动采纳"分支：risk=medium 照旧弹窗（与既有行为一致）。

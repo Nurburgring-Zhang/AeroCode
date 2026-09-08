@@ -203,9 +203,11 @@ public sealed class GatewayOrchestrationFacade
         {
             var results = await monitor.CheckAsync(ct);
             var mentions = results.Sum(r => Math.Max(0, r.DeprecationMentions));
+            // R4 δ-3：命中 URL 统一脱敏（只留 host+path）——query 可能含 key 参数，
+            // WARN 日志与遥测字段同源于此数组，绝不携带完整 URL。
             var urls = results
                 .Where(r => r.DeprecationMentions > 0)
-                .Select(r => r.Url)
+                .Select(r => DeprecationMonitor.RedactUrl(r.Url))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             if (urls.Length > 0)

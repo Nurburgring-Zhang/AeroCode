@@ -60,9 +60,19 @@ public sealed class ToolCallGuardrailValidatorTests
                      "rm -rf /",
                      "rm -fr ~",
                      "rm -rf C:\\",
+                     "rm -rf /etc",
+                     "rm -r -f /usr",
+                     "rm -fr /boot/",
+                     "rm -rf \"/etc\"",
+                     "rm -rf /etc/*",
                      "rd /s /q C:\\old",
+                     "del /q /s C:\\old",
                      "Remove-Item -Recurse -Force C:\\old",
                      "git push origin main --force",
+                     "git push origin +main:main",
+                     "git push -f origin main",
+                     "format D: /fs:ntfs",
+                     "format /fs:ntfs C:",
                  })
         {
             var verdict = validator.Validate(
@@ -73,6 +83,31 @@ public sealed class ToolCallGuardrailValidatorTests
             Assert.Equal("tool-call.destructive-command", finding.Code);
             Assert.Equal(GuardrailSeverity.Critical, finding.Severity);
             Assert.True(finding.Blocking); // 阻断候选（是否真拦截由 GuardrailMode 决定）
+        }
+    }
+
+    [Fact]
+    public void NonDestructiveLookalikes_NoFalsePositive()
+    {
+        // R4 δ-1 误报守卫：format 裸词（合法格式化命令）、系统目录子路径（正常运维）、
+        // 普通 push（含分支名带 + 号）不命中破坏词表。
+        var validator = new ToolCallGuardrailValidator();
+
+        foreach (var command in new[]
+                 {
+                     "dotnet format",
+                     "git format-patch -3 HEAD",
+                     "rm -rf /etc/nginx/old.conf",
+                     "rm -rf /usr/local/bin/mytool",
+                     "git push origin main",
+                     "git push origin feature+fix",
+                 })
+        {
+            var verdict = validator.Validate(
+                ToolRequest("run_shell", new Dictionary<string, object?> { ["command"] = command }),
+                CancellationToken.None);
+
+            Assert.True(verdict.HasNoFindings, $"expected no findings for: {command}");
         }
     }
 

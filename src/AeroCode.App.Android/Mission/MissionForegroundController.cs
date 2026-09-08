@@ -69,8 +69,11 @@ public static class MissionForegroundController
     /// 先发 ACTION_STOP 让服务走「释放 wakelock + StopForeground + StopSelf」的优雅路径；
     /// 系统拒绝（后台 StartService 限制）时回退 StopService——OnDestroy 兜底释放
     /// wakelock、系统随服务销毁移除通知。
+    /// R4 δ-4：intent 携带 missionId extra——服务侧只移除该 mission 的保活，
+    /// 活跃集合归零才 StopForeground + StopSelf；其他在保 mission 不受牵连。
+    /// missionId 空白 = 兜底全清语义（无法归属时的保守停止）。
     /// </summary>
-    public static bool TryStopMission(Context context)
+    public static bool TryStopMission(Context context, string? missionId = null)
     {
         if (!MissionForegroundDecisions.ShouldAttemptStop(MissionForegroundOptions.Enabled))
         {
@@ -79,6 +82,11 @@ public static class MissionForegroundController
 
         var intent = new Intent(context, typeof(MissionForegroundService))
             .SetAction(MissionForegroundDecisions.ActionStop);
+        if (MissionForegroundDecisions.IsUsableMissionId(missionId))
+        {
+            intent.PutExtra(MissionForegroundDecisions.ExtraMissionId, missionId);
+        }
+
         try
         {
             context.StartService(intent);

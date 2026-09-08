@@ -14,7 +14,8 @@ namespace AeroAgent.Moa.Guard;
 /// 1. 敏感形态：物化参数的序列化文本命中 canonical 词表（Harness SensitiveTextScrubber，
 ///    S-L1 收敛唯一词表）→ Warning 标记；finding 文本只含参数名与工具名，绝不夹带敏感原文；
 /// 2. 不可逆破坏命令（run_shell 的 command 参数命中 v0 高置信破坏形态：递归强删根/home/盘符、
-///    Windows 递归强删、PowerShell 递归强删、磁盘格式化/分区、git 强推）→ Critical 阻断候选
+///    递归强删关键系统目录本体、Windows 递归强删（/s /q 双序）、PowerShell 递归强删、
+///    磁盘格式化（盘符参数形态）/分区、git 强推（flag 或 +refspec））→ Critical 阻断候选
 ///    （MarkOnly 默认下仍只标记；Enforce 是否真拦截由组合根翻转，本验证器无权决定）。
 /// </summary>
 public sealed class ToolCallGuardrailValidator : IGuardrailValidator
@@ -31,18 +32,29 @@ public sealed class ToolCallGuardrailValidator : IGuardrailValidator
         // 递归强删根/home/盘符：rm -rf /、rm -fr ~、rm -rf C:\（-r 与 -f 同 flag 合写，顺序不限）。
         new(@"\brm\s+-(?:[a-z]*r[a-z]*f|[a-z]*f[a-z]*r)[a-z]*\s+[""']?(/|~|\w:)(\s|$|\\|/)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase),
-        // 递归强删（-r 与 -f 分写）：rm -r -f /、rm -f -r ~。
+        // 递归强删根/home/盘符（合写 flag 后另有其它 flag）：rm -rf -v /。
         new(@"\brm\s+-(?:[a-z]*r[a-z]*f|[a-z]*f[a-z]*r)[a-z]*\s+-[a-z]+\s+[""']?(/|~|\w:)(\s|$|\\|/)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase),
-        // Windows 递归强删：rd /s /q、del /s /q、rmdir /s /q。
-        new(@"\b(?:rd|rmdir|del)\s+/s\s+/q\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        // 递归强删根/home/盘符（-r 与 -f 分写，顺序不限）：rm -r -f /、rm -f -r ~（R4 δ-1 补漏）。
+        new(@"\brm\s+(?:-[a-z]*r[a-z]*\s+-[a-z]*f[a-z]*|-[a-z]*f[a-z]*\s+-[a-z]*r[a-z]*)(?:\s+-[a-z]+)*\s+[""']?(/|~|\w:)(\s|$|\\|/)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        // 递归强删关键系统目录本体（R4 δ-1 补漏）：rm -rf /etc、rm -r -f /usr、rm -fr /boot/、rm -rf "/etc"、rm -rf /etc/*。
+        // 只钉目录本体（尾斜杠/通配/引号包裹仍命中），不钉子路径（rm -rf /etc/nginx 属正常运维），保守防误报。
+        new(@"\brm\s+(?:-(?:[a-z]*r[a-z]*f|[a-z]*f[a-z]*r)[a-z]*\s+(?:-[a-z]+\s+)*|-[a-z]*r[a-z]*\s+-[a-z]*f[a-z]*(?:\s+-[a-z]+)*\s+|-[a-z]*f[a-z]*\s+-[a-z]*r[a-z]*(?:\s+-[a-z]+)*\s+)[""']?/(?:etc|usr|bin|sbin|boot|dev|lib|lib64|proc|sys|root)/?(?=[\s""'*]|$)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        // Windows 递归强删：rd /s /q、del /s /q、rmdir /s /q（R4 δ-1：/s /q 与 /q /s 双序同钉）。
+        new(@"\b(?:rd|rmdir|del)\s+(?:/s\s+/q|/q\s+/s)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
         // PowerShell 递归强删。
         new(@"\bRemove-Item\b[^;|&\r\n]*-Recurse[^;|&\r\n]*-Force", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-        // 磁盘格式化 / 分区工具。
-        new(@"\b(?:format|mkfs(?:\.\w+)?|diskpart)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-        // git 强推（覆盖远端历史）。
-        new(@"\bgit\s+push\s+[^;|&\r\n]*(?:--force(?:-with-lease)?\b|\s-f\b)",
+        // 磁盘格式化（R4 δ-1：format 收敛为盘符参数形态，裸词不再命中——dotnet format / git format-patch 等合法命令不再误报）。
+        new(@"\bformat\s+(?:/[^\s;|&]+\s+)*[a-z]:(?=\s|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        // 分区/文件系统工具（语义唯一，裸词即命中）。
+        new(@"\b(?:mkfs(?:\.\w+)?|diskpart)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        // git 强推（覆盖远端历史）：--force/--force-with-lease/-f，或 +refspec 强推（R4 δ-1 补漏）。
+        new(@"\bgit\s+push\s+[^;|&\r\n]*(?:--force(?:-with-lease)?\b|\s-f\b|\s\+[a-z0-9_][\w./:\-]*)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        // git 强推（force flag 前置：git push -f origin main；原词表只钉尾置 flag，R4 δ-1 补漏）。
+        new(@"\bgit\s+push\s+(?:--force(?:-with-lease)?|-f)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
     };
 
     /// <inheritdoc />

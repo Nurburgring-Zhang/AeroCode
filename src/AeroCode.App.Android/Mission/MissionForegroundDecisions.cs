@@ -52,6 +52,14 @@ public static class MissionForegroundDecisions
     /// <summary>targetSdk ≥ 34 时 FGS 必须声明具体 type（本工程为 dataSync）。</summary>
     public const int MinApiForFgsTypeEnforcement = 34;
 
+    /// <summary>
+    /// wakelock 单次持锁上限（毫秒，R4 δ-4）：6 小时——对齐 API 35 dataSync FGS
+    /// 6h 配额下界（超时系统经 OnTimeout 停服务，锁上限与平台生命周期同界）。
+    /// 超限后锁自动释放：mission 仍受前台通知保活（进程不被杀），但 CPU 可能休眠——
+    /// 优于无上限持锁在 mission 挂死时无限耗电。
+    /// </summary>
+    public const long MaxWakeLockHoldMs = 6 * 60 * 60 * 1000L;
+
     /// <summary>missionId 可用性（非空白即可；格式校验归 mission 层，此处只兜底）。</summary>
     public static bool IsUsableMissionId(string? missionId) => !string.IsNullOrWhiteSpace(missionId);
 

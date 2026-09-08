@@ -551,6 +551,8 @@ public static class CapabilityMatrixGenerator
         }
         sb.AppendLine();
         sb.AppendLine("> State legend: Supported = runtime-verified; Downgraded = documented degradation path; Missing = unverified / probe failed (fail-closed).");
+        // R4 δ-5：EffortTiers 行例外——配置/模型 id 判定，非运行时验证（防误读 Supported 语义）。
+        sb.AppendLine("> EffortTiers note: EffortTiers Supported is judged from provider config / model id (no outbound probe), not runtime-verified.");
 
         // R3-δ 证据附录：Supported 的 evidence 与 Downgraded 的 documented reason 逐行落 md（Missing 无证据，不落行）。
         var evidenced = matrix.Cells

@@ -180,6 +180,12 @@ internal sealed class UnusedFacade : IChatOrchestrationFacade
     public IAsyncEnumerable<ChatEvent> SendAsync(
         string sessionId, string userText, CancellationToken ct = default)
         => throw new NotSupportedException("事件投影测试不走门面");
+
+    public IAsyncEnumerable<ChatEvent> SendAsync(
+        string sessionId, string userText,
+        IReadOnlyList<MessageAttachment>? attachments,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("事件投影测试不走门面");
 }
 
 /// <summary>

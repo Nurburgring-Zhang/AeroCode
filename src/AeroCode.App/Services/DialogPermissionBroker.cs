@@ -129,7 +129,9 @@ public sealed class DialogPermissionBroker : IPermissionBroker
                         }
                         else if (_autoApproveLowRisk
                             && string.Equals(advice.Risk, "low", StringComparison.Ordinal)
-                            && !string.Equals(advice.Recommend, "deny", StringComparison.Ordinal))
+                            && string.Equals(advice.Recommend, "allow", StringComparison.Ordinal))
+                            // R4 δ-2：仅 recommend=allow 参与自动采纳。recommend=ask 语义 = 应由人裁决
+                            //（advisor 提示词自定义），绝不自动采纳；deny 自然排除。
                         {
                             if (!_tightenAutoAdopt)
                             {
@@ -142,7 +144,8 @@ public sealed class DialogPermissionBroker : IPermissionBroker
 
                             // 批次 C 收紧：args 无修改 → 采纳；被脱敏 → 须全部被脱敏参数在白名单内；
                             // 否则转既有审批路径（弹窗人工裁决）——不静默丢弃、不静默放行。
-                            var gate = AdvisorAutoAdoptGate.Evaluate(AdvisorArgsSanitizer.Sanitize(args), _autoAdoptWhitelist);
+                            var gate = AdvisorAutoAdoptGate.Evaluate(
+                                AdvisorArgsSanitizer.Sanitize(args), _autoAdoptWhitelist, advice.Recommend);
                             if (gate.Allow)
                             {
                                 _logger?.LogInformation(

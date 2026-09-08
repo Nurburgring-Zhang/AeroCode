@@ -85,6 +85,12 @@ internal sealed class FakeOrchestrationFacade : IChatOrchestrationFacade
             yield return ev;
         }
     }
+
+    public IAsyncEnumerable<ChatEvent> SendAsync(
+        string sessionId, string userText,
+        IReadOnlyList<AeroAgent.Conversation.Models.MessageAttachment>? attachments,
+        CancellationToken ct = default)
+        => SendAsync(sessionId, userText, ct);
 }
 
 public sealed class MissionControllerTests : IDisposable
@@ -170,6 +176,48 @@ public sealed class MissionControllerTests : IDisposable
         {
             Assert.Contains(state, reached);
         }
+    }
+
+    [Fact]
+    public async Task EventStream_StateTransitions_MirrorTransitionLog_AndStepProgressFired()
+    {
+        var controller = Controller(SucceedingExecutor());
+        var events = new List<MissionEvent>();
+        controller.MissionEventRaised += (_, e) => events.Add(e);
+
+        var record = await controller.RunAsync("写一份技术调研报告");
+
+        var transitions = System.Text.Json.JsonSerializer.Deserialize<List<MissionTransition>>(record.TransitionsJson!)!;
+        var stateEvents = events.FindAll(e => e.Kind == MissionEventKind.StateTransition);
+        // 事件与留痕一一对应：每次 AdvanceAsync/取消留痕后发一条 StateTransition。
+        Assert.Equal(transitions.Count, stateEvents.Count);
+        Assert.Equal(
+            transitions.Select(t => t.To).ToList(),
+            stateEvents.Select(e => e.State ?? throw new InvalidOperationException("StateTransition 事件必须携带状态")).ToList());
+        // 步骤进展：Planning 产出计划后发 StepProgress（真实计划步数，非伪造逐步进展）。
+        Assert.Contains(events, e => e.Kind == MissionEventKind.StepProgress && e.State == MissionState.Planning);
+    }
+
+    [Fact]
+    public async Task EventStream_ThrowingSubscriber_NeverBreaksMission()
+    {
+        var controller = Controller(SucceedingExecutor());
+        controller.MissionEventRaised += (_, _) => throw new InvalidOperationException("订阅方故障");
+
+        var record = await controller.RunAsync("订阅方抛异常也不影响任务");
+
+        Assert.Equal(MissionOutcome.Succeeded, record.Outcome);
+        Assert.Equal(MissionState.ExperienceWritten, record.State);
+    }
+
+    [Fact]
+    public void MaskCredentialId_TruncatesLongIds_ShortIdsKept()
+    {
+        // S-LOW-5：真实凭据 esc-{guid:N}（36 字符）→ 前 8 字符 + 省略号，日志不可复原全量 id。
+        var masked = MissionController.MaskCredentialId("esc-abcdef1234567890abcdef1234567890");
+        Assert.Equal("esc-abcd…", masked);
+        Assert.Equal("short…", MissionController.MaskCredentialId("short"));
+        Assert.Equal("(空凭据)", MissionController.MaskCredentialId(null));
     }
 
     [Fact]

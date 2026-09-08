@@ -130,5 +130,53 @@ public partial class ChatView : UserControl
                 _vm.SendCommand.Execute(null);
             }
         }
+        else if (e.Key == Key.V && e.KeyModifiers.HasFlag(KeyModifiers.Control) && _vm is not null)
+        {
+            // R4-γ：Ctrl+V 粘贴图片附件（仅处理图片；文本粘贴由 TextBox 原生处理）。
+            _ = TryPasteImageFromClipboardAsync();
+        }
+    }
+
+    private async Task TryPasteImageFromClipboardAsync()
+    {
+        try
+        {
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard is null)
+            {
+                return;
+            }
+
+            var formats = await clipboard.GetFormatsAsync();
+            if (formats is null)
+            {
+                return;
+            }
+
+            // 按优先级检查常见图片格式。
+            string[] imageFormats = { "image/png", "image/jpeg", "image/gif", "image/webp" };
+            foreach (var mime in imageFormats)
+            {
+                if (!Array.Exists(formats, f => f.Equals(mime, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                var data = await clipboard.GetDataAsync(mime);
+                if (data is not byte[] bytes || bytes.Length == 0)
+                {
+                    continue;
+                }
+
+                var ext = mime.Split('/')[^1];
+                if (ext == "jpeg") ext = "jpg";
+                _vm!.AttachFromClipboard(bytes, $"clipboard.{ext}", mime);
+                return;
+            }
+        }
+        catch
+        {
+            // 剪贴板访问失败不阻塞输入：静默忽略（用户可重试或用文件选择器）。
+        }
     }
 }

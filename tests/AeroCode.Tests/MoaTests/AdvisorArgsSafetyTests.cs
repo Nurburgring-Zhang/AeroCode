@@ -176,6 +176,46 @@ public sealed class AdvisorAutoAdoptGateTests
     }
 
     [Fact]
+    public void RecommendAsk_FallThroughToApproval_EvenIfArgsUnmodified()
+    {
+        // R4 δ-2：ask 语义 = 应由人裁决——即便 args 完全未修改也绝不自动采纳。
+        var result = AdvisorAutoAdoptGate.Evaluate(
+            Report(modified: false), modifiedArgsWhitelist: null, advisorRecommend: "ask");
+
+        Assert.False(result.Allow);
+        Assert.Equal(AutoAdoptDecision.FallThroughToApproval, result.Decision);
+        Assert.Contains("ask", result.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RecommendDeny_FallThroughToApproval()
+    {
+        var result = AdvisorAutoAdoptGate.Evaluate(
+            Report(modified: false), modifiedArgsWhitelist: null, advisorRecommend: "deny");
+
+        Assert.False(result.Allow);
+        Assert.Equal(AutoAdoptDecision.FallThroughToApproval, result.Decision);
+    }
+
+    [Fact]
+    public void RecommendAllow_ProceedsToArgsEvaluation()
+    {
+        // recommend=allow → 照常进入 args/白名单校验（不改变既有裁决链）。
+        Assert.True(AdvisorAutoAdoptGate.Evaluate(
+            Report(modified: false), modifiedArgsWhitelist: null, advisorRecommend: "allow").Allow);
+        Assert.False(AdvisorAutoAdoptGate.Evaluate(
+            Report(modified: true, "api_key"), modifiedArgsWhitelist: null, advisorRecommend: "allow").Allow);
+    }
+
+    [Fact]
+    public void RecommendNull_LegacyBehaviorUnchanged()
+    {
+        // null = 无建议信息（既有调用方兼容）：不参与裁决。
+        Assert.True(AdvisorAutoAdoptGate.Evaluate(
+            Report(modified: false), modifiedArgsWhitelist: null, advisorRecommend: null).Allow);
+    }
+
+    [Fact]
     public void NullReport_Allow()
     {
         Assert.True(AdvisorAutoAdoptGate.Evaluate(null, null).Allow);

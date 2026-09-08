@@ -113,6 +113,33 @@ public sealed class JobSandboxTests : IDisposable
     }
 
     [Fact]
+    public async Task StartSuspended_ChildInsideJob_BeforeFirstInstruction_AndDisposeKillsTree()
+    {
+        RequireWindows();
+        // S-MED-4 修复验证：CREATE_SUSPENDED → Assign → Resume——恢复后的进程在其执行
+        // 第一条用户态指令前必已圈入 job（Start→Assign 竞态窗口归零），真实 IsProcessInJob 断言。
+        using var sandbox = new WindowsJobSandbox(maxActiveProcesses: 64);
+        var psi = SleepPsi(30);
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        using var started = sandbox.StartSuspended(psi);
+        var child = started.Process;
+
+        Assert.False(child.HasExited);
+        Assert.True(IsProcessInJob(child.Handle, sandbox.Handle, out var inJob), "IsProcessInJob P/Invoke 失败");
+        Assert.True(inJob, "StartSuspended 恢复的进程必须已在 job 内（挂起态圈入，窗口归零）");
+
+        sandbox.Dispose(); // KillOnJobClose：沙箱消亡 = 进程树全灭（与旧 Start 路径同语义）
+
+        await WaitExitAsync(child, TimeSpan.FromSeconds(10));
+        Assert.True(child.HasExited, "StartSuspended 路径同样受 KillOnJobClose 约束（Dispose 后不留孤儿）");
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool IsProcessInJob(IntPtr hProcess, IntPtr hJob, out bool result);
+
+    [Fact]
     public async Task CpuTimeLimit_OverlimitProcess_KilledByKernel()
     {
         RequireWindows();

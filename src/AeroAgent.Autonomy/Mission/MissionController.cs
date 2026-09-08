@@ -92,6 +92,15 @@ public sealed class MissionController
     /// <summary>偏离升级受理事件（UI/观测可订阅；订阅方异常不影响受理链路）。</summary>
     public event Action<EscalationRequest>? EscalationReceived;
 
+    /// <summary>
+    /// 实时任务事件流（增量观测面，不改变 RunAsync 终态语义）：状态机转换（阶段进入/离开，
+    /// 每次 <c>AdvanceAsync</c> 留痕后发一条 <see cref="MissionEventKind.StateTransition"/>）、
+    /// 步骤进展（Planning 产出计划后发 <see cref="MissionEventKind.StepProgress"/>）、
+    /// 升级产生（受理时发 <see cref="MissionEventKind.EscalationRaised"/>，凭据 id 截断不入事件）。
+    /// 逐订阅者 try/catch 吞异常——任何订阅方故障绝不阻断 mission；无订阅者零开销。
+    /// </summary>
+    public event EventHandler<MissionEvent>? MissionEventRaised;
+
     /// <summary>待人工审批的升级请求快照（Id → 一次性凭据；顺序不保证）。</summary>
     public IReadOnlyList<EscalationRequest> PendingEscalations => _pendingEscalations.Values.ToArray();
 
@@ -109,9 +118,10 @@ public sealed class MissionController
         Interlocked.Increment(ref _escalationCount);
         // S-L2（硬门约定）：Reason 进入日志前过既有敏感形态脱敏器（复用 SensitiveTextScrubber，
         // 不新造第二套）——升级理由可能拼接自模型/工具输出，凭据形态不得原样入日志。
+        // S-LOW-5：凭据全量 id 不进日志——截断为前 8 字符 + 省略号（MaskCredentialId）。
         _logger.LogWarning(
             "任务升级待人工审批：id={EscalationId} turn={Turn} strikes={Strikes} reason={Reason}（凭据一次性，待审批）",
-            request.Id, request.Turn, request.Strikes, SensitiveTextScrubber.Scrub(request.Reason));
+            MaskCredentialId(request.Id), request.Turn, request.Strikes, SensitiveTextScrubber.Scrub(request.Reason));
         try
         {
             EscalationReceived?.Invoke(request);
@@ -120,6 +130,12 @@ public sealed class MissionController
         {
             // 订阅方（UI）异常不阻断升级受理链路。
         }
+
+        // 实时事件流：升级产生（Detail 只含截断凭据 id，全量凭据不入事件/日志）。
+        FireMissionEvent(
+            MissionEventKind.EscalationRaised,
+            null,
+            $"升级待人工审批：凭据 {MaskCredentialId(request.Id)} turn={request.Turn} strikes={request.Strikes}");
     }
 
     /// <summary>
@@ -135,21 +151,22 @@ public sealed class MissionController
             return false;
         }
 
+        // S-LOW-5：凭据全量 id 不进日志（一律 MaskCredentialId 截断形态）。
         if (!_pendingEscalations.TryGetValue(escalationId, out var request))
         {
-            _logger.LogWarning("升级审批被拒：凭据 {EscalationId} 不存在或已移出待审批队列", escalationId);
+            _logger.LogWarning("升级审批被拒：凭据 {EscalationId} 不存在或已移出待审批队列", MaskCredentialId(escalationId));
             return false;
         }
 
         if (!request.TryConsume())
         {
             _pendingEscalations.TryRemove(escalationId, out _);
-            _logger.LogWarning("升级审批被拒：凭据 {EscalationId} 已被消费（一次性语义，不可重放）", escalationId);
+            _logger.LogWarning("升级审批被拒：凭据 {EscalationId} 已被消费（一次性语义，不可重放）", MaskCredentialId(escalationId));
             return false;
         }
 
         _pendingEscalations.TryRemove(escalationId, out _);
-        _logger.LogInformation("升级凭据 {EscalationId} 已被人审批消费（一次性）", escalationId);
+        _logger.LogInformation("升级凭据 {EscalationId} 已被人审批消费（一次性）", MaskCredentialId(escalationId));
         return true;
     }
 
@@ -234,7 +251,7 @@ public sealed class MissionController
         }
         finally
         {
-            FireMissionStopped();
+            FireMissionStopped(record.Id);
         }
     }
 
@@ -257,8 +274,9 @@ public sealed class MissionController
         }
     }
 
-    /// <summary>R3 缝合（α S8）：触发 mission 结束钩子（成功/失败/取消统一；异常吞掉）。</summary>
-    private static void FireMissionStopped()
+    /// <summary>R3 缝合（α S8）：触发 mission 结束钩子（成功/失败/取消统一；异常吞掉）。
+    /// R4 δ-4：携带 missionId，停止侧据此只解除该 mission 的保活。</summary>
+    private static void FireMissionStopped(string missionId)
     {
         var hook = MissionLifetimeHook.MissionStopped;
         if (hook is null)
@@ -268,7 +286,7 @@ public sealed class MissionController
 
         try
         {
-            hook();
+            hook(missionId);
         }
         catch
         {
@@ -393,6 +411,10 @@ public sealed class MissionController
             record.PlanJson = JsonSerializer.Serialize(plan, JsonOpts);
             await AdvanceAsync(record, MissionState.Planning, transitions,
                 $"计划 {plan.Steps.Count} 步（来源 {plan.Source}）", ct);
+            // 实时事件流：步骤进展。计划步数是真实可观测事实（执行器原子运行，
+            // 不伪造逐步进展）；执行起止由 Executing 的两条 StateTransition 事件承载。
+            FireMissionEvent(MissionEventKind.StepProgress, MissionState.Planning,
+                $"计划 {plan.Steps.Count} 步（来源 {plan.Source}）");
         }
         catch (OperationCanceledException) { return await CancelAsync(record, transitions, ct); }
         catch (Exception ex)
@@ -686,7 +708,10 @@ public sealed class MissionController
         record.Error = "任务被取消";
         transitions.Add(new MissionTransition(record.State, record.State, DateTime.UtcNow, "取消"));
         record.TransitionsJson = JsonSerializer.Serialize(transitions, JsonOpts);
-        return await _store.UpsertMissionAsync(record, CancellationToken.None);
+        var saved = await _store.UpsertMissionAsync(record, CancellationToken.None);
+        // 实时事件流：取消路径的自迁移留痕同样外发（与轨迹一一对应）。
+        FireMissionEvent(MissionEventKind.StateTransition, record.State, "取消");
+        return saved;
     }
 
     private async Task AdvanceAsync(
@@ -698,6 +723,8 @@ public sealed class MissionController
         transitions.Add(new MissionTransition(from, to, DateTime.UtcNow, artifact));
         record.TransitionsJson = JsonSerializer.Serialize(transitions, JsonOpts);
         await _store.UpsertMissionAsync(record, ct);
+        // 实时事件流：状态机转换（阶段进入/离开）——落库成功后才发，事件与留痕轨迹一一对应。
+        FireMissionEvent(MissionEventKind.StateTransition, to, artifact);
     }
 
     /// <summary>
@@ -720,6 +747,39 @@ public sealed class MissionController
         }
     }
 
+    /// <summary>
+    /// 实时事件流发射点：逐订阅者 try/catch 吞异常（含 null 短路零开销）——
+    /// 任何订阅方故障绝不阻断 mission 本身（与 MissionLifetimeHook 同一契约）。
+    /// </summary>
+    private void FireMissionEvent(MissionEventKind kind, MissionState? state, string detail)
+    {
+        var handler = MissionEventRaised;
+        if (handler is null)
+        {
+            return;
+        }
+
+        var evt = new MissionEvent(kind, state, detail, DateTime.UtcNow);
+        foreach (var del in handler.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<MissionEvent>)del).Invoke(this, evt);
+            }
+            catch
+            {
+                // 契约：订阅方必须不抛；即便抛了也绝不阻断 mission。
+            }
+        }
+    }
+
+    /// <summary>
+    /// S-LOW-5：凭据全量 id 不进日志/事件——截断为前 8 字符 + 省略号（可关联、不可复原）。
+    /// 真实升级凭据形如 esc-{guid:N}（36 字符），截断后仅保留前缀，无法凭日志重放审批。
+    /// </summary>
+    internal static string MaskCredentialId(string? id)
+        => string.IsNullOrEmpty(id) ? "(空凭据)" : (id!.Length <= 8 ? id + "…" : id[..8] + "…");
+
     private static string Truncate(string? s, int max)
         => string.IsNullOrEmpty(s) ? string.Empty : (s.Length <= max ? s : s[..max]);
 }
@@ -740,3 +800,27 @@ public sealed record MissionResumeResult(
     /// <summary>诚实失败结果（恢复未发生或未完成；Error 人类可读，不含敏感信息）。</summary>
     public static MissionResumeResult Failed(string error) => new(false, null, 0, 0, error, error);
 }
+
+/// <summary>实时任务事件种类（MissionController.MissionEventRaised 的载荷分类）。</summary>
+public enum MissionEventKind
+{
+    /// <summary>状态机转换（阶段进入/离开）：与 TransitionsJson 留痕一一对应。</summary>
+    StateTransition,
+
+    /// <summary>步骤进展：计划步数等真实可观测事实（不伪造逐步进展）。</summary>
+    StepProgress,
+
+    /// <summary>升级产生：偏离升级受理待人工审批（Detail 只含截断凭据 id）。</summary>
+    EscalationRaised,
+}
+
+/// <summary>
+/// 实时任务事件（纯数据 record）：<see cref="Kind"/> 分类、<see cref="State"/> 关联状态
+///（升级事件来自工具循环、无状态机上下文时为 null）、<see cref="Detail"/> 人类可读摘要
+///（不含全量凭据 id）、<see cref="TimestampUtc"/> 发射时刻。
+/// </summary>
+public sealed record MissionEvent(
+    MissionEventKind Kind,
+    MissionState? State,
+    string Detail,
+    DateTime TimestampUtc);

@@ -394,24 +394,40 @@ public partial class App : Application
             // R3 缝合（γ S-1/S-2）：run_shell 沙箱门控注入点。Enforce 映射 settings.sandbox.enforce
             //（默认 false = 现行为逐字节一致：ShellRunner 不建沙箱直跑）；Enforce=true 时由
             // ShellRunner 逐次创建/释放 Job Object，fail-closed 拒绝事件经 Audit 委托记 WARN 审计。
+            // R4 α：同一配置共享给 GitWorkflow（git 族沙箱面），enforce 时 git 子命令同口径受控。
             var sandboxAuditLogger = loggerFactory.CreateLogger("AeroCode.Sandbox");
+            var shellSandboxOptions = new ShellSandboxOptions
+            {
+                Enforce = settings.Current.Sandbox.Enforce,
+                Audit = msg => sandboxAuditLogger.LogWarning("[sandbox-audit] {Message}", msg),
+            };
             toolboxRegistry.Register(new WorkspaceToolbox(
                 workspace,
                 new ShellRunner(
                     workspace.Root,
                     TimeSpan.FromSeconds(settings.Current.Workspace.ShellTimeoutSeconds)),
                 checkpointStore,
-                new ShellSandboxOptions
-                {
-                    Enforce = settings.Current.Sandbox.Enforce,
-                    Audit = msg => sandboxAuditLogger.LogWarning("[sandbox-audit] {Message}", msg),
-                }));
+                shellSandboxOptions));
             if (settings.Current.Sandbox.Enforce)
             {
                 sandboxAuditLogger.LogInformation(
-                    "sandbox.enforce=true：run_shell 走 Job Object 沙箱（fail-closed，非 Windows/创建失败/圈入失败一律拒绝直跑）");
+                    "sandbox.enforce=true：run_shell 与 git 工作流走 Job Object 沙箱（fail-closed，非 Windows/创建失败/圈入失败一律拒绝直跑）");
             }
-            toolboxRegistry.Register(new GitToolbox(new GitWorkflow(workspace.Root)));
+            toolboxRegistry.Register(new GitToolbox(new GitWorkflow(workspace.Root, shellSandboxOptions)));
+            // R4 γ-2 热重载接线：sandbox.enforce 变更运行时生效（不重启）——ShellRunner/GitWorkflow
+            // 逐次调用读取同一 ShellSandboxOptions 实例的当前 Enforce 值（S-LOW-6 快照语义修复）。
+            // 其余开关（budget/loopGuard/curation/deprecation）热重载消费延后 R5（如实记录）。
+            settings.SettingsChanged += (_, _) =>
+            {
+                var newValue = settings.Current.Sandbox.Enforce;
+                if (shellSandboxOptions.Enforce != newValue)
+                {
+                    shellSandboxOptions.Enforce = newValue;
+                    sandboxAuditLogger.LogInformation(
+                        "[settings-hotreload] sandbox.enforce → {Value}（运行时生效，下一次 run_shell/git 命令起适用）",
+                        newValue);
+                }
+            };
             toolboxRegistry.Register(new PlanToolbox(planWorkflow!));
         }
 

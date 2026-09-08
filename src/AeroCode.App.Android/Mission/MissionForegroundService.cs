@@ -163,7 +163,8 @@ public class MissionForegroundService : Service
 
             if (!_wakeLock.IsHeld)
             {
-                _wakeLock.Acquire();
+                // R4 δ-4：带时长上限的持锁——超限自动释放，杜绝 mission 挂死时无限耗电。
+                _wakeLock.Acquire(MissionForegroundDecisions.MaxWakeLockHoldMs);
             }
         }
         catch (Exception ex)

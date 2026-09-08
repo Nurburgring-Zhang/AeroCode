@@ -216,4 +216,24 @@ public class VendorVersionPinTests
         Assert.Equal(503, r.StatusCode);
         Assert.Equal(0, r.DeprecationMentions);
     }
+
+    [Fact]
+    public void RedactUrl_StripsQueryFragmentAndUserinfo_KeepsHostPath()
+    {
+        // R4 审查加固：query（可能含 key）、fragment、userinfo（user:pass@）全部剥离；
+        // 实测 GetLeftPart(Path) 原样携带 userinfo，RedactUrl 必须自行剥掉。
+        var redacted = DeprecationMonitor.RedactUrl(
+            "https://user:pass@example.com:8443/changelog?token=secret-key#frag");
+
+        Assert.Equal("https://example.com:8443/changelog", redacted);
+        Assert.DoesNotContain("pass", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-key", redacted, StringComparison.Ordinal);
+
+        // 无 query/userinfo 的普通 URL 原样保留 host+path。
+        Assert.Equal("http://aerocode.test/changelog",
+            DeprecationMonitor.RedactUrl("http://aerocode.test/changelog"));
+
+        // 不可解析 URL：诚实标记。
+        Assert.Equal("<unparsed-url>", DeprecationMonitor.RedactUrl("not a url"));
+    }
 }

@@ -29,8 +29,14 @@ public enum GitCommitOutcome
 public sealed class GitWorkflow
 {
     private readonly string _workingDirectory;
+    private readonly ShellSandboxOptions? _sandboxOptions;
 
-    public GitWorkflow(string workingDirectory)
+    /// <summary>
+    /// <paramref name="sandboxOptions"/>：git 子命令的沙箱门控（R4 α git 族沙箱面）。
+    /// null（默认）= 现行为逐字节兼容（无沙箱直跑）；传入 Enforce=true 的配置时，
+    /// 每条 git 命令与 run_shell 同口径走 Job Object 沙箱（fail-closed，同一 Audit 出口）。
+    /// </summary>
+    public GitWorkflow(string workingDirectory, ShellSandboxOptions? sandboxOptions = null)
     {
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
@@ -38,6 +44,7 @@ public sealed class GitWorkflow
         }
 
         _workingDirectory = workingDirectory;
+        _sandboxOptions = sandboxOptions;
     }
 
     /// <summary>当前目录是否在 git 工作树内（git 缺失也返回 false）。</summary>
@@ -127,7 +134,9 @@ public sealed class GitWorkflow
     private async Task<ShellResult> RunAsync(string args, CancellationToken ct)
     {
         var runner = new ShellRunner(_workingDirectory);
-        return await runner.RunAsync($"git {args}", timeoutSeconds: 30, ct).ConfigureAwait(false);
+        // R4 α：git 族沙箱面——_sandboxOptions 为 null 时与既有行为逐字节一致（直跑）；
+        // Enforce=true 时每条 git 命令与 run_shell 同口径走 Job Object 沙箱（fail-closed）。
+        return await runner.RunAsync($"git {args}", timeoutSeconds: 30, ct, _sandboxOptions).ConfigureAwait(false);
     }
 
     private static string Normalize(string path) =>

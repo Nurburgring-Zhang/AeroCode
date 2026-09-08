@@ -1,13 +1,18 @@
 // Copyright (c) AeroCode
 // MissionViewModel — Autonomy Mission 面板（批次 B G2-1 + G5，builder-δ；F-M5 审批/恢复 UI，R3 β）。
 // 直连 MissionController 公开 API（RunAsync 返回终态 MissionRecord，轨迹在 TransitionsJson）：
-// 内核零改造——面板只消费其真实产物。轨迹投影在运行结束后按真实 JSON 渲染
-// （控制器无逐阶段事件面，运行中如实显示"执行中"，不伪造实时阶段流）。
+// 内核零改造——面板只消费其真实产物。轨迹投影在运行结束后按真实 JSON 渲染。
+// R4 β：订阅 MissionController.MissionEventRaised 实时事件流（状态机转换/步骤进展/升级产生）
+//   → StatusText 运行中实时呈现（View 已绑定；事件 Detail 凭据 id 已在控制器侧截断）。
 // F-M5 新增（默认=现行为铁律：不改变任何既有面板行为，新 UI 只在有待审批项/用户点击时出现）：
 //   审批卡：订阅 EscalationReceived（事件 → Dispatcher.UIThread）→ OverlayService 弹卡
 //           （reason 过敏感脱敏 + 凭据恒为掩码）→ 批准 = TryApproveEscalation 一次性消费；
 //   恢复入口：「恢复上次检查点」→ ResumeLatestCheckpointAsync；无候选 checkpoint 时
 //           按钮禁用（探针与控制器恢复同源：ResumePlanner fail-closed 判定）；执行中防重入。
+// R4 β LOW 修复：
+//   F-LOW-1 拒绝记忆——用户显式拒绝过的升级凭据按本 VM 生命周期记忆，补弹种子不再重新入卡
+//           （凭据在控制器侧仍未消费、不丢失，批准 API 仍可达；只是不再重复打扰）；
+//   F-LOW-2 卡片去重——同一凭据的覆盖层呈现中（ShowAsync 未返回）不再重复弹第二张。
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -48,6 +53,12 @@ public partial class MissionViewModel : ObservableObject
     private readonly Action<Action> _marshalToUi;
     private readonly Func<long?, CancellationToken, Task<MissionResumeResult>> _resumeInvoker;
     private CancellationTokenSource? _missionCts;
+
+    // F-LOW-1：拒绝记忆（本 VM 生命周期内，被用户显式拒绝的凭据 id 不再重新入卡）。
+    private readonly HashSet<string> _rejectedEscalationIds = new(StringComparer.Ordinal);
+
+    // F-LOW-2：呈现中（ShowAsync 未返回）的卡片 id——同一凭据不重复弹第二张覆盖层。
+    private readonly HashSet<string> _inFlightOverlayIds = new(StringComparer.Ordinal);
 
     [ObservableProperty]
     private string _goalInput = string.Empty;
@@ -114,6 +125,10 @@ public partial class MissionViewModel : ObservableObject
         // F-M5：升级事件可能来自工具循环任意线程 → 统一经 UI 线程回展示逻辑；
         // 订阅方异常不阻断受理链路（控制器侧已兜底，这里同样自容）。
         _controller.EscalationReceived += OnEscalationReceived;
+
+        // R4 β：实时事件流（状态机转换/步骤进展/升级产生）→ StatusText 实时呈现。
+        // 事件 Detail 由控制器保证展示安全（凭据 id 截断、理由在卡片侧另行脱敏）。
+        _controller.MissionEventRaised += OnMissionEvent;
         PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(IsRunning) || e.PropertyName == nameof(IsResuming))
@@ -250,9 +265,39 @@ public partial class MissionViewModel : ObservableObject
         });
     }
 
-    /// <summary>按 Id 去重入队一张卡片（投影全程经 MissionEscalationItem：理由脱敏、凭据恒为掩码）。</summary>
+    /// <summary>
+    /// 实时事件流入口（R4 β）：状态机转换/步骤进展/升级产生 → StatusText 实时呈现。
+    /// 事件 Detail 由控制器保证展示安全（凭据 id 截断）；终态文案仍由 ProjectRecord 收口，
+    /// 运行结束后 ProjectRecord 的 StatusText 覆盖最后一条实时事件（语义不变）。
+    /// </summary>
+    private void OnMissionEvent(object? sender, MissionEvent evt)
+    {
+        _marshalToUi(() =>
+        {
+            try
+            {
+                StatusText = evt.State is { } state
+                    ? $"[{state}] {evt.Detail}"
+                    : evt.Detail;
+            }
+            catch
+            {
+                // 呈现失败不阻断 mission（控制器侧已逐订阅者兜底，这里同样自容）。
+            }
+        });
+    }
+
+    /// <summary>
+    /// 按 Id 去重入队一张卡片（投影全程经 MissionEscalationItem：理由脱敏、凭据恒为掩码）。
+    /// F-LOW-1：被用户显式拒绝过的凭据不再重新入卡（拒绝记忆；凭据在控制器侧仍未消费、不丢失）。
+    /// </summary>
     private void AcceptEscalation(EscalationRequest request)
     {
+        if (_rejectedEscalationIds.Contains(request.Id))
+        {
+            return;
+        }
+
         if (PendingApprovalCards.Any(c => c.Id == request.Id))
         {
             return;
@@ -266,8 +311,8 @@ public partial class MissionViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 呈现所有未决策卡片：先以控制器真实待审批队列重新种子（拒绝过的凭据未消费、仍在队列，
-    /// 会随本次触发再次呈现——诚实于"没有拒绝 API"的控制器语义），再逐张经 OverlayService 弹出。
+    /// 呈现所有未决策卡片：先以控制器真实待审批队列重新种子（被拒绝的凭据由 F-LOW-1
+    /// 拒绝记忆挡在入卡之外），再逐张经 OverlayService 弹出（呈现中的卡片不重复弹，F-LOW-2）。
     /// </summary>
     private void PresentPendingCards()
     {
@@ -282,7 +327,10 @@ public partial class MissionViewModel : ObservableObject
         }
     }
 
-    /// <summary>宿主已挂载时弹卡；未挂载（MainView 未 Loaded / 宿主缺失）→ 卡片留队列，后续触发补弹。</summary>
+    /// <summary>
+    /// 宿主已挂载时弹卡；未挂载（MainView 未 Loaded / 宿主缺失）→ 卡片留队列，后续触发补弹。
+    /// F-LOW-2：同一凭据已有覆盖层在呈现中（ShowAsync 未返回）→ 不重复弹第二张。
+    /// </summary>
     private void TryPresentCard(MissionEscalationCardViewModel card)
     {
         if (_overlay is null || !_overlay.HasHost)
@@ -290,12 +338,17 @@ public partial class MissionViewModel : ObservableObject
             return;
         }
 
+        if (!_inFlightOverlayIds.Add(card.Id))
+        {
+            return;
+        }
+
         var overlay = _overlay;
         var border = MissionApprovalCards.Build(card, b => overlay.CloseOverlay(b));
-        _ = PresentCardAsync(border);
+        _ = PresentCardAsync(card.Id, border);
     }
 
-    private async Task PresentCardAsync(Avalonia.Controls.Border border)
+    private async Task PresentCardAsync(string cardId, Avalonia.Controls.Border border)
     {
         try
         {
@@ -304,6 +357,10 @@ public partial class MissionViewModel : ObservableObject
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[DEGRADED] 审批卡片呈现失败: {ex.Message}");
+        }
+        finally
+        {
+            _inFlightOverlayIds.Remove(cardId);
         }
 
         // ShowAsync 返回 = 覆盖层已移除（含返回键 TryCloseTop）：未决策的卡片仍留队列，
@@ -327,12 +384,17 @@ public partial class MissionViewModel : ObservableObject
         return approved;
     }
 
-    /// <summary>拒绝回调：不消费凭据（凭据仍在控制器待审批队列），卡片移出展示队列。</summary>
+    /// <summary>
+    /// 拒绝回调：不消费凭据（凭据仍在控制器待审批队列），卡片移出展示队列。
+    /// F-LOW-1：凭据 id 入拒绝记忆——后续补弹种子不再重新入卡（不重复打扰；
+    /// 凭据未消费、不丢失，controller.TryApproveEscalation 仍可达）。
+    /// </summary>
     private void RejectEscalation(MissionEscalationCardViewModel card)
     {
+        _rejectedEscalationIds.Add(card.Id);
         PendingApprovalCards.Remove(card);
         HasPendingApprovals = PendingApprovalCards.Count > 0;
-        StatusText = $"✕ 升级 {ShortId(card.Id)} 已拒绝：凭据未消费、仍在待审批队列（新升级或任务结束时会再次呈现）。";
+        StatusText = $"✕ 升级 {ShortId(card.Id)} 已拒绝：凭据未消费、仍在待审批队列（本面板不再重复弹出该项）。";
     }
 
     private static string ShortId(string escalationId)

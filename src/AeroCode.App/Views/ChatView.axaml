@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AeroCode.App.ViewModels"
+             xmlns:models="using:AeroAgent.Conversation.Models"
              xmlns:conv="using:AeroCode.App.Converters"
              x:Class="AeroCode.App.Views.ChatView"
              x:DataType="vm:ChatViewModel">
@@ -110,8 +111,14 @@
                                         Background="{StaticResource ChatUserBubble}"
                                         CornerRadius="12,12,2,12" Padding="12,8"
                                         MaxWidth="560" HorizontalAlignment="Right">
-                                    <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
-                                               Foreground="{StaticResource ChatFg}" FontSize="14" />
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                                   Foreground="{StaticResource ChatFg}" FontSize="14" />
+                                        <TextBlock Text="{Binding AttachmentSummary}"
+                                                   IsVisible="{Binding !!AttachmentSummary}"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{StaticResource ChatMuted}" FontSize="11" />
+                                    </StackPanel>
                                 </Border>
 
                                 <!-- 工具结果消息：紧凑行（徽章 + 参数 + 输出） -->
@@ -241,17 +248,59 @@
                                 Command="{Binding SteerCommand}"
                                 ToolTip.Tip="入队插话（队列满/无会话时如实提示）" />
                     </Grid>
-                    <Grid ColumnDefinitions="*,Auto,Auto">
-                        <TextBox Grid.Column="0" x:Name="InputBox"
+                    <!-- R4-γ：附件预览条（有待附件时显示） -->
+                    <ItemsControl ItemsSource="{Binding PendingAttachments}"
+                                  IsVisible="{Binding !!PendingAttachments.Count}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:MessageAttachment">
+                                <Border Background="{StaticResource ChatPanel}"
+                                        CornerRadius="6" Padding="8,4" Margin="0,0,6,4"
+                                        BorderBrush="{StaticResource ChatBorder}" BorderThickness="1">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="{Binding FileName}" FontSize="11"
+                                                   Foreground="{StaticResource ChatFg}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock FontSize="10"
+                                                   Foreground="{StaticResource ChatMuted}"
+                                                   VerticalAlignment="Center">
+                                            <TextBlock.Text>
+                                                <Binding Path="DisplaySize" />
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                        <Button Content="✕" FontSize="9" Padding="2"
+                                                Command="{Binding $parent[UserControl].((vm:ChatViewModel)DataContext).RemoveAttachmentCommand}"
+                                                CommandParameter="{Binding}"
+                                                Background="Transparent" BorderThickness="0"
+                                                Foreground="{StaticResource ChatRed}"
+                                                ToolTip.Tip="移除附件" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                        <Button Grid.Column="0" Content="📎"
+                                Command="{Binding AttachFileCommand}"
+                                ToolTip.Tip="添加图片附件"
+                                Background="Transparent" BorderThickness="0"
+                                FontSize="18" Padding="8,4"
+                                Foreground="{StaticResource ChatMuted}"
+                                VerticalAlignment="Bottom" />
+                        <TextBox Grid.Column="1" x:Name="InputBox"
                                  Text="{Binding InputText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 Watermark="输入消息，Enter 发送，Shift+Enter 换行…"
+                                 Watermark="输入消息，Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片…"
                                  AcceptsReturn="True" TextWrapping="Wrap"
                                  MinHeight="44" MaxHeight="160" FontSize="14"
                                  KeyDown="OnInputKeyDown" />
-                        <Button Grid.Column="1" Margin="8,0,0,0" Content="⏹ 停止"
+                        <Button Grid.Column="2" Margin="8,0,0,0" Content="⏹ 停止"
                                 Command="{Binding StopCommand}"
                                 IsVisible="{Binding IsStreaming}" />
-                        <Button Grid.Column="2" Margin="8,0,0,0" Content="🚀 发送"
+                        <Button Grid.Column="3" Margin="8,0,0,0" Content="🚀 发送"
                                 Command="{Binding SendCommand}" />
                     </Grid>
                 </StackPanel>

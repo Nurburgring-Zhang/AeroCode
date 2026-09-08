@@ -83,6 +83,14 @@ public partial class MessageItemViewModel : ObservableObject
     [ObservableProperty]
     private string? _errorText;
 
+    /// <summary>附件摘要文本（用户消息气泡底部，如"📎 photo.png (2.3MB)"）。</summary>
+    [ObservableProperty]
+    private string? _attachmentSummary;
+
+    /// <summary>附件缩略图字节（PNG/JPEG 前 4KB 预览，R4-γ 最小实现暂不渲染）。</summary>
+    [ObservableProperty]
+    private byte[]? _attachmentPreview;
+
     [ObservableProperty]
     private int _tokensIn;
 
@@ -372,6 +380,103 @@ public partial class ChatViewModel : ObservableObject
     /// <summary>当前会话的 todo 清单（G5 面板；经 ITodoStore 真实读写）。</summary>
     public ObservableCollection<TodoItemViewModel> Todos { get; } = new();
 
+    /// <summary>R4-γ：待发送的图片附件列表（选中后显示预览条，发送时传给门面）。</summary>
+    public ObservableCollection<MessageAttachment> PendingAttachments { get; } = new();
+
+    /// <summary>R4-γ：打开文件选择器添加图片附件（最小实现：支持 png/jpg/jpeg/gif/webp）。</summary>
+    [RelayCommand]
+    private async Task AttachFileAsync()
+    {
+        if (IsStreaming)
+        {
+            return;
+        }
+
+        var lifetime = Application.Current?.ApplicationLifetime
+            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
+        if (lifetime?.MainWindow is null)
+        {
+            return;
+        }
+
+        var files = await lifetime.MainWindow.StorageProvider.OpenFilePickerAsync(
+            new Avalonia.Platform.Storage.FilePickerOpenOptions
+            {
+                Title = "选择图片附件",
+                AllowMultiple = true,
+                FileTypeFilter = new[]
+                {
+                    new Avalonia.Platform.Storage.FilePickerFileType("图片")
+                    {
+                        Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp" },
+                    },
+                },
+            });
+
+        foreach (var file in files)
+        {
+            var path = file.Path.LocalPath;
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var info = new FileInfo(path);
+                var ext = info.Extension.TrimStart('.').ToLowerInvariant();
+                var mime = ext switch
+                {
+                    "png" => "image/png",
+                    "jpg" or "jpeg" => "image/jpeg",
+                    "gif" => "image/gif",
+                    "webp" => "image/webp",
+                    _ => "application/octet-stream",
+                };
+
+                // 预览字节取前 4KB（缩略图占位，R4-γ 最小实现不渲染）。
+                byte[]? preview = null;
+                if (info.Length > 0)
+                {
+                    var read = (int)Math.Min(info.Length, 4096);
+                    preview = new byte[read];
+                    await using var fs = info.OpenRead();
+                    _ = await fs.ReadAsync(preview.AsMemory());
+                }
+
+                PendingAttachments.Add(new MessageAttachment(
+                    info.Name, mime, info.Length, preview));
+            }
+            catch (Exception ex)
+            {
+                // 单文件失败不影响其他：如实报告。
+                StatusText = $"附件 {Path.GetFileName(path)} 读取失败：{ex.Message}";
+            }
+        }
+    }
+
+    /// <summary>R4-γ：从待发送列表移除一个附件。</summary>
+    [RelayCommand]
+    private void RemoveAttachment(MessageAttachment? attachment)
+    {
+        if (attachment is not null)
+        {
+            PendingAttachments.Remove(attachment);
+        }
+    }
+
+    /// <summary>R4-γ：从剪贴板粘贴图片附件（code-behind 调用）。</summary>
+    public void AttachFromClipboard(byte[] data, string fileName, string mimeType)
+    {
+        if (IsStreaming || data.Length == 0)
+        {
+            return;
+        }
+
+        var preview = data.Length > 4096 ? data.AsSpan(0, 4096).ToArray() : data;
+        PendingAttachments.Add(new MessageAttachment(fileName, mimeType, data.Length, preview));
+    }
+
     /// <summary>权限档位下拉数据源（顺序即枚举定义序：Default→AcceptEdits→Plan→Bypass）。</summary>
     public IReadOnlyList<PermissionMode> PermissionModes { get; } =
         new[] { PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.Plan, PermissionMode.Bypass };
@@ -524,6 +629,8 @@ public partial class ChatViewModel : ObservableObject
                 ToolName = m.Name,
                 ToolCallId = m.ToolCallId,
                 HasToolCalls = !string.IsNullOrEmpty(m.ToolCallsJson),
+                // R4-γ：从 AttachmentsJson 恢复附件摘要投影。
+                AttachmentSummary = BuildAttachmentSummary(m.AttachmentsJson),
                 // 落库时拒绝与失败同为 Degraded；UI 依错误文本恢复"已拒绝"标识。
                 ToolDenied = m.Role == ChatRole.Tool
                     && m.Status == MessageStatus.Degraded
@@ -872,6 +979,21 @@ public partial class ChatViewModel : ObservableObject
         }
 
         var sessionId = SelectedSession!.Id;
+
+        // R4-γ：附件快照后清待发送列表（门面负责序列化，UI 只持快照供投影）。
+        var attachments = PendingAttachments.Count > 0
+            ? PendingAttachments.ToList()
+            : null;
+        PendingAttachments.Clear();
+
+        // 附件摘要投影（用户气泡底部显示文件名列表）。
+        string? attachmentSummary = null;
+        if (attachments is { Count: > 0 })
+        {
+            attachmentSummary = string.Join("\n",
+                attachments.Select(a => $"📎 {a.FileName} ({a.DisplaySize})"));
+        }
+
         InputText = string.Empty;
         IsStreaming = true;
         StatusText = "思考中…";
@@ -883,11 +1005,13 @@ public partial class ChatViewModel : ObservableObject
             Id = Guid.NewGuid().ToString("N"),
             Role = ChatRole.User,
             Content = text,
+            AttachmentSummary = attachmentSummary,
         });
 
         try
         {
-            await foreach (var ev in _facade.SendAsync(sessionId, text, _streamCts.Token))
+            await foreach (var ev in _facade.SendAsync(
+                sessionId, text, attachments, _streamCts.Token))
             {
                 await Dispatcher.UIThread.InvokeAsync(() => HandleEvent(ev));
             }
@@ -930,6 +1054,55 @@ public partial class ChatViewModel : ObservableObject
 
         _permission.CurrentMode = value;
         OnPropertyChanged(nameof(ModeDescription));
+    }
+
+    /// <summary>
+    /// R4-γ：从 AttachmentsJson（[{FileName, MimeType, SizeBytes}]）恢复摘要文本。
+    /// 解析失败返回 null（不阻塞加载；缺失字段如实降级）。
+    /// </summary>
+    private static string? BuildAttachmentSummary(string? attachmentsJson)
+    {
+        if (string.IsNullOrEmpty(attachmentsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(attachmentsJson);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var parts = new List<string>();
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                var name = el.TryGetProperty("FileName", out var n) ? n.GetString() : null;
+                var size = el.TryGetProperty("SizeBytes", out var s) && s.TryGetInt64(out var sz)
+                    ? sz
+                    : 0L;
+                if (name is null)
+                {
+                    continue;
+                }
+
+                var display = size switch
+                {
+                    < 1024 => $"{size}B",
+                    < 1024 * 1024 => $"{size / 1024.0:F1}KB",
+                    _ => $"{size / (1024.0 * 1024.0):F1}MB",
+                };
+                parts.Add($"📎 {name} ({display})");
+            }
+
+            return parts.Count > 0 ? string.Join("\n", parts) : null;
+        }
+        catch
+        {
+            // JSON 损坏或格式变化：不阻塞消息加载。
+            return null;
+        }
     }
 
     /// <summary>

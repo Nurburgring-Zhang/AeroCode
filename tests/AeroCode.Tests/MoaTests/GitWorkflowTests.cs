@@ -313,3 +313,52 @@ public sealed class GitWorkflowTests : IDisposable
         Assert.Contains("Dirty-worktree protection", blocked.Output);
     }
 }
+
+/// <summary>
+/// R4 α git 族沙箱面：Enforce=true 时 GitWorkflow 的每条 git 子命令与 run_shell 同口径
+/// 走 Job Object 沙箱——真实 git 仓内提交成功（证明沙箱内正常工作，非误拒）；
+/// 默认（不传配置）行为不变由 GitWorkflowTests 全体既有测试覆盖。
+/// </summary>
+public sealed class GitWorkflowSandboxTests : IDisposable
+{
+    private readonly string _dir;
+
+    public GitWorkflowSandboxTests()
+    {
+        _dir = Path.Combine(Path.GetTempPath(), $"gitwfsbx_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_dir);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_dir, recursive: true); } catch { /* 清理失败不致命 */ }
+    }
+
+    [SkippableFact]
+    public async Task EnforceTrue_Windows_GitCommandsRunInsideSandbox_CommitSucceeds()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(), "Job Object 沙箱为 Windows-only 能力，非 Windows 跳过");
+        var probe = await new ShellRunner(_dir).RunAsync("git --version", 20, CancellationToken.None);
+        Skip.IfNot(probe.ExitCode == 0, "git CLI 不可用，真实 git 仓测试如实跳过");
+
+        // 建仓用无沙箱 runner（与生产组合根同构：仓初始化不属 git 工作流面）。
+        var plain = new ShellRunner(_dir, TimeSpan.FromSeconds(30));
+        Assert.Equal(0, (await plain.RunAsync("git init", 30, CancellationToken.None)).ExitCode);
+        Assert.Equal(0, (await plain.RunAsync("git config user.email a@b.c", 15, CancellationToken.None)).ExitCode);
+        Assert.Equal(0, (await plain.RunAsync("git config user.name t", 15, CancellationToken.None)).ExitCode);
+
+        var audits = new System.Collections.Generic.List<string>();
+        var git = new GitWorkflow(_dir, new ShellSandboxOptions { Enforce = true, Audit = audits.Add });
+
+        Assert.True(await git.IsRepoAsync(CancellationToken.None), "沙箱内 git rev-parse 必须正常工作");
+
+        var tracked = Path.Combine(_dir, "file.txt");
+        File.WriteAllText(tracked, "v1");
+        var (outcome, detail) = await git.AutoCommitAsync(tracked, "feat: sandboxed commit", protectDirty: false, CancellationToken.None);
+        Assert.True(outcome == GitCommitOutcome.Committed, $"沙箱内自动提交应成功：{outcome} {detail}");
+
+        var log = await plain.RunAsync("git log -1 --pretty=%s", 20, CancellationToken.None);
+        Assert.Contains("sandboxed commit", log.StdOut);
+        Assert.Empty(audits); // 无 fail-closed 拒绝事件（有则为沙箱门误拒 git 命令）
+    }
+}

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
@@ -16,13 +17,20 @@ namespace AeroAgent.Conversation.Orchestration;
 
 /// <summary>
 /// 统一对话门面：用户输入 → 持久化 → 按会话策略编排 → 事件流。
-/// UI 只需订阅 <see cref="SendAsync"/> 的事件流。
+/// UI 只需订阅 <see cref="SendAsync(string, string, CancellationToken)"/> 的事件流。
 /// </summary>
 public interface IChatOrchestrationFacade
 {
     /// <summary>发送一条用户消息并返回编排事件流。</summary>
     IAsyncEnumerable<ChatEvent> SendAsync(
         string sessionId, string userText, CancellationToken ct = default);
+
+    /// <summary>R4-γ：发送一条带图片附件的用户消息。附件描述前缀注入用户文本。</summary>
+    IAsyncEnumerable<ChatEvent> SendAsync(
+        string sessionId,
+        string userText,
+        IReadOnlyList<MessageAttachment>? attachments,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -59,9 +67,16 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         _logger = logger ?? NullLogger<ChatOrchestrationFacade>.Instance;
     }
 
+    public IAsyncEnumerable<ChatEvent> SendAsync(
+        string sessionId,
+        string userText,
+        CancellationToken ct = default)
+        => SendAsync(sessionId, userText, attachments: null, ct);
+
     public async IAsyncEnumerable<ChatEvent> SendAsync(
         string sessionId,
         string userText,
+        IReadOnlyList<MessageAttachment>? attachments,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(userText))
@@ -91,12 +106,24 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         }
 
         // ---- 持久化用户消息 ----
+        // R4-γ：附件描述前缀注入 + 元数据持久化（预览字节不落 DB）。
+        var effectiveText = userText;
+        string? attachmentsJson = null;
+        if (attachments is { Count: > 0 })
+        {
+            var descriptions = string.Join("\n", attachments.Select(a => a.ToDescription()));
+            effectiveText = descriptions + "\n\n" + userText;
+            attachmentsJson = JsonSerializer.Serialize(
+                attachments.Select(a => new { a.FileName, a.MimeType, a.SizeBytes }).ToArray());
+        }
+
         var userMessage = new ChatMessage
         {
             SessionId = sessionId,
             Role = ChatRole.User,
-            Content = userText,
+            Content = effectiveText,
             Status = MessageStatus.Completed,
+            AttachmentsJson = attachmentsJson,
         };
         var appended = await _sessions.AppendMessageAsync(userMessage);
         if (!appended.IsSuccess)

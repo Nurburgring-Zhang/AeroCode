@@ -85,5 +85,12 @@ public class ChatMessage
     /// <summary>工具结果消息（Role == Tool）调用的工具名。</summary>
     public string? Name { get; set; }
 
+    /// <summary>
+    /// R4-γ 图片附件元数据（JSON 数组，每项含 fileName/mimeType/sizeBytes）。
+    /// 预览字节不落持久化（太大）；完整字节由发送时的内存 Attachment 对象承载。
+    /// null = 无附件（绝大多数消息）。
+    /// </summary>
+    public string? AttachmentsJson { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

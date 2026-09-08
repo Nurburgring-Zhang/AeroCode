@@ -483,7 +483,12 @@ public sealed class SettingsService
         PropertyNameCaseInsensitive = true
     };
 
+    private const int MaxCorruptBackups = 3;
+
     public AppSettings Current { get; private set; } = new();
+
+    /// <summary>R4-γ：设置成功加载或保存后触发（外部文件监视 / 热重载消费者订阅）。</summary>
+    public event EventHandler? SettingsChanged;
 
     /// <summary>
     /// R3-δ 损坏 JSON 加固：最近一次 LoadAsync 的拒载异常（null = 文件缺失/加载成功/上次成功）。
@@ -523,6 +528,7 @@ public sealed class SettingsService
             Current = JsonSerializer.Deserialize<AppSettings>(json, ReadOpts) ?? CreateDefaults();
             LastLoadError = null;
             LastCorruptBackupPath = null;
+            SettingsChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (JsonException ex)
         {
@@ -556,6 +562,7 @@ public sealed class SettingsService
             }
 
             File.Move(path, backup);
+            PruneCorruptBackups(path);
             return backup;
         }
         catch (Exception moveEx)
@@ -563,6 +570,35 @@ public sealed class SettingsService
             // 尽力而为：备份失败不改变默认值降级路径，也不吞掉拒载事实（LastLoadError 已置）。
             System.Diagnostics.Debug.WriteLine($"SettingsService: corrupt settings backup failed: {moveEx.Message}");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// R4-γ（S-LOW-2）：保留最近 <see cref="MaxCorruptBackups"/> 份 corrupt 备份，删除更早的。
+    /// 文件名内嵌 UTC 时间戳（<c>yyyyMMdd'T'HHmmssfff'Z'</c>），字典序即时间序，排序零成本。
+    /// 尽力而为：清理失败不影响备份结果或降级路径。
+    /// </summary>
+    private static void PruneCorruptBackups(string settingsPath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(settingsPath);
+            if (dir is null) return;
+
+            var all = Directory.GetFiles(dir, Path.GetFileName(settingsPath) + ".corrupt-*");
+            if (all.Length <= MaxCorruptBackups) return;
+
+            // 字典序降序 = 最新在前；保留前 MaxCorruptBackups 个，删除其余。
+            var ordered = all.OrderByDescending(f => Path.GetFileName(f)).ToArray();
+            for (var i = MaxCorruptBackups; i < ordered.Length; i++)
+            {
+                try { File.Delete(ordered[i]); }
+                catch { /* 尽力而为 */ }
+            }
+        }
+        catch
+        {
+            // 清理失败不改变备份结果或降级路径。
         }
     }
 
@@ -575,6 +611,7 @@ public sealed class SettingsService
         var tmp = $"{_paths.SettingsFile}.{Guid.NewGuid():N}.tmp";
         await File.WriteAllTextAsync(tmp, json, Encoding.UTF8);
         File.Move(tmp, _paths.SettingsFile, overwrite: true);
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>获取 AIOptions,直接喂给 ProviderFactory。</summary>

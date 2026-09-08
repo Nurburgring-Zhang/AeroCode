@@ -142,6 +142,61 @@ public sealed class MissionForegroundAndroidContractTests
         Assert.Contains("MissionForegroundDecisions.ChannelId", source);
     }
 
+    [SkippableFact]
+    public void Controller_StopIntent_CarriesMissionId_OnlyTargetMissionStopped()
+    {
+        Skip.If(RepoRoot is null, "测试程序集目录向上未找到 AeroCode.sln——无源码树环境跳过");
+
+        // R4 δ-4：stop intent 携带 missionId extra → 服务侧只移除该 mission 的保活，
+        // 不再全清在保 mission（TryStopMission 方法体内必须出现 PutExtra(ExtraMissionId)）。
+        var source = File.ReadAllText(AndroidPath("Mission", "MissionForegroundController.cs"));
+        var stopStart = source.IndexOf("public static bool TryStopMission", StringComparison.Ordinal);
+        var stopEnd = source.IndexOf("RequestNotificationPermissionIfNeeded", stopStart + 1, StringComparison.Ordinal);
+        Assert.True(stopStart >= 0 && stopEnd > stopStart, "TryStopMission 方法体定位失败");
+
+        var stopBody = source[stopStart..stopEnd];
+        Assert.Contains("PutExtra(MissionForegroundDecisions.ExtraMissionId, missionId)", stopBody, StringComparison.Ordinal);
+        Assert.Contains("IsUsableMissionId(missionId)", stopBody, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
+    public void Service_WakelockAcquire_IsTimeBounded()
+    {
+        Skip.If(RepoRoot is null, "测试程序集目录向上未找到 AeroCode.sln——无源码树环境跳过");
+
+        // R4 δ-4：wakelock 必须带时长上限获取；禁止无上限的裸 Acquire()。
+        var source = File.ReadAllText(AndroidPath("Mission", "MissionForegroundService.cs"));
+        Assert.Contains("_wakeLock.Acquire(MissionForegroundDecisions.MaxWakeLockHoldMs)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_wakeLock.Acquire()", source, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
+    public void Decisions_MaxWakeLockHoldMs_IsPinned()
+    {
+        Skip.If(RepoRoot is null, "测试程序集目录向上未找到 AeroCode.sln——无源码树环境跳过");
+
+        // R4 δ-4：持锁上限钉死 6h（对齐 API 35 dataSync FGS 配额下界），勿漂移。
+        var source = File.ReadAllText(AndroidPath("Mission", "MissionForegroundDecisions.cs"));
+        Assert.Contains("MaxWakeLockHoldMs = 6 * 60 * 60 * 1000L", source, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
+    public void LifetimeHook_MissionStopped_CarriesMissionId()
+    {
+        Skip.If(RepoRoot is null, "测试程序集目录向上未找到 AeroCode.sln——无源码树环境跳过");
+
+        // R4 δ-4：MissionStopped 钩子携带 missionId（停止侧据此只解除该 mission 的保活）。
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AeroCode.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        var hookPath = Path.Combine(dir!.FullName, "src", "AeroAgent.Autonomy", "Mission", "MissionLifetimeHook.cs");
+        var source = File.ReadAllText(hookPath);
+        Assert.Matches(@"public\s+static\s+Action<string>\?\s+MissionStopped", source);
+    }
+
     /// <summary>与 AxamlResourceConsistencyTests 同款定位：自测试输出目录向上找解决方案根。</summary>
     private static string? FindRepoRoot()
     {

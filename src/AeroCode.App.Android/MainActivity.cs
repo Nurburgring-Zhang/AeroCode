@@ -116,8 +116,9 @@ public class MainActivity : AvaloniaMainActivity<App>
         }
     }
 
-    /// <summary>R3 缝合（α S8）：mission 结束 → 停前台保活（开关关时零系统调用）。</summary>
-    private void OnMissionLifetimeStopped()
+    /// <summary>R3 缝合（α S8）：mission 结束 → 停前台保活（开关关时零系统调用）。
+    /// R4 δ-4：携带 missionId——只解除该 mission 的保活，不误清其他在保 mission。</summary>
+    private void OnMissionLifetimeStopped(string missionId)
     {
         try
         {
@@ -125,7 +126,7 @@ public class MainActivity : AvaloniaMainActivity<App>
             {
                 try
                 {
-                    Mission.MissionForegroundController.TryStopMission(this);
+                    Mission.MissionForegroundController.TryStopMission(this, missionId);
                 }
                 catch
                 {
