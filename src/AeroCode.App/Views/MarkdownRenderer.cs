@@ -29,14 +29,28 @@ public static class MarkdownRenderer
         .UseAdvancedExtensions()
         .Build();
 
-    private static readonly IBrush Heading1Brush = new SolidColorBrush(Color.FromRgb(0x7C, 0x3A, 0xED));
-    private static readonly IBrush Heading2Brush = new SolidColorBrush(Color.FromRgb(0x06, 0xB6, 0xD4));
-    private static readonly IBrush Heading3Brush = new SolidColorBrush(Color.FromRgb(0x10, 0xB9, 0x81));
-    private static readonly IBrush CodeBrush = new SolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
-    private static readonly IBrush CodeBgBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
-    private static readonly IBrush LinkBrush = new SolidColorBrush(Color.FromRgb(0x06, 0xB6, 0xD4));
-    private static readonly IBrush QuoteBrush = new SolidColorBrush(Color.FromRgb(0x8A, 0x93, 0xA6));
-    private static readonly IBrush MutedBrush = new SolidColorBrush(Color.FromRgb(0x8A, 0x93, 0xA6));
+    // R5 UI 重构：色彩一律解析主题令牌（中性灰阶 + 单点缀色），随 Light/Dark 切换；
+    // 无应用上下文（测试等）时回落深色常量。
+    private static readonly IBrush FallbackFg = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0));
+    private static readonly IBrush FallbackMuted = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A));
+    private static readonly IBrush FallbackAccent = new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xFF));
+    private static readonly IBrush FallbackBorder = new SolidColorBrush(Color.FromRgb(0x2E, 0x2E, 0x2E));
+    private static readonly IBrush FallbackElevated = new SolidColorBrush(Color.FromRgb(0x24, 0x24, 0x24));
+
+    private static IBrush Resolve(string key, IBrush fallback) =>
+        Application.Current is { } app && app.TryFindResource(key, out var v) && v is IBrush b
+            ? b
+            : fallback;
+
+    private static IBrush FgBrush => Resolve("FgPrimary", FallbackFg);
+    private static IBrush Heading1Brush => FgBrush;
+    private static IBrush Heading2Brush => FgBrush;
+    private static IBrush Heading3Brush => FgBrush;
+    private static IBrush CodeBrush => FgBrush;
+    private static IBrush CodeBgBrush => Resolve("BgElevated", FallbackElevated);
+    private static IBrush LinkBrush => Resolve("Accent", FallbackAccent);
+    private static IBrush QuoteBrush => Resolve("Border", FallbackBorder);
+    private static IBrush MutedBrush => Resolve("FgMuted", FallbackMuted);
 
     /// <summary>Build a control tree from markdown source. Returns a ScrollViewer wrapping a StackPanel.</summary>
     public static Control Render(string? markdown, double baseFontSize = 14)
@@ -126,7 +140,7 @@ public static class MarkdownRenderer
             FontSize = baseFontSize,
             TextWrapping = TextWrapping.Wrap,
             LineHeight = baseFontSize * 1.6,
-            Foreground = Brushes.White
+            Foreground = FgBrush
         };
         AppendInlines(tb, p.Inline ?? new Markdig.Syntax.Inlines.ContainerInline(), baseFontSize);
         parent.Children.Add(tb);
@@ -156,8 +170,8 @@ public static class MarkdownRenderer
         {
             n++;
             var bullet = list.IsOrdered ? $"{n}." : "•";
-            var tb = new TextBlock { FontSize = baseFontSize, TextWrapping = TextWrapping.Wrap, Foreground = Brushes.White };
-            var inline = new Run { Text = bullet + "  ", FontWeight = FontWeight.Bold, Foreground = Heading3Brush };
+            var tb = new TextBlock { FontSize = baseFontSize, TextWrapping = TextWrapping.Wrap, Foreground = FgBrush };
+            var inline = new Run { Text = bullet + "  ", FontWeight = FontWeight.Bold, Foreground = MutedBrush };
             tb.Inlines!.Add(inline);
             // First child of ListItemBlock is usually a ParagraphBlock
             var para = item.OfType<ParagraphBlock>().FirstOrDefault();

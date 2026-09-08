@@ -5,18 +5,6 @@
              x:Class="AeroCode.App.Views.AIAssistantView"
              x:DataType="vm:AIAssistantViewModel">
     <UserControl.Resources>
-        <SolidColorBrush x:Key="BgDeep" Color="#0B0D12"/>
-        <SolidColorBrush x:Key="BgPanel" Color="#11141B"/>
-        <SolidColorBrush x:Key="BgElevated" Color="#161A23"/>
-        <SolidColorBrush x:Key="Border" Color="#2A3142"/>
-        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0"/>
-        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6"/>
-        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED"/>
-        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4"/>
-        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
-        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B"/>
-        <SolidColorBrush x:Key="AccentPink" Color="#EC4899"/>
-        <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
     </UserControl.Resources>
 
     <Grid RowDefinitions="Auto,*,Auto,Auto" Background="{StaticResource BgDeep}">
@@ -25,8 +13,8 @@
         <Border Grid.Row="0" Background="{StaticResource BgPanel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
-                <TextBlock Grid.Column="0" Text="🤖 AI 助手" FontSize="15" FontWeight="Bold"
-                           Foreground="{StaticResource AccentPurple}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="0" Text="AI 助手" FontSize="15" FontWeight="Bold"
+                           Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding StatusText}"
                            Foreground="{StaticResource FgMuted}" FontSize="12"
                            VerticalAlignment="Center" Margin="14,0" TextTrimming="CharacterEllipsis"/>
@@ -51,7 +39,7 @@
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
-                <Button Grid.Column="5" Margin="6,0,0,0" Content="🗑️ 清空"
+                <Button Grid.Column="5" Margin="6,0,0,0" Content="清空"
                         Command="{Binding ClearHistoryCommand}" />
             </Grid>
         </Border>
@@ -66,10 +54,10 @@
                                     Background="{StaticResource BgPanel}"
                                     BorderBrush="{StaticResource Border}" BorderThickness="1">
                                 <StackPanel>
-                                    <TextBlock FontSize="11" Foreground="{StaticResource AccentCyan}"
+                                    <TextBlock FontSize="11" Foreground="{StaticResource Accent}"
                                                FontWeight="SemiBold">
                                         <Run Text="{Binding Role}" />
-                                        <Run Text=" · " />
+                                        <Run Text="· " />
                                         <Run Text="{Binding Name, FallbackValue=''}" />
                                     </TextBlock>
                                     <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
@@ -82,10 +70,10 @@
                 </ItemsControl>
                 <Border IsVisible="{Binding IsStreaming}" Padding="12,10"
                         Background="{StaticResource BgElevated}"
-                        BorderBrush="{StaticResource AccentGreen}" BorderThickness="1"
+                        BorderBrush="{StaticResource Accent}" BorderThickness="1"
                         CornerRadius="8">
                     <StackPanel>
-                        <TextBlock Text="✨ 实时生成中..." Foreground="{StaticResource AccentGreen}"
+                        <TextBlock Text="✨ 实时生成中..." Foreground="{StaticResource Accent}"
                                    FontWeight="SemiBold" FontSize="12" />
                         <TextBlock Text="{Binding AssistantReply}" TextWrapping="Wrap"
                                    Foreground="{StaticResource FgPrimary}" FontSize="13"
@@ -101,18 +89,18 @@
             <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*">
                 <!-- Capability 1-6 (主行) -->
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6">
-                    <Button Content="📝 摘要" Command="{Binding SummarizeLastCommand}"
-                            ToolTip.Tip="压缩最后一条用户消息" Background="{StaticResource AccentCyan}" />
-                    <Button Content="🌐 翻译" Command="{Binding TranslateCommand}"
-                            ToolTip.Tip="翻译下面的文本到目标语言" Background="{StaticResource AccentGreen}" />
-                    <Button Content="🏷️ 自动标签" Command="{Binding AutoTagLastCommand}"
-                            ToolTip.Tip="从最后内容提取 1-5 个标签" Background="{StaticResource AccentAmber}" />
-                    <Button Content="🔍 语义搜索" Command="{Binding SemanticSearchCommand}"
-                            ToolTip.Tip="基于查询从所有笔记找最相关 top-5" Background="{StaticResource AccentPink}" />
-                    <Button Content="✍️ 写作" Command="{Binding WriteCommand}"
-                            ToolTip.Tip="基于主题生成结构化内容" Background="{StaticResource AccentPurple}" />
-                    <Button Content="❓ 问答" Command="{Binding AnswerFromNotesCommand}"
-                            ToolTip.Tip="基于笔记 RAG 回答问题" Background="{StaticResource AccentRed}" />
+                    <Button Content="摘要" Command="{Binding SummarizeLastCommand}"
+                            ToolTip.Tip="压缩最后一条用户消息" Background="{StaticResource Accent}" />
+                    <Button Content="翻译" Command="{Binding TranslateCommand}"
+                            ToolTip.Tip="翻译下面的文本到目标语言" Background="{StaticResource Accent}" />
+                    <Button Content="自动标签" Command="{Binding AutoTagLastCommand}"
+                            ToolTip.Tip="从最后内容提取 1-5 个标签" Background="{StaticResource Accent}" />
+                    <Button Content="语义搜索" Command="{Binding SemanticSearchCommand}"
+                            ToolTip.Tip="基于查询从所有笔记找最相关 top-5" Background="{StaticResource Accent}" />
+                    <Button Content="✍ 写作" Command="{Binding WriteCommand}"
+                            ToolTip.Tip="基于主题生成结构化内容" Background="{StaticResource Accent}" />
+                    <Button Content="问答" Command="{Binding AnswerFromNotesCommand}"
+                            ToolTip.Tip="基于笔记 RAG 回答问题" Background="{StaticResource Danger}" />
                 </StackPanel>
                 <!-- 翻译输入区 -->
                 <Grid Grid.Row="1" ColumnDefinitions="*,180,Auto" Margin="0,8,0,0">
@@ -130,9 +118,9 @@
                 </Grid>
                 <!-- 搜索/问答输入区 -->
                 <Grid Grid.Row="3" ColumnDefinitions="*,*,Auto,Auto" Margin="0,6,0,0">
-                    <TextBox Grid.Column="0" Watermark="🔍 语义搜索查询..."
+                    <TextBox Grid.Column="0" Watermark="语义搜索查询..."
                              Text="{Binding SemanticQuery, Mode=TwoWay}" Margin="0,0,3,0" />
-                    <TextBox Grid.Column="1" Watermark="❓ 基于笔记问问题..."
+                    <TextBox Grid.Column="1" Watermark="基于笔记问问题..."
                              Text="{Binding QaQuestion, Mode=TwoWay}" Margin="3,0,0,0" />
                 </Grid>
             </Grid>
@@ -147,16 +135,16 @@
                          Text="{Binding UserInput, Mode=TwoWay}"
                          AcceptsReturn="True" TextWrapping="Wrap"
                          MinHeight="44" MaxHeight="120" />
-                <Button Grid.Column="1" Margin="6,0,0,0" Content="🎯 跑 Skill"
+                <Button Grid.Column="1" Margin="6,0,0,0" Content="跑 Skill"
                         Command="{Binding RunSelectedSkillCommand}"
                         ToolTip.Tip="执行选中的 V3 Skill" />
-                <Button Grid.Column="2" Margin="6,0,0,0" Content="📋 复制"
+                <Button Grid.Column="2" Margin="6,0,0,0" Content="复制"
                         Command="{Binding CopyLastCommand}" />
-                <Button Grid.Column="3" Margin="6,0,0,0" Content="🔁 重新生成"
+                <Button Grid.Column="3" Margin="6,0,0,0" Content="重新生成"
                         Command="{Binding RegenerateCommand}" />
-                <Button Grid.Column="4" Margin="6,0,0,0" Content="📤 发送"
+                <Button Grid.Column="4" Margin="6,0,0,0" Content="发送"
                         Command="{Binding SendCommand}"
-                        Background="{StaticResource AccentPurple}" />
+                        Background="{StaticResource Accent}" />
             </Grid>
         </Border>
     </Grid>

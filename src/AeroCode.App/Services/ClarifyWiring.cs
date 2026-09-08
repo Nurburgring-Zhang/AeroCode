@@ -58,12 +58,18 @@ public sealed class ClarificationGatePort : IClarificationPort
 /// </summary>
 public sealed class AvaloniaClarificationPresenter : IClarificationPresenter
 {
-    public static readonly SolidColorBrush CardBg = new(Color.FromRgb(0x16, 0x1A, 0x23));
-    public static readonly SolidColorBrush CardBorder = new(Color.FromRgb(0x2A, 0x31, 0x42));
-    public static readonly SolidColorBrush FgPrimary = new(Color.FromRgb(0xE5, 0xE9, 0xF0));
-    public static readonly SolidColorBrush FgMuted = new(Color.FromRgb(0x8A, 0x93, 0xA6));
-    public static readonly SolidColorBrush AccentCyan = new(Color.FromRgb(0x06, 0xB6, 0xD4));
-
+    public static readonly SolidColorBrush FallbackCardBg = new(Color.FromRgb(0x24, 0x24, 0x24));
+    public static readonly SolidColorBrush FallbackCardBorder = new(Color.FromRgb(0x2E, 0x2E, 0x2E));
+    public static readonly SolidColorBrush FallbackFgPrimary = new(Color.FromRgb(0xF0, 0xF0, 0xF0));
+    public static readonly SolidColorBrush FallbackFgMuted = new(Color.FromRgb(0x9A, 0x9A, 0x9A));
+    public static readonly SolidColorBrush FallbackAccentCyan = new(Color.FromRgb(0x5B, 0x9D, 0xFF));
+    private static IBrush ResolveBrush(string key, IBrush fallback) =>
+        Application.Current is { } app && app.TryFindResource(key, out var v) && v is IBrush b ? b : fallback;
+    public static IBrush CardBg => ResolveBrush("BgElevated", FallbackCardBg);
+    public static IBrush CardBorder => ResolveBrush("Border", FallbackCardBorder);
+    public static IBrush FgPrimary => ResolveBrush("FgPrimary", FallbackFgPrimary);
+    public static IBrush FgMuted => ResolveBrush("FgMuted", FallbackFgMuted);
+    public static IBrush AccentCyan => ResolveBrush("Accent", FallbackAccentCyan);
 
     /// <inheritdoc />
     public async ValueTask<string?> PresentAsync(string question, CancellationToken ct)

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Globalization;
 using AeroCode.App.Views;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
@@ -24,7 +25,19 @@ public class BoolToBrushConverter : IValueConverter
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         var b = value is bool x && x;
-        return b ? new SolidColorBrush(Color.Parse("#F59E0B")) : Brushes.Transparent;
+        if (!b)
+        {
+            return Brushes.Transparent;
+        }
+
+        // 置顶指示色 = 主题 Accent 令牌（随 Light/Dark 切换），无应用上下文时回落常量。
+        if (Application.Current is { } app &&
+            app.TryFindResource("Accent", out var res) && res is IBrush brush)
+        {
+            return brush;
+        }
+
+        return new SolidColorBrush(Color.Parse("#5B9DFF"));
     }
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
@@ -42,6 +55,23 @@ public class CountToBoolConverter : IValueConverter
 {
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
         => value is int n && n > 0;
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
+/// <summary>int 值与 ConverterParameter 相等 → true（R5 侧栏导航内容面板切换）。</summary>
+public class IndexEqualsToBoolConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int v && parameter is string s && int.TryParse(s, out var target))
+        {
+            return v == target;
+        }
+
+        return false;
+    }
+
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
 }

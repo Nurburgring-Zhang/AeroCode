@@ -4,31 +4,21 @@
              x:Class="AeroCode.App.Views.SkillsView"
              x:DataType="vm:SkillsViewModel">
     <UserControl.Resources>
-        <SolidColorBrush x:Key="BgDeep" Color="#0B0D12"/>
-        <SolidColorBrush x:Key="BgPanel" Color="#11141B"/>
-        <SolidColorBrush x:Key="BgElevated" Color="#161A23"/>
-        <SolidColorBrush x:Key="Border" Color="#2A3142"/>
-        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0"/>
-        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6"/>
-        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED"/>
-        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4"/>
-        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
-        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B"/>
     </UserControl.Resources>
 
     <Grid RowDefinitions="Auto,Auto,*" Background="{StaticResource BgDeep}">
         <Border Grid.Row="0" Background="{StaticResource BgPanel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
-                <TextBlock Grid.Column="0" Text="🎯 V3 Skills" FontSize="15" FontWeight="Bold"
-                           Foreground="{StaticResource AccentPurple}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="0" Text="V3 Skills" FontSize="15" FontWeight="Bold"
+                           Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding StatusText}"
                            Foreground="{StaticResource FgMuted}" FontSize="12" VerticalAlignment="Center" Margin="14,0"/>
                 <ComboBox Grid.Column="2" Width="140" ItemsSource="{Binding Categories}"
                           SelectedItem="{Binding SelectedCategory, Mode=TwoWay}" />
-                <TextBox Grid.Column="3" Width="220" Margin="6,0,0,0" Watermark="🔍 搜索 Skill..."
+                <TextBox Grid.Column="3" Width="220" Margin="6,0,0,0" Watermark="搜索 Skill..."
                          Text="{Binding FilterText, Mode=TwoWay}" />
-                <Button Grid.Column="4" Margin="6,0,0,0" Content="🔄 刷新"
+                <Button Grid.Column="4" Margin="6,0,0,0" Content="刷新"
                         Command="{Binding RefreshCommand}" />
             </Grid>
         </Border>
@@ -59,7 +49,7 @@
                                 BorderBrush="{StaticResource Border}" BorderThickness="1">
                             <Grid ColumnDefinitions="2*,3*,1*,1*,1*,1*">
                                 <StackPanel Grid.Column="0">
-                                    <TextBlock Text="{Binding Id}" Foreground="{StaticResource AccentCyan}"
+                                    <TextBlock Text="{Binding Id}" Foreground="{StaticResource Accent}"
                                                FontFamily="Consolas,monospace" FontSize="12" />
                                     <TextBlock Text="{Binding Name}" Foreground="{StaticResource FgPrimary}"
                                                FontWeight="SemiBold" FontSize="13" />
@@ -68,18 +58,18 @@
                                            Foreground="{StaticResource FgPrimary}" FontSize="12"
                                            TextWrapping="Wrap" VerticalAlignment="Center" />
                                 <Border Grid.Column="2" Padding="6,2" CornerRadius="3"
-                                        Background="{StaticResource AccentPurple}" HorizontalAlignment="Left">
+                                        Background="{StaticResource Accent}" HorizontalAlignment="Left">
                                     <TextBlock Text="{Binding Category}" Foreground="White" FontSize="10" />
                                 </Border>
                                 <TextBlock Grid.Column="3" Text="{Binding Author}"
                                            Foreground="{StaticResource FgMuted}" FontSize="11"
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                 <TextBlock Grid.Column="4" Text="{Binding Invocations}"
-                                           Foreground="{StaticResource AccentGreen}" FontSize="14"
+                                           Foreground="{StaticResource Accent}" FontSize="14"
                                            FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Center" />
                                 <TextBlock Grid.Column="5"
                                            Text="{Binding SuccessRate, StringFormat={}{0:P0}}"
-                                           Foreground="{StaticResource AccentAmber}" FontSize="13"
+                                           Foreground="{StaticResource Accent}" FontSize="13"
                                            FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center" />
                             </Grid>
                         </Border>

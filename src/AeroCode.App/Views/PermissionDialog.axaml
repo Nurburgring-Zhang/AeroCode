@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="AeroCode.App.Views.PermissionDialog"
-        Title="🔐 工具授权"
+        Title=" 工具授权"
         Width="560" Height="460"
         WindowStartupLocation="CenterOwner"
         CanResize="False">

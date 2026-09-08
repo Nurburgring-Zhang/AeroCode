@@ -78,16 +78,30 @@ public sealed class AxamlResourceConsistencyTests
             "存在不可解析的 AXAML 资源引用：\n" + string.Join("\n", failures));
     }
 
-    /// <summary>读取文件内全部 x:Key 定义（含 Window.Resources / UserControl.Resources 等嵌套作用域）。</summary>
+    /// <summary>读取文件内全部 x:Key 定义（含 Window.Resources / UserControl.Resources 等嵌套作用域），
+    /// 并跟随 MergedDictionaries 的 Source 引用递归收集（运行时查找链包含合并字典）。</summary>
     private static HashSet<string> ReadDefinedKeys(string path)
     {
         var keys = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        CollectKeys(path, keys, visited);
+        return keys;
+    }
+
+    private static void CollectKeys(string path, HashSet<string> keys, HashSet<string> visited)
+    {
+        if (!visited.Add(Path.GetFullPath(path)))
+        {
+            return;
+        }
+
         var doc = XDocument.Load(path);
         if (doc.Root is null)
         {
-            return keys;
+            return;
         }
 
+        var baseDir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? string.Empty;
         foreach (var el in doc.Root.DescendantsAndSelf())
         {
             var key = el.Attribute(XamlNs + "Key")?.Value;
@@ -95,9 +109,21 @@ public sealed class AxamlResourceConsistencyTests
             {
                 keys.Add(key);
             }
-        }
 
-        return keys;
+            // 跟随合并字典：Avalonia 用 ResourceInclude（avares）或 ResourceDictionary Source。
+            var source = el.Attribute("Source")?.Value;
+            var isMergedRef = el.Name.LocalName == "ResourceInclude"
+                || (el.Name.LocalName == "ResourceDictionary" && !string.IsNullOrEmpty(source));
+            if (!string.IsNullOrEmpty(source) && isMergedRef)
+            {
+                var relative = source.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+                var merged = Path.Combine(baseDir, relative);
+                if (File.Exists(merged))
+                {
+                    CollectKeys(merged, keys, visited);
+                }
+            }
+        }
     }
 
     /// <summary>根元素为 Window 的文件自成资源作用域根（独立开窗，不继承宿主）。</summary>

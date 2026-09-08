@@ -18,8 +18,12 @@ namespace AeroCode.App.Services;
 /// </summary>
 public sealed class AvaloniaPermissionDialogPresenter : IPermissionDialogPresenter
 {
-    private static readonly SolidColorBrush CardBg = new(Color.FromRgb(0x16, 0x1A, 0x23));
-    private static readonly SolidColorBrush CardBorder = new(Color.FromRgb(0x2A, 0x31, 0x42));
+    private static readonly SolidColorBrush FallbackCardBg = new(Color.FromRgb(0x24, 0x24, 0x24));
+    private static readonly SolidColorBrush FallbackCardBorder = new(Color.FromRgb(0x2E, 0x2E, 0x2E));
+    private static IBrush ResolveBrush(string key, IBrush fallback) =>
+        Application.Current is { } app && app.TryFindResource(key, out var v) && v is IBrush b ? b : fallback;
+    private static IBrush CardBg => ResolveBrush("BgElevated", FallbackCardBg);
+    private static IBrush CardBorder => ResolveBrush("Border", FallbackCardBorder);
 
     public async Task<PermissionDialogResult?> ShowAsync(PermissionPrompt prompt, CancellationToken ct)
     {

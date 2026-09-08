@@ -1,0 +1,106 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+      AeroCode 中心设计令牌（R5 UI 重构，千问办公式简约现代）。
+      单一真相源：全部视图的颜色引用落到此处；ThemeDictionaries 随 RequestedThemeVariant
+      （ThemeService: Light/Dark/System）自动切换——浅色主题由此真实可用。
+      色彩策略：中性灰阶 + 单点缀色（Accent 仅用于选中态/主操作/焦点；Danger 仅错误/删除）。
+      兼容层：AccentPurple/Cyan/… 与 Chat* 旧键暂映射到新令牌，视图改造完成后移除。
+    -->
+    <ResourceDictionary.ThemeDictionaries>
+
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="BgDeep" Color="#101010"/>
+            <SolidColorBrush x:Key="BgPanel" Color="#191919"/>
+            <SolidColorBrush x:Key="BgElevated" Color="#242424"/>
+            <SolidColorBrush x:Key="BgElev" Color="#242424"/>
+            <SolidColorBrush x:Key="Border" Color="#2E2E2E"/>
+            <SolidColorBrush x:Key="FgPrimary" Color="#F0F0F0"/>
+            <SolidColorBrush x:Key="FgMuted" Color="#9A9A9A"/>
+            <SolidColorBrush x:Key="Accent" Color="#5B9DFF"/>
+                        <SolidColorBrush x:Key="Danger" Color="#F87171"/>
+            <SolidColorBrush x:Key="BgHover" Color="#2E2E2E"/>
+            <SolidColorBrush x:Key="BgPressed" Color="#363636"/>
+            <SolidColorBrush x:Key="AccentPurple" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentCyan" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentGreen" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentAmber" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentPink" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentRed" Color="#F87171"/>
+            <SolidColorBrush x:Key="ChatBg" Color="#101010"/>
+            <SolidColorBrush x:Key="ChatPanel" Color="#191919"/>
+            <SolidColorBrush x:Key="ChatElevated" Color="#242424"/>
+            <SolidColorBrush x:Key="ChatBorder" Color="#2E2E2E"/>
+            <SolidColorBrush x:Key="ChatFg" Color="#F0F0F0"/>
+            <SolidColorBrush x:Key="ChatMuted" Color="#9A9A9A"/>
+            <SolidColorBrush x:Key="ChatAccent" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="ChatCyan" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="ChatRed" Color="#F87171"/>
+            <SolidColorBrush x:Key="ChatUserBubble" Color="#242424"/>
+            <SolidColorBrush x:Key="ChatAiBubble" Color="#191919"/>
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="BgDeep" Color="#101010"/>
+            <SolidColorBrush x:Key="BgPanel" Color="#191919"/>
+            <SolidColorBrush x:Key="BgElevated" Color="#242424"/>
+            <SolidColorBrush x:Key="BgElev" Color="#242424"/>
+            <SolidColorBrush x:Key="Border" Color="#2E2E2E"/>
+            <SolidColorBrush x:Key="FgPrimary" Color="#F0F0F0"/>
+            <SolidColorBrush x:Key="FgMuted" Color="#9A9A9A"/>
+            <SolidColorBrush x:Key="Accent" Color="#5B9DFF"/>
+                        <SolidColorBrush x:Key="Danger" Color="#F87171"/>
+            <SolidColorBrush x:Key="BgHover" Color="#2E2E2E"/>
+            <SolidColorBrush x:Key="BgPressed" Color="#363636"/>
+            <SolidColorBrush x:Key="AccentPurple" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentCyan" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentGreen" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentAmber" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentPink" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="AccentRed" Color="#F87171"/>
+            <SolidColorBrush x:Key="ChatBg" Color="#101010"/>
+            <SolidColorBrush x:Key="ChatPanel" Color="#191919"/>
+            <SolidColorBrush x:Key="ChatElevated" Color="#242424"/>
+            <SolidColorBrush x:Key="ChatBorder" Color="#2E2E2E"/>
+            <SolidColorBrush x:Key="ChatFg" Color="#F0F0F0"/>
+            <SolidColorBrush x:Key="ChatMuted" Color="#9A9A9A"/>
+            <SolidColorBrush x:Key="ChatAccent" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="ChatCyan" Color="#5B9DFF"/>
+            <SolidColorBrush x:Key="ChatRed" Color="#F87171"/>
+            <SolidColorBrush x:Key="ChatUserBubble" Color="#242424"/>
+            <SolidColorBrush x:Key="ChatAiBubble" Color="#191919"/>
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="BgDeep" Color="#F0F0F0"/>
+            <SolidColorBrush x:Key="BgPanel" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="BgElevated" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="BgElev" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="Border" Color="#E0E0E0"/>
+            <SolidColorBrush x:Key="FgPrimary" Color="#1A1A1A"/>
+            <SolidColorBrush x:Key="FgMuted" Color="#6B6B6B"/>
+            <SolidColorBrush x:Key="Accent" Color="#2563EB"/>
+                        <SolidColorBrush x:Key="Danger" Color="#DC2626"/>
+            <SolidColorBrush x:Key="BgHover" Color="#EBEBEB"/>
+            <SolidColorBrush x:Key="BgPressed" Color="#E2E2E2"/>
+            <SolidColorBrush x:Key="AccentPurple" Color="#2563EB"/>
+            <SolidColorBrush x:Key="AccentCyan" Color="#2563EB"/>
+            <SolidColorBrush x:Key="AccentGreen" Color="#2563EB"/>
+            <SolidColorBrush x:Key="AccentAmber" Color="#2563EB"/>
+            <SolidColorBrush x:Key="AccentPink" Color="#2563EB"/>
+            <SolidColorBrush x:Key="AccentRed" Color="#DC2626"/>
+            <SolidColorBrush x:Key="ChatBg" Color="#F0F0F0"/>
+            <SolidColorBrush x:Key="ChatPanel" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="ChatElevated" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="ChatBorder" Color="#E0E0E0"/>
+            <SolidColorBrush x:Key="ChatFg" Color="#1A1A1A"/>
+            <SolidColorBrush x:Key="ChatMuted" Color="#6B6B6B"/>
+            <SolidColorBrush x:Key="ChatAccent" Color="#2563EB"/>
+            <SolidColorBrush x:Key="ChatCyan" Color="#2563EB"/>
+            <SolidColorBrush x:Key="ChatRed" Color="#DC2626"/>
+            <SolidColorBrush x:Key="ChatUserBubble" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="ChatAiBubble" Color="#FAFAFA"/>
+        </ResourceDictionary>
+
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

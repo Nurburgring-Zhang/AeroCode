@@ -19,10 +19,16 @@ public interface IDialogService
 /// </summary>
 public class DialogService : IDialogService
 {
-    private static readonly SolidColorBrush CardBg = new(Color.FromRgb(0x16, 0x1A, 0x23));
-    private static readonly SolidColorBrush CardBorder = new(Color.FromRgb(0x2A, 0x31, 0x42));
-    private static readonly SolidColorBrush FgPrimary = new(Color.FromRgb(0xE5, 0xE9, 0xF0));
-    private static readonly SolidColorBrush FgMuted = new(Color.FromRgb(0x8A, 0x93, 0xA6));
+    private static readonly SolidColorBrush FallbackCardBg = new(Color.FromRgb(0x24, 0x24, 0x24));
+    private static readonly SolidColorBrush FallbackCardBorder = new(Color.FromRgb(0x2E, 0x2E, 0x2E));
+    private static readonly SolidColorBrush FallbackFgPrimary = new(Color.FromRgb(0xF0, 0xF0, 0xF0));
+    private static readonly SolidColorBrush FallbackFgMuted = new(Color.FromRgb(0x9A, 0x9A, 0x9A));
+    private static IBrush ResolveBrush(string key, IBrush fallback) =>
+        Application.Current is { } app && app.TryFindResource(key, out var v) && v is IBrush b ? b : fallback;
+    private static IBrush CardBg => ResolveBrush("BgElevated", FallbackCardBg);
+    private static IBrush CardBorder => ResolveBrush("Border", FallbackCardBorder);
+    private static IBrush FgPrimary => ResolveBrush("FgPrimary", FallbackFgPrimary);
+    private static IBrush FgMuted => ResolveBrush("FgMuted", FallbackFgMuted);
 
     public async Task ShowMessageAsync(string title, string message)
     {

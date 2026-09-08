@@ -5,18 +5,6 @@
              x:DataType="vm:MissionViewModel">
 
     <UserControl.Resources>
-        <SolidColorBrush x:Key="BgDeep" Color="#0B0D12"/>
-        <SolidColorBrush x:Key="BgPanel" Color="#11141B"/>
-        <SolidColorBrush x:Key="BgElevated" Color="#161A23"/>
-        <SolidColorBrush x:Key="Border" Color="#2A3142"/>
-        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0"/>
-        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6"/>
-        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED"/>
-        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4"/>
-        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
-        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B"/>
-        <SolidColorBrush x:Key="AccentPink" Color="#EC4899"/>
-        <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
     </UserControl.Resources>
 
     <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Background="{StaticResource BgDeep}">
@@ -25,16 +13,16 @@
         <Border Grid.Row="0" Background="{StaticResource BgPanel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto">
-                <TextBlock Grid.Column="0" Text="🚀 Mission 自主任务" FontSize="15" FontWeight="Bold"
-                           Foreground="{StaticResource AccentPink}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="0" Text="Mission 自主任务" FontSize="15" FontWeight="Bold"
+                           Foreground="{StaticResource Accent}" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1" Text="{Binding StatusText}"
                            Foreground="{StaticResource FgMuted}" FontSize="12"
                            VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
                 <Border Grid.Column="2" Background="{StaticResource BgElevated}"
-                        BorderBrush="{StaticResource AccentAmber}" BorderThickness="1"
+                        BorderBrush="{StaticResource Accent}" BorderThickness="1"
                         CornerRadius="6" Padding="8,2" IsVisible="{Binding !!OutcomeBadge}">
                     <TextBlock Text="{Binding OutcomeBadge}" FontSize="11"
-                               Foreground="{StaticResource AccentAmber}" VerticalAlignment="Center" />
+                               Foreground="{StaticResource Accent}" VerticalAlignment="Center" />
                 </Border>
             </Grid>
         </Border>
@@ -49,26 +37,26 @@
                              FontSize="13" MinHeight="40" TextWrapping="Wrap" />
                     <Button Grid.Column="1" Margin="8,0,0,0" Content="▶ 推进任务"
                             Command="{Binding StartMissionCommand}"
-                            Background="{StaticResource AccentPurple}" Foreground="White"
+                            Background="{StaticResource Accent}" Foreground="White"
                             ToolTip.Tip="启动一次完整任务状态机（运行中重入被拒）" />
-                    <Button Grid.Column="2" Margin="8,0,0,0" Content="⏹ 终止"
+                    <Button Grid.Column="2" Margin="8,0,0,0" Content="终止"
                             Command="{Binding StopMissionCommand}"
                             IsVisible="{Binding IsRunning}"
-                            Background="{StaticResource AccentRed}" Foreground="White"
+                            Background="{StaticResource Danger}" Foreground="White"
                             ToolTip.Tip="取消当前运行中的任务（真实取消，终态落库为 Cancelled）" />
                     <!-- F-M5 恢复入口：真实 ResumeLatestCheckpointAsync；无候选 checkpoint 时按钮禁用（CanExecute） -->
-                    <Button Grid.Column="3" Margin="8,0,0,0" Content="⏪ 恢复检查点"
+                    <Button Grid.Column="3" Margin="8,0,0,0" Content="恢复检查点"
                             Command="{Binding ResumeLastCheckpointCommand}"
                             ToolTip.Tip="{Binding ResumeHint}" />
                 </Grid>
                 <TextBlock Text="{Binding ExecutionSummary}" IsVisible="{Binding !!ExecutionSummary}"
-                           Foreground="{StaticResource AccentCyan}" FontSize="11" TextWrapping="Wrap" />
+                           Foreground="{StaticResource Accent}" FontSize="11" TextWrapping="Wrap" />
             </StackPanel>
         </Border>
 
         <!-- 状态轨迹 -->
         <Border Grid.Row="2" Background="{StaticResource BgDeep}" Padding="14,8,14,2">
-            <TextBlock Text="📋 状态轨迹（运行结束后按终态记录的真实 JSON 渲染）"
+            <TextBlock Text="状态轨迹（运行结束后按终态记录的真实 JSON 渲染）"
                        Foreground="{StaticResource FgMuted}" FontSize="11" />
         </Border>
         <ScrollViewer Grid.Row="3" Padding="14,4,14,8" VerticalScrollBarVisibility="Auto">
@@ -80,8 +68,8 @@
                             <Grid ColumnDefinitions="Auto,*,Auto">
                                 <TextBlock Grid.Column="0" FontSize="12" VerticalAlignment="Center">
                                     <Run Text="{Binding From}" Foreground="{StaticResource FgMuted}" />
-                                    <Run Text="→ " Foreground="{StaticResource AccentCyan}" />
-                                    <Run Text="{Binding To}" Foreground="{StaticResource AccentCyan}" />
+                                    <Run Text="→ " Foreground="{StaticResource Accent}" />
+                                    <Run Text="{Binding To}" Foreground="{StaticResource Accent}" />
                                 </TextBlock>
                                 <TextBlock Grid.Column="1" Text="{Binding Artifact}" Margin="10,0"
                                            Foreground="{StaticResource FgPrimary}" FontSize="11"

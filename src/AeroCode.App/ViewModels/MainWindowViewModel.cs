@@ -33,6 +33,17 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private string _statusText = "就绪";
 
+    /// <summary>R5 侧边栏导航：当前选中项索引（0=笔记 … 7=诊断）。</summary>
+    [ObservableProperty]
+    private int _selectedNavIndex;
+
+    /// <summary>R5 侧边栏导航项（纯文本，无 emoji——简约现代风格）。
+    /// 实例属性：{Binding NavItems} 按实例解析（静态属性绑定会静默失败）。</summary>
+    public IReadOnlyList<string> NavItems { get; } = new[]
+    {
+        "笔记", "AI 助手", "对话", "Mission", "技能", "记忆", "代码评审", "诊断",
+    };
+
     public ObservableCollection<Notebook> Notebooks { get; } = new();
     public ObservableCollection<Tag> Tags { get; } = new();
     public ObservableCollection<Note> Notes { get; } = new();

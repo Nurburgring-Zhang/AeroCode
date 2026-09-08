@@ -15,9 +15,14 @@ namespace AeroCode.App.Views;
 
 public partial class MainView : UserControl
 {
-    // 覆盖层卡片配色（与 SettingsView/PermissionDialogView 的 AXAML 资源一致）
-    private static readonly SolidColorBrush CardBg = new(Color.FromRgb(0x16, 0x1A, 0x23));
-    private static readonly SolidColorBrush CardBorder = new(Color.FromRgb(0x2A, 0x31, 0x42));
+    // 覆盖层卡片配色：运行时解析主题令牌（随 Light/Dark 切换），无应用上下文时回落深色常量。
+    private static readonly SolidColorBrush FallbackCardBg = new(Color.FromRgb(0x24, 0x24, 0x24));
+    private static readonly SolidColorBrush FallbackCardBorder = new(Color.FromRgb(0x2E, 0x2E, 0x2E));
+
+    private static IBrush ResolveBrush(string key, IBrush fallback) =>
+        Application.Current is { } app && app.TryFindResource(key, out var v) && v is IBrush b
+            ? b
+            : fallback;
 
     private MainWindowViewModel? _vm;
     private bool _settingsOpen;
@@ -105,8 +110,8 @@ public partial class MainView : UserControl
                 var view = new SettingsView { DataContext = vm };
                 var card = new Border
                 {
-                    Background = CardBg,
-                    BorderBrush = CardBorder,
+                    Background = ResolveBrush("BgElevated", FallbackCardBg),
+                    BorderBrush = ResolveBrush("Border", FallbackCardBorder),
                     BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(8),
                     MaxWidth = 860,
@@ -151,7 +156,7 @@ public partial class MainView : UserControl
             theme.Apply(next);
             _ = ObserveSettingsSaveAsync(settings);
             if (DataContext is MainWindowViewModel main)
-                main.StatusText = $"🌓 主题已切换: {next}";
+                main.StatusText = $"主题已切换: {next}";
         }
         catch (Exception ex)
         {

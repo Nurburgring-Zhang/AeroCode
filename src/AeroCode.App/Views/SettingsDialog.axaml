@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="AeroCode.App.Views.SettingsDialog"
-        Title="⚙️ AeroCode Settings"
+        Title=" AeroCode Settings"
         Width="820" Height="640"
         WindowStartupLocation="CenterOwner"
         CanResize="True" MinWidth="700" MinHeight="500">

@@ -3,14 +3,6 @@
              x:Class="AeroCode.App.Views.PermissionDialogView">
 
     <UserControl.Resources>
-        <SolidColorBrush x:Key="BgPanel" Color="#11141B" />
-        <SolidColorBrush x:Key="BgElev" Color="#161A23" />
-        <SolidColorBrush x:Key="Border" Color="#2A3142" />
-        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0" />
-        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6" />
-        <SolidColorBrush x:Key="AccentGreen" Color="#10B981" />
-        <SolidColorBrush x:Key="AccentRed" Color="#EF4444" />
-        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B" />
     </UserControl.Resources>
 
     <DockPanel Background="{StaticResource BgPanel}" LastChildFill="True">
@@ -18,8 +10,8 @@
         <Border DockPanel.Dock="Top" Padding="20,14" Background="{StaticResource BgElev}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
             <StackPanel Spacing="4">
-                <TextBlock Text="🔐 模型请求执行工具" FontSize="16" FontWeight="Bold"
-                           Foreground="{StaticResource AccentAmber}" />
+                <TextBlock Text="模型请求执行工具" FontSize="16" FontWeight="Bold"
+                           Foreground="{StaticResource Accent}" />
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <TextBlock Text="工具：" Foreground="{StaticResource FgMuted}" FontSize="13" VerticalAlignment="Center" />
                     <TextBlock x:Name="ToolNameText" FontSize="13" FontWeight="SemiBold"
@@ -38,10 +30,10 @@
                     <TextBlock Grid.Column="0" Foreground="{StaticResource FgMuted}" FontSize="11"
                                VerticalAlignment="Center" TextWrapping="Wrap"
                                Text="拒绝的原因会如实返回给模型，模型可改用其他方式完成任务。" />
-                    <Button Grid.Column="1" Content="⛔ 拒绝" Click="OnDenyClick" Margin="0,0,8,0"
-                            Background="{StaticResource AccentRed}" Foreground="White" MinWidth="96" />
-                    <Button Grid.Column="2" Content="✅ 允许" Click="OnAllowClick"
-                            Background="{StaticResource AccentGreen}" Foreground="White" MinWidth="96" />
+                    <Button Grid.Column="1" Content="拒绝" Click="OnDenyClick" Margin="0,0,8,0"
+                            Background="{StaticResource Danger}" Foreground="White" MinWidth="96" />
+                    <Button Grid.Column="2" Content="允许" Click="OnAllowClick"
+                            Background="{StaticResource Accent}" Foreground="White" MinWidth="96" />
                 </Grid>
             </StackPanel>
         </Border>
@@ -53,11 +45,11 @@
                            FontWeight="SemiBold" Foreground="{StaticResource FgMuted}" Margin="0,0,0,6" />
                 <!-- 智能审批建议（G5）：无建议器/无可用建议时整块隐藏 -->
                 <Border DockPanel.Dock="Top" x:Name="AdvisorCard" IsVisible="False"
-                        Background="#1B2333" BorderBrush="{StaticResource AccentAmber}"
+                        Background="#1B2333" BorderBrush="{StaticResource Accent}"
                         BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,6">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Text="🧠" FontSize="13" VerticalAlignment="Center" />
-                        <TextBlock x:Name="AdvisorText" Foreground="{StaticResource AccentAmber}"
+                        <TextBlock Text="" FontSize="13" VerticalAlignment="Center" />
+                        <TextBlock x:Name="AdvisorText" Foreground="{StaticResource Accent}"
                                    FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
                     </StackPanel>
                 </Border>

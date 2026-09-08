@@ -7,23 +7,14 @@
              x:Class="AeroCode.App.Views.MainView"
              x:DataType="vm:MainWindowViewModel">
 
+    <!-- R5 简约现代重构：中心主题令牌（AppColors.axaml）+ 左侧边栏导航。
+         绑定纪律：禁用类型转换绑定（R4.2 事故教训），一律反射安全形式。 -->
     <UserControl.Resources>
         <conv:DateTimeFormatConverter x:Key="DateFmt" />
         <conv:BoolToBrushConverter x:Key="PinBrush" />
         <conv:StringNotEmptyToBoolConverter x:Key="HasText" />
         <conv:CountToBoolConverter x:Key="HasCount" />
-        <SolidColorBrush x:Key="BgDeep" Color="#0B0D12"/>
-        <SolidColorBrush x:Key="BgPanel" Color="#11141B"/>
-        <SolidColorBrush x:Key="BgElevated" Color="#161A23"/>
-        <SolidColorBrush x:Key="Border" Color="#2A3142"/>
-        <SolidColorBrush x:Key="FgPrimary" Color="#E5E9F0"/>
-        <SolidColorBrush x:Key="FgMuted" Color="#8A93A6"/>
-        <SolidColorBrush x:Key="AccentPurple" Color="#7C3AED"/>
-        <SolidColorBrush x:Key="AccentCyan" Color="#06B6D4"/>
-        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
-        <SolidColorBrush x:Key="AccentAmber" Color="#F59E0B"/>
-        <SolidColorBrush x:Key="AccentPink" Color="#EC4899"/>
-        <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
+        <conv:IndexEqualsToBoolConverter x:Key="Idx" />
     </UserControl.Resources>
 
     <UserControl.KeyBindings>
@@ -33,37 +24,75 @@
     </UserControl.KeyBindings>
 
     <Grid>
-        <DockPanel LastChildFill="True">
-            <!-- 顶部工具栏 -->
-            <Border DockPanel.Dock="Top" Background="{StaticResource BgPanel}"
-                    BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="12,8">
-                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto">
-                    <TextBlock Grid.Column="0" Text="📒 AeroCode" FontSize="18" FontWeight="Bold"
-                               Foreground="{StaticResource AccentPurple}" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="1" Text="V3.0 · 8 项目深度集成 · Hermes + OpenCode + DSH + Reasonix + MattPocock + eng-practices + CodeFlow + Avernet"
-                               Foreground="{StaticResource FgMuted}" FontSize="11" VerticalAlignment="Center" Margin="12,0" TextTrimming="CharacterEllipsis" />
-                    <TextBox Grid.Column="2" x:Name="SearchBox" Width="280" Watermark="🔍 搜索 (Ctrl+F)"
-                             Text="{Binding SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                    <Button Grid.Column="3" Margin="8,0,0,0" Content="📝 新笔记" Command="{Binding CreateNoteCommand}" />
-                    <Button Grid.Column="4" Margin="8,0,0,0" Content="📁 新笔记本" Command="{Binding CreateNotebookCommand}" />
-                    <Button Grid.Column="5" Margin="8,0,0,0" Content="⚙️ 设置" Click="OnOpenSettingsClick" />
-                    <Button Grid.Column="6" Margin="8,0,0,0" Content="🌓 主题" Click="OnCycleThemeClick" ToolTip.Tip="快速切换 Light / Dark / System" />
-                </Grid>
+        <Grid ColumnDefinitions="216,*">
+
+            <!-- 左侧边栏：品牌 + 导航 + 底部设置/主题 -->
+            <Border Grid.Column="0" Background="{DynamicResource BgPanel}"
+                    BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0">
+                <DockPanel LastChildFill="True">
+                    <!-- 品牌区 -->
+                    <StackPanel DockPanel.Dock="Top" Margin="16,18,16,14" Spacing="2">
+                        <TextBlock Text="AeroCode" FontSize="17" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource FgPrimary}" />
+                        <TextBlock Text="本地优先 · AI 工作台" FontSize="11"
+                                   Foreground="{DynamicResource FgMuted}" />
+                    </StackPanel>
+
+                    <!-- 底部：设置 / 主题 -->
+                    <StackPanel DockPanel.Dock="Bottom" Margin="10,8,10,12" Spacing="4">
+                        <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                Background="Transparent" BorderThickness="0"
+                                Content="设置" Click="OnOpenSettingsClick" />
+                        <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                Background="Transparent" BorderThickness="0"
+                                Content="切换主题" Click="OnCycleThemeClick"
+                                ToolTip.Tip="Light / Dark / System 循环切换" />
+                    </StackPanel>
+
+                    <!-- 导航列表 -->
+                    <ListBox ItemsSource="{Binding NavItems}"
+                             SelectedIndex="{Binding SelectedNavIndex, Mode=TwoWay}"
+                             Background="Transparent" BorderThickness="0" Margin="8,0">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="13" Padding="8,7" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
             </Border>
 
-            <!-- 底部状态栏 -->
-            <Border DockPanel.Dock="Bottom" Background="{StaticResource BgPanel}"
-                    BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="12,6">
-                <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource FgMuted}" FontSize="12" />
-            </Border>
+            <!-- 右区：工具条 + 内容面板 + 状态栏 -->
+            <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Background="{DynamicResource BgDeep}">
 
-            <TabControl Background="{StaticResource BgDeep}">
-                <TabItem Header="📒 笔记" Foreground="{StaticResource AccentPurple}">
-                    <Grid ColumnDefinitions="240,340,*">
-                        <Border Grid.Column="0" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="0,0,1,0">
+                <!-- 顶部 slim 工具条 -->
+                <Border Grid.Row="0" BorderBrush="{DynamicResource Border}"
+                        BorderThickness="0,0,0,1" Padding="14,9">
+                    <Grid ColumnDefinitions="*,Auto,Auto">
+                        <TextBox Grid.Column="0" x:Name="SearchBox" MaxWidth="360"
+                                 HorizontalAlignment="Left" Width="360"
+                                 Watermark="搜索笔记…"
+                                 Text="{Binding SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Margin="10,0,0,0" Content="新建笔记"
+                                Command="{Binding CreateNoteCommand}" />
+                        <Button Grid.Column="2" Margin="8,0,0,0" Content="新建笔记本"
+                                Command="{Binding CreateNotebookCommand}" />
+                    </Grid>
+                </Border>
+
+                <!-- 内容面板（按导航索引切换；视图实例常驻，切换不丢状态） -->
+                <Grid Grid.Row="1">
+
+                    <!-- 0 笔记 -->
+                    <Grid IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=0}"
+                          ColumnDefinitions="232,320,*">
+                        <Border Grid.Column="0" Background="{DynamicResource BgPanel}"
+                                BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0">
                             <Grid RowDefinitions="*,Auto,Auto,*">
                                 <DockPanel Grid.Row="0">
-                                    <TextBlock DockPanel.Dock="Top" Text="📚 笔记本" Padding="12,10" FontWeight="SemiBold" Foreground="{StaticResource AccentCyan}" />
+                                    <TextBlock DockPanel.Dock="Top" Text="笔记本" Padding="14,10"
+                                               FontWeight="SemiBold" FontSize="12"
+                                               Foreground="{DynamicResource FgMuted}" />
                                     <ListBox ItemsSource="{Binding Notebooks}" SelectedItem="{Binding SelectedNotebook, Mode=TwoWay}" Background="Transparent">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate DataType="models:Notebook">
@@ -72,8 +101,10 @@
                                         </ListBox.ItemTemplate>
                                     </ListBox>
                                 </DockPanel>
-                                <Border Grid.Row="1" Height="1" Background="{StaticResource Border}" />
-                                <TextBlock Grid.Row="2" Text="🏷️ 标签" Padding="12,10" FontWeight="SemiBold" Foreground="{StaticResource AccentGreen}" />
+                                <Border Grid.Row="1" Height="1" Background="{DynamicResource Border}" />
+                                <TextBlock Grid.Row="2" Text="标签" Padding="14,10"
+                                           FontWeight="SemiBold" FontSize="12"
+                                           Foreground="{DynamicResource FgMuted}" />
                                 <ListBox Grid.Row="3" ItemsSource="{Binding Tags}" SelectedItem="{Binding SelectedTag, Mode=TwoWay}" Background="Transparent">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="models:Tag">
@@ -84,20 +115,22 @@
                             </Grid>
                         </Border>
 
-                        <Border Grid.Column="1" Background="{StaticResource BgDeep}" BorderBrush="{StaticResource Border}" BorderThickness="0,0,1,0">
+                        <Border Grid.Column="1" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0">
                             <DockPanel>
-                                <TextBlock DockPanel.Dock="Top" Text="📄 笔记" Padding="12,10" FontWeight="SemiBold" Foreground="{StaticResource AccentPink}" />
+                                <TextBlock DockPanel.Dock="Top" Text="笔记" Padding="14,10"
+                                           FontWeight="SemiBold" FontSize="12"
+                                           Foreground="{DynamicResource FgMuted}" />
                                 <ListBox ItemsSource="{Binding Notes}" SelectedItem="{Binding SelectedNote, Mode=TwoWay}" Background="Transparent">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="models:Note">
-                                            <Border Padding="10,8" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+                                            <Border Padding="10,8" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1">
                                                 <StackPanel Spacing="3">
                                                     <Grid ColumnDefinitions="*,Auto">
                                                         <TextBlock Grid.Column="0" Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                                         <Border Grid.Column="1" Width="8" Height="8" CornerRadius="4" Background="{Binding IsPinned, Converter={StaticResource PinBrush}}" />
                                                     </Grid>
-                                                    <TextBlock Text="{Binding UpdatedAt, Converter={StaticResource DateFmt}}" Foreground="{StaticResource FgMuted}" FontSize="11" />
-                                                    <TextBlock Text="{Binding Content}" Foreground="{StaticResource FgMuted}" FontSize="11" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding UpdatedAt, Converter={StaticResource DateFmt}}" Foreground="{DynamicResource FgMuted}" FontSize="11" />
+                                                    <TextBlock Text="{Binding Content}" Foreground="{DynamicResource FgMuted}" FontSize="11" MaxLines="2" TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
                                             </Border>
                                         </DataTemplate>
@@ -107,65 +140,60 @@
                         </Border>
 
                         <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto">
-                            <Border Grid.Row="0" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="16,12">
+                            <Border Grid.Row="0" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="16,10">
                                 <Grid ColumnDefinitions="*,Auto,Auto,Auto">
-                                    <TextBox Grid.Column="0" Watermark="笔记标题..." FontSize="20" FontWeight="Bold" Background="Transparent" BorderThickness="0"
+                                    <TextBox Grid.Column="0" Watermark="笔记标题…" FontSize="18" FontWeight="SemiBold" Background="Transparent" BorderThickness="0"
                                              Text="{Binding SelectedNote.Title, Mode=TwoWay}" />
-                                    <Button Grid.Column="1" Margin="6,0,0,0" Content="📌 置顶" Command="{Binding TogglePinCommand}" />
-                                    <Button Grid.Column="2" Margin="6,0,0,0" Content="💾 保存 (Ctrl+S)" Command="{Binding SaveNoteCommand}" />
-                                    <Button Grid.Column="3" Margin="6,0,0,0" Content="🗑️ 删除" Command="{Binding DeleteNoteCommand}" />
+                                    <Button Grid.Column="1" Margin="6,0,0,0" Content="置顶" Command="{Binding TogglePinCommand}" />
+                                    <Button Grid.Column="2" Margin="6,0,0,0" Content="保存" Classes="Primary" Command="{Binding SaveNoteCommand}" />
+                                    <Button Grid.Column="3" Margin="6,0,0,0" Content="删除" Command="{Binding DeleteNoteCommand}" />
                                 </Grid>
                             </Border>
                             <Grid Grid.Row="1" ColumnDefinitions="*,6,*">
                                 <DockPanel Grid.Column="0">
-                                    <TextBlock DockPanel.Dock="Top" Text="✏️ 编辑 (Markdown)" Padding="12,6" FontWeight="SemiBold" Foreground="{StaticResource AccentPurple}" />
-                                    <TextBox AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas,JetBrains Mono,monospace" FontSize="13" Padding="12" Background="{StaticResource BgPanel}"
+                                    <TextBlock DockPanel.Dock="Top" Text="编辑" Padding="14,6"
+                                               FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource FgMuted}" />
+                                    <TextBox AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas,JetBrains Mono,monospace" FontSize="13" Padding="12" Background="{DynamicResource BgPanel}"
                                              Text="{Binding SelectedNote.Content, Mode=TwoWay}" />
                                 </DockPanel>
-                                <GridSplitter Grid.Column="1" Width="6" Background="{StaticResource Border}" ResizeDirection="Columns" />
+                                <GridSplitter Grid.Column="1" Width="6" Background="{DynamicResource Border}" ResizeDirection="Columns" />
                                 <DockPanel Grid.Column="2">
                                     <views:MarkdownPreviewView x:Name="PreviewView" />
                                 </DockPanel>
                             </Grid>
-                            <Border Grid.Row="2" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="12,6">
-                                <TextBlock FontSize="11" Foreground="{StaticResource FgMuted}">
+                            <Border Grid.Row="2" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="14,6">
+                                <TextBlock FontSize="11" Foreground="{DynamicResource FgMuted}">
                                     <Run Text="ID: " /><Run Text="{Binding SelectedNote.Id, FallbackValue='-'}" />
-                                    <Run Text="  字数: " /><Run Text="{Binding SelectedNote.WordCount, FallbackValue=0}" />
+                                    <Run Text="字数: " /><Run Text="{Binding SelectedNote.WordCount, FallbackValue=0}" />
                                 </TextBlock>
                             </Border>
                         </Grid>
                     </Grid>
-                </TabItem>
 
-                <TabItem Header="🤖 AI 助手" Foreground="{StaticResource AccentCyan}">
-                    <views:AIAssistantView />
-                </TabItem>
+                    <!-- 1 AI 助手 -->
+                    <views:AIAssistantView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=1}" />
+                    <!-- 2 对话 -->
+                    <views:ChatView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=2}" />
+                    <!-- 3 Mission -->
+                    <views:MissionView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=3}" />
+                    <!-- 4 技能 -->
+                    <views:SkillsView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=4}" />
+                    <!-- 5 记忆 -->
+                    <views:MemoryView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=5}" />
+                    <!-- 6 代码评审 -->
+                    <views:CodeReviewView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=6}" />
+                    <!-- 7 诊断 -->
+                    <views:DiagnosticsView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=7}" />
+                </Grid>
 
-                <TabItem Header="💬 统一对话" Foreground="{StaticResource AccentGreen}">
-                    <views:ChatView />
-                </TabItem>
-
-                <TabItem Header="🚀 Mission" Foreground="{StaticResource AccentPink}">
-                    <views:MissionView />
-                </TabItem>
-
-                <TabItem Header="🎯 Skills (V3)" Foreground="{StaticResource AccentPurple}">
-                    <views:SkillsView />
-                </TabItem>
-
-                <TabItem Header="🧠 Memory (V3)" Foreground="{StaticResource AccentAmber}">
-                    <views:MemoryView />
-                </TabItem>
-
-                <TabItem Header="🔍 Code Review (V3)" Foreground="{StaticResource AccentCyan}">
-                    <views:CodeReviewView />
-                </TabItem>
-
-                <TabItem Header="📊 Diagnostics (V3)" Foreground="{StaticResource AccentGreen}">
-                    <views:DiagnosticsView />
-                </TabItem>
-            </TabControl>
-        </DockPanel>
+                <!-- 底部状态栏 -->
+                <Border Grid.Row="2" BorderBrush="{DynamicResource Border}"
+                        BorderThickness="0,1,0,0" Padding="14,6">
+                    <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource FgMuted}" FontSize="12" />
+                </Border>
+            </Grid>
+        </Grid>
 
         <!-- 覆盖层宿主：single-view 平台（Android）无 Window，设置/授权/消息对话框经 OverlayService 挂载于此 -->
         <Panel x:Name="OverlayRoot" />

@@ -16,14 +16,18 @@ namespace AeroCode.App.Views;
 /// <summary>升级审批卡片工厂：OverlayService.ShowAsync 的 content 由本工厂产出。</summary>
 public static class MissionApprovalCards
 {
-    // 与 DialogService/MissionView 相同的卡片配色（无样式资源依赖，纯代码构建）。
-    private static readonly SolidColorBrush CardBg = new(Color.FromRgb(0x16, 0x1A, 0x23));
-    private static readonly SolidColorBrush CardBorder = new(Color.FromRgb(0x2A, 0x31, 0x42));
-    private static readonly SolidColorBrush FgPrimary = new(Color.FromRgb(0xE5, 0xE9, 0xF0));
-    private static readonly SolidColorBrush FgMuted = new(Color.FromRgb(0x8A, 0x93, 0xA6));
-    private static readonly SolidColorBrush AccentAmber = new(Color.FromRgb(0xF5, 0x9E, 0x0B));
-    private static readonly SolidColorBrush AccentGreen = new(Color.FromRgb(0x10, 0xB9, 0x81));
-    private static readonly SolidColorBrush AccentRed = new(Color.FromRgb(0xEF, 0x44, 0x44));
+    // R5：配色运行时解析主题令牌（随 Light/Dark 切换），无应用上下文时回落深色常量。
+    private static readonly SolidColorBrush FallbackCardBg = new(Color.FromRgb(0x24, 0x24, 0x24));
+    private static readonly SolidColorBrush FallbackCardBorder = new(Color.FromRgb(0x2E, 0x2E, 0x2E));
+    private static readonly SolidColorBrush FallbackFg = new(Color.FromRgb(0xF0, 0xF0, 0xF0));
+    private static readonly SolidColorBrush FallbackMuted = new(Color.FromRgb(0x9A, 0x9A, 0x9A));
+    private static readonly SolidColorBrush FallbackAccent = new(Color.FromRgb(0x5B, 0x9D, 0xFF));
+    private static readonly SolidColorBrush FallbackDanger = new(Color.FromRgb(0xF8, 0x71, 0x71));
+
+    private static IBrush Resolve(string key, IBrush fallback) =>
+        Application.Current is { } app && app.TryFindResource(key, out var v) && v is IBrush b
+            ? b
+            : fallback;
 
     /// <summary>
     /// 构建一张审批卡。<paramref name="onDecided"/> 在批准/拒绝任一决策发生后被调用
@@ -34,23 +38,30 @@ public static class MissionApprovalCards
         ArgumentNullException.ThrowIfNull(card);
         ArgumentNullException.ThrowIfNull(onDecided);
 
+        var cardBg = Resolve("BgElevated", FallbackCardBg);
+        var cardBorder = Resolve("Border", FallbackCardBorder);
+        var fgPrimary = Resolve("FgPrimary", FallbackFg);
+        var fgMuted = Resolve("FgMuted", FallbackMuted);
+        var accent = Resolve("Accent", FallbackAccent);
+        var danger = Resolve("Danger", FallbackDanger);
+
         var approveBtn = new Button
         {
-            Content = "✅ 批准（消费一次性凭据）",
-            Background = AccentGreen,
+            Content = "批准（消费一次性凭据）",
+            Background = accent,
             Foreground = Brushes.White,
         };
         var rejectBtn = new Button
         {
             Content = "✕ 拒绝",
-            Background = AccentRed,
+            Background = danger,
             Foreground = Brushes.White,
         };
 
-        var cardBorder = new Border
+        var cardBorderCtrl = new Border
         {
-            Background = CardBg,
-            BorderBrush = CardBorder,
+            Background = cardBg,
+            BorderBrush = cardBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             MaxWidth = 460,
@@ -65,27 +76,27 @@ public static class MissionApprovalCards
                     {
                         Text = card.Title,
                         FontWeight = FontWeight.SemiBold,
-                        Foreground = AccentAmber,
+                        Foreground = accent,
                         TextWrapping = TextWrapping.Wrap,
                     },
                     new TextBlock
                     {
                         Text = card.Reason,
-                        Foreground = FgPrimary,
+                        Foreground = fgPrimary,
                         TextWrapping = TextWrapping.Wrap,
                     },
                     new TextBlock
                     {
                         // 凭据恒为掩码文案（结构上无掩码字段 → 明示"已隐藏"，绝不回显原文）。
                         Text = $"凭据：{card.Credential}",
-                        Foreground = FgMuted,
+                        Foreground = fgMuted,
                         FontSize = 11,
                         TextWrapping = TextWrapping.Wrap,
                     },
                     new TextBlock
                     {
                         Text = $"升级时刻（本地）：{card.RaisedAt}",
-                        Foreground = FgMuted,
+                        Foreground = fgMuted,
                         FontSize = 10,
                     },
                     new StackPanel
@@ -106,7 +117,7 @@ public static class MissionApprovalCards
                 card.ApproveCommand.Execute(null);
             }
 
-            onDecided(cardBorder);
+            onDecided(cardBorderCtrl);
         };
         rejectBtn.Click += (_, _) =>
         {
@@ -115,8 +126,8 @@ public static class MissionApprovalCards
                 card.RejectCommand.Execute(null);
             }
 
-            onDecided(cardBorder);
+            onDecided(cardBorderCtrl);
         };
-        return cardBorder;
+        return cardBorderCtrl;
     }
 }

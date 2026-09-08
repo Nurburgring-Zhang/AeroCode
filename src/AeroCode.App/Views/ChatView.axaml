@@ -9,17 +9,6 @@
     <UserControl.Resources>
         <conv:MarkdownToControlConverter x:Key="MdToControl" />
         <conv:BoolToOpacityConverter x:Key="StreamingOpacity" />
-        <SolidColorBrush x:Key="ChatBg" Color="#0B0D12"/>
-        <SolidColorBrush x:Key="ChatPanel" Color="#11141B"/>
-        <SolidColorBrush x:Key="ChatElevated" Color="#161A23"/>
-        <SolidColorBrush x:Key="ChatBorder" Color="#2A3142"/>
-        <SolidColorBrush x:Key="ChatFg" Color="#E5E9F0"/>
-        <SolidColorBrush x:Key="ChatMuted" Color="#8A93A6"/>
-        <SolidColorBrush x:Key="ChatAccent" Color="#7C3AED"/>
-        <SolidColorBrush x:Key="ChatCyan" Color="#06B6D4"/>
-        <SolidColorBrush x:Key="ChatRed" Color="#EF4444"/>
-        <SolidColorBrush x:Key="ChatUserBubble" Color="#2A2153"/>
-        <SolidColorBrush x:Key="ChatAiBubble" Color="#161A23"/>
     </UserControl.Resources>
 
     <Grid ColumnDefinitions="260,*" Background="{StaticResource ChatBg}">
@@ -35,7 +24,7 @@
                 <Border DockPanel.Dock="Bottom" MaxHeight="230"
                         BorderBrush="{StaticResource ChatBorder}" BorderThickness="0,1,0,0">
                     <DockPanel>
-                        <TextBlock DockPanel.Dock="Top" Text="✅ 待办清单" Margin="10,8,10,4"
+                        <TextBlock DockPanel.Dock="Top" Text="待办清单" Margin="10,8,10,4"
                                    FontWeight="SemiBold" Foreground="{StaticResource ChatAccent}" FontSize="12" />
                         <ListBox ItemsSource="{Binding Todos}" Background="Transparent" BorderThickness="0">
                             <ListBox.ItemTemplate>
@@ -49,7 +38,7 @@
                                         <TextBlock Grid.Column="1" Text="{Binding Content}" FontSize="12"
                                                    TextWrapping="Wrap" VerticalAlignment="Center"
                                                    Foreground="{StaticResource ChatFg}" />
-                                        <Button Grid.Column="2" Content="🗑" FontSize="10" Padding="3"
+                                        <Button Grid.Column="2" Content="删除" FontSize="10" Padding="3"
                                                 VerticalAlignment="Center" ToolTip.Tip="删除待办"
                                                 Command="{Binding $parent[ListBox].DataContext.DeleteTodoCommand}"
                                                 CommandParameter="{Binding}" />
@@ -76,15 +65,15 @@
                                     </StackPanel>
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
-                                    <Button Content="📌" FontSize="10" Padding="3"
+                                    <Button Content="置顶" FontSize="10" Padding="3"
                                             ToolTip.Tip="置顶/取消置顶"
                                             Command="{Binding $parent[ListBox].DataContext.TogglePinCommand}"
                                             CommandParameter="{Binding}" />
-                                    <Button Content="🌿" FontSize="10" Padding="3"
+                                    <Button Content="分叉" FontSize="10" Padding="3"
                                             ToolTip.Tip="分叉会话（复制元数据与全部消息为新会话，标题带 fork）"
                                             Command="{Binding $parent[ListBox].DataContext.ForkSessionCommand}"
                                             CommandParameter="{Binding}" />
-                                    <Button Content="🗑" FontSize="10" Padding="3"
+                                    <Button Content="删除" FontSize="10" Padding="3"
                                             ToolTip.Tip="删除会话"
                                             Command="{Binding $parent[ListBox].DataContext.DeleteSessionCommand}"
                                             CommandParameter="{Binding}" />
@@ -128,7 +117,7 @@
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Border Background="{StaticResource ChatCyan}" CornerRadius="6" Padding="6,2">
                                             <TextBlock Text="{Binding ToolBadge}" FontSize="10"
-                                                       Foreground="#04121A" />
+                                                       Foreground="White" />
                                         </Border>
                                         <TextBlock Text="{Binding StatusGlyph}" IsVisible="{Binding !!StatusGlyph}"
                                                    Foreground="{StaticResource ChatRed}" FontSize="10"
@@ -162,7 +151,7 @@
                                         <Border Background="{StaticResource ChatCyan}" CornerRadius="6"
                                                 Padding="6,2" IsVisible="{Binding !!Label}">
                                             <TextBlock Text="{Binding Label}" FontSize="10"
-                                                       Foreground="#04121A" />
+                                                       Foreground="White" />
                                         </Border>
                                         <Border Background="{StaticResource ChatBorder}" CornerRadius="6"
                                                 Padding="6,2" IsVisible="{Binding !!ToolCallsBadge}">
@@ -284,11 +273,11 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <Grid ColumnDefinitions="Auto,*,Auto,Auto">
-                        <Button Grid.Column="0" Content="📎"
+                        <Button Grid.Column="0" Content="附件"
                                 Command="{Binding AttachFileCommand}"
                                 ToolTip.Tip="添加图片附件"
                                 Background="Transparent" BorderThickness="0"
-                                FontSize="18" Padding="8,4"
+                                FontSize="13" Padding="8,4"
                                 Foreground="{StaticResource ChatMuted}"
                                 VerticalAlignment="Bottom" />
                         <TextBox Grid.Column="1" x:Name="InputBox"
@@ -297,10 +286,10 @@
                                  AcceptsReturn="True" TextWrapping="Wrap"
                                  MinHeight="44" MaxHeight="160" FontSize="14"
                                  KeyDown="OnInputKeyDown" />
-                        <Button Grid.Column="2" Margin="8,0,0,0" Content="⏹ 停止"
+                        <Button Grid.Column="2" Margin="8,0,0,0" Content="停止"
                                 Command="{Binding StopCommand}"
                                 IsVisible="{Binding IsStreaming}" />
-                        <Button Grid.Column="3" Margin="8,0,0,0" Content="🚀 发送"
+                        <Button Grid.Column="3" Margin="8,0,0,0" Content="发送" Classes="Primary"
                                 Command="{Binding SendCommand}" />
                     </Grid>
                 </StackPanel>
