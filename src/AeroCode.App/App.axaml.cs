@@ -130,6 +130,10 @@ public partial class App : Application
     /// All initialization is synchronous (GetAwaiter().GetResult()) because
     /// OnFrameworkInitializationCompleted is sync and we need everything ready
     /// before the first view is shown.
+    /// 死锁约束（P0，dotnet-stack 实证）：Avalonia 在 Setup 阶段已安装主线程同步上下文，
+    /// 此处任何 GetAwaiter().GetResult() 若直接等待捕获了该上下文的 async 方法，
+    /// 续延会投递回正被阻塞的主线程 → 启动死锁、主窗口永不显示。
+    /// 故本方法内所有阻塞等待一律 Task.Run(...) 包裹逃逸同步上下文（续延落线程池）。
     /// </summary>
     private static ServiceProvider BuildServices()
     {
@@ -144,7 +148,7 @@ public partial class App : Application
         var settings = new SettingsService(paths);
         try
         {
-            settings.LoadAsync().GetAwaiter().GetResult();
+            Task.Run(() => settings.LoadAsync()).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -241,7 +245,7 @@ public partial class App : Application
         var convDb = new ConversationDbContext(convOptions);
         convDb.Database.EnsureCreated();
         // 既有库补列（如 Phase 1 库缺 chat_messages.Label / IsFinal）——幂等。
-        ConversationDbContext.EnsureSchemaAsync(convDb).GetAwaiter().GetResult();
+        Task.Run(() => ConversationDbContext.EnsureSchemaAsync(convDb)).GetAwaiter().GetResult();
         sc.AddSingleton(convDb);
         sc.AddSingleton<ISessionService, SessionService>();
         // B2 会话 fork 能力：SessionService 同时实现 ISessionFork（同一真实持久化实例）。
@@ -250,12 +254,12 @@ public partial class App : Application
         // 3c. MOA 编排（AeroAgent.Moa）。画像目录：文件覆盖内建种子；
         //     编排选项：缺失/损坏时回退默认（JsonMoaOptionsStore 自带容错）。
         var profileCatalog = new ModelProfileCatalog(new JsonFileProfileStore(paths.MoaProfilesFile));
-        profileCatalog.LoadAsync(BuiltInProfiles.Seed()).GetAwaiter().GetResult();
+        Task.Run(() => profileCatalog.LoadAsync(BuiltInProfiles.Seed())).GetAwaiter().GetResult();
         sc.AddSingleton<IModelProfileCatalog>(profileCatalog);
         sc.AddSingleton(profileCatalog);
 
         var moaOptionsStore = new JsonMoaOptionsStore(paths.MoaOptionsFile);
-        var moaOptions = moaOptionsStore.LoadAsync().GetAwaiter().GetResult();
+        var moaOptions = Task.Run(() => moaOptionsStore.LoadAsync()).GetAwaiter().GetResult();
         // R2 修复 MED-3：moaoptions.json 非法时 store 会静默回退默认编排选项（预算上限、角色绑定等
         // 全部丢失）。此处对拒载事实显式 WARN（可观测，不静默）；预算上限抢救由 store 侧 TrySalvageBudgetCap 尽力保留。
         if (moaOptionsStore.LastLoadError is not null)
@@ -1185,8 +1189,8 @@ public partial class App : Application
         PermissionSettings persisted;
         try
         {
-            persisted = services.GetRequiredService<JsonPermissionStore>()
-                .LoadAsync().GetAwaiter().GetResult();
+            persisted = Task.Run(() => services.GetRequiredService<JsonPermissionStore>()
+                .LoadAsync()).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -1316,7 +1320,7 @@ public partial class App : Application
         var mcpToolbox = new McpToolbox(gateways, logger);
         try
         {
-            mcpToolbox.DiscoverAsync().GetAwaiter().GetResult();
+            Task.Run(() => mcpToolbox.DiscoverAsync()).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -1346,7 +1350,7 @@ public partial class App : Application
         else
         {
             // 一个工具都没发现：不注册，如实释放子进程资源。
-            mcpToolbox.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            Task.Run(() => mcpToolbox.DisposeAsync().AsTask()).GetAwaiter().GetResult();
         }
     }
 
