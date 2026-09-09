@@ -144,7 +144,7 @@
                             <Border Grid.Row="1" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1"
                                     Padding="16,8" Background="{DynamicResource BgPanel}">
                                 <StackPanel Spacing="6">
-                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto">
                                         <TextBox Grid.Column="0" Watermark="问这篇笔记 / 输入指令…（Enter 发送，Shift+Enter 换行）" FontSize="12"
                                                  AutomationProperties.AutomationId="NoteAiInput"
                                                  AcceptsReturn="True" TextWrapping="Wrap"
@@ -161,12 +161,18 @@
                                                 AutomationProperties.AutomationId="NoteAiSummarize" IsEnabled="{Binding !IsNoteAiBusy}" />
                                         <Button Grid.Column="5" Margin="6,0,0,0" Content="应用到笔记" Command="{Binding NoteAiApplyCommand}"
                                                 AutomationProperties.AutomationId="NoteAiApply" IsEnabled="{Binding !IsNoteAiBusy}" />
+                                        <Button Grid.Column="6" Margin="6,0,0,0" Content="入队" Command="{Binding EnqueueNoteAiCommand}"
+                                                AutomationProperties.AutomationId="NoteAiEnqueue"
+                                                ToolTip.Tip="把指令加入队列，逐条自动执行" />
                                     </Grid>
                                     <TextBox IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="140"
                                              AutomationProperties.AutomationId="NoteAiResult"
                                              Watermark="AI 结果将显示在这里（流式）…" FontSize="12" Padding="8"
                                              Background="{DynamicResource BgDeep}"
                                              Text="{Binding NoteAiResult}" />
+                                    <!-- 指令队列（UIR-5 铺全输入框）：DataContext = NoteAiQueue 引擎 -->
+                                    <views:CommandQueueView DataContext="{Binding NoteAiQueue}"
+                                                            AutomationProperties.AutomationId="NoteAiQueuePanel" />
                                 </StackPanel>
                             </Border>
                             <Grid Grid.Row="2" ColumnDefinitions="*,6,*">

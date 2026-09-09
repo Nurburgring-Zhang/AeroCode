@@ -277,6 +277,16 @@ public partial class ChatViewModel : ObservableObject
         _providers.ProvidersChanged += OnProvidersChanged;
         // MOA 选项保存 → OptionsChanged → 无选中会话时刷新"新会话将使用的策略"。
         _moaOptions.OptionsChanged += OnMoaOptionsChanged;
+
+        // UIR-5：对话指令队列 —— 执行体为本页 SendAsync；队列停止经 ct 联动 _streamCts 中断当前流。
+        Queue = new CommandQueueEngine(
+            async (text, ct) =>
+            {
+                InputText = text;
+                using var reg = ct.Register(() => _streamCts?.Cancel());
+                await SendAsync();
+            },
+            () => !IsStreaming);
     }
 
     private void OnMoaOptionsChanged()
@@ -360,6 +370,9 @@ public partial class ChatViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isStreaming;
+
+    /// <summary>对话指令队列引擎（UIR-5 铺全输入框；执行体为本页 SendAsync，构造函数注入）。</summary>
+    public CommandQueueEngine Queue { get; }
 
     [ObservableProperty]
     private string _selectedProviderId;
@@ -910,6 +923,21 @@ public partial class ChatViewModel : ObservableObject
     {
         _streamCts?.Cancel();
         StatusText = "正在停止…";
+    }
+
+    /// <summary>把对话输入框指令加入队列（UIR-5）。空闲时引擎自动开始执行。</summary>
+    [RelayCommand]
+    private void EnqueueCommand()
+    {
+        if (string.IsNullOrWhiteSpace(InputText))
+        {
+            StatusText = "请输入要加入队列的指令";
+            return;
+        }
+
+        var text = InputText.Trim();
+        InputText = string.Empty;
+        Queue.Enqueue(text);
     }
 
     [RelayCommand]

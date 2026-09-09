@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using AeroCode.AI.Models;
 using AeroCode.AI.Providers;
@@ -44,6 +45,13 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private bool _isNoteAiBusy;
 
+    /// <summary>笔记 AI「问答」系统提示词（按钮与队列共用，保证行为一致）。</summary>
+    private const string NoteAiAskSystemPrompt =
+        "你是笔记助手。仅依据提供的笔记内容回答问题；笔记中没有的信息要明确说明没有，不要编造。";
+
+    /// <summary>笔记 AI 指令队列引擎（UIR-5 铺全输入框；执行体为笔记问答，构造函数注入）。</summary>
+    public CommandQueueEngine NoteAiQueue { get; }
+
     [ObservableProperty]
     private string _statusText = "就绪";
 
@@ -77,6 +85,11 @@ public partial class MainWindowViewModel : ObservableObject
         _search = search;
         _dialog = dialog;
         _providers = providers;
+
+        // UIR-5：笔记 AI 指令队列 —— 执行体为「问答」，空闲守卫为 IsNoteAiBusy。
+        NoteAiQueue = new CommandQueueEngine(
+            (text, ct) => RunNoteAiAsync(NoteAiAskSystemPrompt, $"[问题] {text.Trim()}", ct),
+            () => !IsNoteAiBusy);
     }
 
     public async Task InitializeAsync()
@@ -262,9 +275,22 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        await RunNoteAiAsync(
-            "你是笔记助手。仅依据提供的笔记内容回答问题；笔记中没有的信息要明确说明没有，不要编造。",
-            $"[问题] {NoteAiInput.Trim()}");
+        await RunNoteAiAsync(NoteAiAskSystemPrompt, $"[问题] {NoteAiInput.Trim()}");
+    }
+
+    /// <summary>把笔记 AI 输入框指令加入队列（UIR-5）。空闲时引擎自动开始执行。</summary>
+    [RelayCommand]
+    private void EnqueueNoteAi()
+    {
+        if (string.IsNullOrWhiteSpace(NoteAiInput))
+        {
+            StatusText = "请输入要加入队列的指令";
+            return;
+        }
+
+        var text = NoteAiInput.Trim();
+        NoteAiInput = string.Empty;
+        NoteAiQueue.Enqueue(text);
     }
 
     /// <summary>AI 分析：提炼要点、结构、潜在问题。</summary>
@@ -304,8 +330,9 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>
     /// 笔记 AI 公共执行路径：取当前选中笔记全文作上下文，流式调用默认 provider，
     /// 逐块写入 NoteAiResult。无 provider/无笔记时如实提示，不伪造结果。
+    /// ct 供队列引擎中断当前条（默认 None，按钮直接调用不受影响）。
     /// </summary>
-    private async Task RunNoteAiAsync(string systemPrompt, string taskLine)
+    private async Task RunNoteAiAsync(string systemPrompt, string taskLine, CancellationToken ct = default)
     {
         if (_providers is null)
         {
@@ -355,7 +382,7 @@ public partial class MainWindowViewModel : ObservableObject
 
             if (provider.SupportsStreaming)
             {
-                await foreach (var chunk in provider.StreamChatAsync(req))
+                await foreach (var chunk in provider.StreamChatAsync(req, ct))
                 {
                     if (chunk.DeltaContent is { Length: > 0 } c)
                     {
@@ -366,12 +393,17 @@ public partial class MainWindowViewModel : ObservableObject
             }
             else
             {
-                var resp = await provider.ChatAsync(req);
+                var resp = await provider.ChatAsync(req, ct);
                 sb.Append(resp.Content);
                 NoteAiResult = sb.ToString();
             }
 
             StatusText = sb.Length > 0 ? "AI 完成（可点「应用到笔记」采纳整理结果）" : "AI 未返回内容";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "AI 已中断";
+            throw;
         }
         catch (Exception ex)
         {

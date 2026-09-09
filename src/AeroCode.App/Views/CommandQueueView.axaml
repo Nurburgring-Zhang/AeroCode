@@ -1,0 +1,57 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AeroCode.App.ViewModels"
+             xmlns:c="using:Avalonia.Data.Converters"
+             x:Class="AeroCode.App.Views.CommandQueueView"
+             x:DataType="vm:CommandQueueEngine">
+    <!-- 指令队列（UIR-5 铺全输入框）：可折叠；逐条自动执行，支持排序/插队/编辑/删除。
+         DataContext 必须是一个 CommandQueueEngine（由宿主 VM 注入）。 -->
+    <Border Background="{DynamicResource BgElev}" BorderBrush="{DynamicResource Border}"
+            BorderThickness="1" CornerRadius="6" Padding="10,8">
+        <StackPanel Spacing="6">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <Button Grid.Column="0" Content="≡"
+                        Background="Transparent" BorderThickness="0" Padding="4,2"
+                        Command="{Binding ToggleCollapsedCommand}" ToolTip.Tip="折叠/展开队列" />
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="12"
+                           AutomationProperties.AutomationId="QueueCountText"
+                           Foreground="{DynamicResource FgPrimary}">
+                    <Run Text="指令队列（" /><Run Text="{Binding Queue.Count}" /><Run Text=" 条）" />
+                </TextBlock>
+                <Button Grid.Column="2" Content="▶ 运行队列" Command="{Binding RunQueueCommand}"
+                        IsEnabled="{Binding !IsRunning}" FontSize="12" />
+                <Button Grid.Column="3" Content="停止" Command="{Binding StopQueueCommand}" Margin="6,0,0,0"
+                        IsEnabled="{Binding IsRunning}" FontSize="12" />
+            </Grid>
+            <TextBlock Text="{Binding StatusText}" FontSize="11"
+                       AutomationProperties.AutomationId="QueueStatusText"
+                       Foreground="{DynamicResource FgMuted}" TextWrapping="Wrap"
+                       IsVisible="{Binding StatusText, Converter={x:Static c:StringConverters.IsNotNullOrEmpty}}" />
+            <ItemsControl ItemsSource="{Binding Queue}"
+                          IsVisible="{Binding !IsCollapsed}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:QueuedCommandViewModel">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,2">
+                            <TextBlock Grid.Column="0" Text="≡" Foreground="{DynamicResource FgMuted}"
+                                       VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBox Grid.Column="1" Text="{Binding Text, Mode=TwoWay}" FontSize="12"
+                                     Watermark="指令内容（可编辑）" Padding="6,4" />
+                            <Button Grid.Column="2" Content="↑" Margin="6,0,0,0" Padding="6,2" FontSize="12"
+                                    ToolTip.Tip="上移一位"
+                                    Command="{Binding $parent[ItemsControl].DataContext.MoveQueuedUpCommand}"
+                                    CommandParameter="{Binding}" />
+                            <Button Grid.Column="3" Content="插队" Margin="4,0,0,0" Padding="6,2" FontSize="12"
+                                    ToolTip.Tip="移到队首，下一个执行"
+                                    Command="{Binding $parent[ItemsControl].DataContext.JumpQueuedToFrontCommand}"
+                                    CommandParameter="{Binding}" />
+                            <Button Grid.Column="4" Content="删除" Margin="4,0,0,0" Padding="6,2" FontSize="12"
+                                    ToolTip.Tip="从队列删除"
+                                    Command="{Binding $parent[ItemsControl].DataContext.RemoveQueuedCommand}"
+                                    CommandParameter="{Binding}" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </Border>
+</UserControl>

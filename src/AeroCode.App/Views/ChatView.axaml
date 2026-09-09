@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AeroCode.App.ViewModels"
+             xmlns:views="using:AeroCode.App.Views"
              xmlns:models="using:AeroAgent.Conversation.Models"
              xmlns:conv="using:AeroCode.App.Converters"
              x:Class="AeroCode.App.Views.ChatView"
@@ -273,7 +274,7 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
                         <Button Grid.Column="0" Content="附件"
                                 Command="{Binding AttachFileCommand}"
                                 ToolTip.Tip="添加图片附件"
@@ -290,9 +291,15 @@
                         <Button Grid.Column="2" Margin="8,0,0,0" Content="停止"
                                 Command="{Binding StopCommand}"
                                 IsVisible="{Binding IsStreaming}" />
-                        <Button Grid.Column="3" Margin="8,0,0,0" Content="发送" Classes="Primary"
+                        <Button Grid.Column="3" Margin="8,0,0,0" Content="入队"
+                                Command="{Binding EnqueueCommand}"
+                                ToolTip.Tip="把指令加入队列，逐条自动执行" />
+                        <Button Grid.Column="4" Margin="8,0,0,0" Content="发送" Classes="Primary"
                                 Command="{Binding SendCommand}" />
                     </Grid>
+                    <!-- 指令队列（UIR-5 铺全输入框）：DataContext = Queue 引擎 -->
+                    <views:CommandQueueView DataContext="{Binding Queue}"
+                                            AutomationProperties.AutomationId="ChatQueuePanel" />
                 </StackPanel>
             </Border>
         </Grid>
