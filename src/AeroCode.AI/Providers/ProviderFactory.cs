@@ -84,7 +84,23 @@ public sealed class ProviderFactory : IProviderRegistry, IDisposable
         }
     }
 
-    public IAiProvider GetDefault() => Get(DefaultProviderId);
+    public IAiProvider GetDefault()
+    {
+        var id = DefaultProviderId;
+        // defaultProviderId 未设置或指向已删除 provider 时，回退到首个已配置 provider，
+        // 避免 Get(null) 抛 ArgumentNullException 导致启动崩溃。
+        if (string.IsNullOrWhiteSpace(id) || !TryGetConfig(id, out _))
+        {
+            id = ListConfiguredIds().FirstOrDefault();
+        }
+
+        if (id is null)
+        {
+            throw new InvalidOperationException("No AI provider configured");
+        }
+
+        return Get(id);
+    }
 
     public IAiProvider Get(string providerId)
     {

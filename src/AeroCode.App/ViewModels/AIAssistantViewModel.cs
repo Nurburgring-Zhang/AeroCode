@@ -64,6 +64,26 @@ public partial class AIAssistantViewModel : ObservableObject
     /// <summary>AIF-4 多模态生成输入：文生图 / 文生视频的提示词。</summary>
     [ObservableProperty] private string _mediaPrompt = string.Empty;
 
+    // ── UIR-3：100 办公/生产/工作/学习场景库 ──
+    /// <summary>场景库（数据驱动，来自 OfficeScenarios）。</summary>
+    public ObservableCollection<AeroCode.App.Services.ScenarioTemplate> Scenarios { get; } = new();
+
+    [ObservableProperty] private AeroCode.App.Services.ScenarioTemplate? _selectedScenario;
+    [ObservableProperty] private string _scenarioInput = string.Empty;
+
+    // ── UIR-5：指令排队队列（自动执行 + 排序/插队/编辑/删除/折叠）──
+    /// <summary>待执行指令队列（按顺序自动执行）。</summary>
+    public ObservableCollection<QueuedCommandViewModel> CommandQueue { get; } = new();
+
+    /// <summary>队列面板是否折叠。</summary>
+    [ObservableProperty] private bool _isQueueCollapsed;
+
+    /// <summary>是否正在自动执行队列。</summary>
+    [ObservableProperty] private bool _isQueueRunning;
+
+    /// <summary>队列自动执行的取消源（停止队列/中断当前条）。</summary>
+    private CancellationTokenSource? _queueCts;
+
     private AeroCode.AI.Multimodal.MiniMaxMultimodalClient? _multimodal;
     private static readonly HttpClient MediaHttp = new() { Timeout = TimeSpan.FromSeconds(180) };
 
@@ -89,8 +109,18 @@ public partial class AIAssistantViewModel : ObservableObject
         _instructions = instructions;
         foreach (var id in factory.ListConfiguredIds()) AvailableProviders.Add(id);
         if (AvailableProviders.Count > 0)
-            SelectedProviderId = factory.GetDefault().ProviderId;
+        {
+            // 防御：默认 provider 不可用时回退首个已配置 provider，避免构造期崩溃。
+            var def = factory.DefaultProviderId;
+            SelectedProviderId = !string.IsNullOrEmpty(def) && AvailableProviders.Contains(def)
+                ? def
+                : AvailableProviders[0];
+        }
         RefreshSkills();
+
+        // UIR-3：装载 100+ 办公/生产/工作/学习场景库。
+        foreach (var s in AeroCode.App.Services.OfficeScenarios.All)
+            Scenarios.Add(s);
 
         // 热重载：设置保存后 provider 集合变化 → 就地刷新下拉，
         // 否则已删除的 provider 留在列表里，后续 Get(已删id) 会抛异常。
@@ -598,6 +628,197 @@ public partial class AIAssistantViewModel : ObservableObject
         return path;
     }
 
+    // ============== UIR-3：100 场景执行 ==============
+
+    /// <summary>执行选中的办公场景：把 {input} 替换为用户输入，流式调用真实 provider。</summary>
+    [RelayCommand]
+    private async Task RunScenarioAsync()
+    {
+        if (SelectedScenario is null) { StatusText = "请先选择一个场景"; return; }
+        if (string.IsNullOrWhiteSpace(ScenarioInput)) { StatusText = "请在场景输入框填入内容"; return; }
+        if (IsStreaming) return;
+
+        IsStreaming = true;
+        StatusText = $"场景执行：{SelectedScenario.Name}…";
+        var sb = new StringBuilder();
+        try
+        {
+            // 场景模板本身即 system 指令；用户输入替换 {input} 占位后作为 user 消息。
+            var systemPrompt = SelectedScenario.Prompt.Contains("{input}")
+                ? "你是专业的办公生产助手，按指令高质量完成任务，直接给出结果。"
+                : SelectedScenario.Prompt;
+            var userContent = SelectedScenario.Prompt.Contains("{input}")
+                ? SelectedScenario.Prompt.Replace("{input}", ScenarioInput)
+                : ScenarioInput;
+
+            var req = new ChatRequest
+            {
+                Model = SelectedModel,
+                Stream = true,
+                EnableThinking = false,
+                Temperature = 0.4,
+                Messages = new[]
+                {
+                    new ChatMessage { Role = "system", Content = systemPrompt },
+                    new ChatMessage { Role = "user", Content = userContent },
+                },
+            };
+            var provider = _factory.Get(SelectedProviderId);
+            await foreach (var chunk in provider.StreamChatAsync(req))
+            {
+                if (chunk.DeltaContent is { Length: > 0 } c)
+                {
+                    sb.Append(c);
+                    AssistantReply = sb.ToString();
+                }
+            }
+
+            History.Add(new ChatMessage { Role = "user", Content = $"[{SelectedScenario.Display}] {Truncate(ScenarioInput, 80)}" });
+            History.Add(new ChatMessage { Role = "assistant", Content = sb.ToString() });
+            ScenarioInput = string.Empty;
+            StatusText = sb.Length > 0 ? $"✓ {SelectedScenario.Name} 完成" : "场景未返回内容";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ 场景失败：{ex.Message}";
+        }
+        finally
+        {
+            IsStreaming = false;
+        }
+    }
+
+    // ============== UIR-5：指令排队队列 ==============
+
+    /// <summary>把输入框指令加入队列（不立即执行）。队列为空时自动开始执行。</summary>
+    [RelayCommand]
+    private void EnqueueCommand()
+    {
+        var text = UserInput.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            StatusText = "请输入要加入队列的指令";
+            return;
+        }
+
+        CommandQueue.Add(new QueuedCommandViewModel { Text = text });
+        UserInput = string.Empty;
+        IsQueueCollapsed = false;
+        StatusText = $"已加入队列（共 {CommandQueue.Count} 条）";
+        // 若当前空闲且队列未在跑，则自动开始。
+        if (!IsQueueRunning && !IsStreaming)
+        {
+            _ = RunQueueAsync();
+        }
+    }
+
+    /// <summary>自动执行队列：逐条执行，上一条完成/中断后自动执行下一条，直到队列空或停止。</summary>
+    [RelayCommand]
+    private async Task RunQueueAsync()
+    {
+        if (IsQueueRunning || IsStreaming) return;
+        if (CommandQueue.Count == 0)
+        {
+            StatusText = "队列为空";
+            return;
+        }
+
+        IsQueueRunning = true;
+        IsQueueCollapsed = false;
+        try
+        {
+            while (IsQueueRunning && CommandQueue.Count > 0)
+            {
+                var cmd = CommandQueue[0];
+                UserInput = cmd.Text;
+                _queueCts = new CancellationTokenSource();
+                try
+                {
+                    await SendAsync(_queueCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    StatusText = "当前指令已中断";
+                }
+                finally
+                {
+                    _queueCts?.Dispose();
+                    _queueCts = null;
+                }
+
+                // 无论完成还是中断，都移除已处理的首条并继续下一条（除非已停止）。
+                if (CommandQueue.Count > 0 && ReferenceEquals(CommandQueue[0], cmd))
+                {
+                    CommandQueue.RemoveAt(0);
+                }
+            }
+
+            StatusText = CommandQueue.Count == 0
+                ? "✓ 队列执行完毕"
+                : $"队列已停止，剩余 {CommandQueue.Count} 条";
+        }
+        finally
+        {
+            IsQueueRunning = false;
+        }
+    }
+
+    /// <summary>停止队列自动执行（并中断当前正在执行的条）。</summary>
+    [RelayCommand]
+    private void StopQueue()
+    {
+        if (!IsQueueRunning)
+        {
+            StatusText = "队列未在运行";
+            return;
+        }
+
+        IsQueueRunning = false;
+        _queueCts?.Cancel();
+        StatusText = "正在停止队列…";
+    }
+
+    /// <summary>从队列删除一条指令。</summary>
+    [RelayCommand]
+    private void RemoveQueuedCommand(QueuedCommandViewModel? cmd)
+    {
+        if (cmd is null) return;
+        if (CommandQueue.Remove(cmd))
+        {
+            StatusText = $"已删除，剩余 {CommandQueue.Count} 条";
+        }
+    }
+
+    /// <summary>上移一条（排序）。</summary>
+    [RelayCommand]
+    private void MoveQueuedUpCommand(QueuedCommandViewModel? cmd)
+    {
+        if (cmd is null) return;
+        var idx = CommandQueue.IndexOf(cmd);
+        if (idx > 0)
+        {
+            CommandQueue.Move(idx, idx - 1);
+            StatusText = $"已上移到第 {idx} 位";
+        }
+    }
+
+    /// <summary>插队到队首（下一个执行）。</summary>
+    [RelayCommand]
+    private void JumpQueuedToFrontCommand(QueuedCommandViewModel? cmd)
+    {
+        if (cmd is null) return;
+        var idx = CommandQueue.IndexOf(cmd);
+        if (idx > 0)
+        {
+            CommandQueue.Move(idx, 0);
+            StatusText = "已插队到队首（下一个执行）";
+        }
+    }
+
+    /// <summary>切换队列面板折叠/展开。</summary>
+    [RelayCommand]
+    private void ToggleQueueCollapsed() => IsQueueCollapsed = !IsQueueCollapsed;
+
     // ============== Skill Execution (V3) ==============
 
     [RelayCommand]
@@ -676,3 +897,12 @@ public partial class AIAssistantViewModel : ObservableObject
 
 /// <summary>UI projection of ISkill — minimal projection to avoid pulling Skills into App at design-time.</summary>
 public sealed record SkillSummary(string Id, string Name, string Description, string Category, string Version, IReadOnlyList<string> Tags);
+
+/// <summary>UIR-5 指令队列项：Text 可在队列中直接编辑（双向绑定）。</summary>
+public partial class QueuedCommandViewModel : ObservableObject
+{
+    public string Id { get; } = Guid.NewGuid().ToString("N");
+
+    [ObservableProperty]
+    private string _text = string.Empty;
+}

@@ -72,34 +72,34 @@
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Light">
-            <SolidColorBrush x:Key="BgDeep" Color="#F0F0F0"/>
-            <SolidColorBrush x:Key="BgPanel" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="BgDeep" Color="#EFEFF1"/>
+            <SolidColorBrush x:Key="BgPanel" Color="#F7F7F8"/>
             <SolidColorBrush x:Key="BgElevated" Color="#FFFFFF"/>
             <SolidColorBrush x:Key="BgElev" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="Border" Color="#E0E0E0"/>
-            <SolidColorBrush x:Key="FgPrimary" Color="#1A1A1A"/>
-            <SolidColorBrush x:Key="FgMuted" Color="#6B6B6B"/>
+            <SolidColorBrush x:Key="Border" Color="#C6C6CC"/>
+            <SolidColorBrush x:Key="FgPrimary" Color="#1A1A1E"/>
+            <SolidColorBrush x:Key="FgMuted" Color="#5F5F66"/>
             <SolidColorBrush x:Key="Accent" Color="#2563EB"/>
                         <SolidColorBrush x:Key="Danger" Color="#DC2626"/>
-            <SolidColorBrush x:Key="BgHover" Color="#EBEBEB"/>
-            <SolidColorBrush x:Key="BgPressed" Color="#E2E2E2"/>
+            <SolidColorBrush x:Key="BgHover" Color="#E7E7EB"/>
+            <SolidColorBrush x:Key="BgPressed" Color="#DDDDE3"/>
             <SolidColorBrush x:Key="AccentPurple" Color="#2563EB"/>
             <SolidColorBrush x:Key="AccentCyan" Color="#2563EB"/>
             <SolidColorBrush x:Key="AccentGreen" Color="#2563EB"/>
             <SolidColorBrush x:Key="AccentAmber" Color="#2563EB"/>
             <SolidColorBrush x:Key="AccentPink" Color="#2563EB"/>
             <SolidColorBrush x:Key="AccentRed" Color="#DC2626"/>
-            <SolidColorBrush x:Key="ChatBg" Color="#F0F0F0"/>
-            <SolidColorBrush x:Key="ChatPanel" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="ChatBg" Color="#EFEFF1"/>
+            <SolidColorBrush x:Key="ChatPanel" Color="#F7F7F8"/>
             <SolidColorBrush x:Key="ChatElevated" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="ChatBorder" Color="#E0E0E0"/>
-            <SolidColorBrush x:Key="ChatFg" Color="#1A1A1A"/>
-            <SolidColorBrush x:Key="ChatMuted" Color="#6B6B6B"/>
+            <SolidColorBrush x:Key="ChatBorder" Color="#C6C6CC"/>
+            <SolidColorBrush x:Key="ChatFg" Color="#1A1A1E"/>
+            <SolidColorBrush x:Key="ChatMuted" Color="#5F5F66"/>
             <SolidColorBrush x:Key="ChatAccent" Color="#2563EB"/>
             <SolidColorBrush x:Key="ChatCyan" Color="#2563EB"/>
             <SolidColorBrush x:Key="ChatRed" Color="#DC2626"/>
             <SolidColorBrush x:Key="ChatUserBubble" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="ChatAiBubble" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="ChatAiBubble" Color="#F7F7F8"/>
         </ResourceDictionary>
 
     </ResourceDictionary.ThemeDictionaries>

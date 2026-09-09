@@ -25,6 +25,8 @@
     <ApplicationId>com.AeroCode.app</ApplicationId>
     <ApplicationVersion>1</ApplicationVersion>
     <ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion>
+    <!-- 应用图标：Windows exe 图标（桌面窗口图标另经 MainWindow Icon 属性） -->
+    <ApplicationIcon>Assets/aerocode.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -60,6 +62,12 @@
   <!-- 内置 SOUL/长系统提示词预设：随双端（桌面/Android）打包，设置页可一键安装到 AppData/SOUL.md -->
   <ItemGroup>
     <EmbeddedResource Include="Assets/SoulPresets/*.md" />
+  </ItemGroup>
+
+  <!-- 应用图标资源（窗口图标 / 侧边栏品牌），供 XAML 引用 -->
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/aerocode.ico" />
+    <AvaloniaResource Include="Assets/aerocode-brand-128.png" />
   </ItemGroup>
 
 </Project>

@@ -5,35 +5,35 @@
     <UserControl.Resources>
     </UserControl.Resources>
 
-    <DockPanel Background="{StaticResource BgPanel}" LastChildFill="True">
+    <DockPanel Background="{DynamicResource BgPanel}" LastChildFill="True">
         <!-- 头部：意图说明 -->
-        <Border DockPanel.Dock="Top" Padding="20,14" Background="{StaticResource BgElev}"
-                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+        <Border DockPanel.Dock="Top" Padding="20,14" Background="{DynamicResource BgElev}"
+                BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1">
             <StackPanel Spacing="4">
                 <TextBlock Text="模型请求执行工具" FontSize="16" FontWeight="Bold"
-                           Foreground="{StaticResource Accent}" />
+                           Foreground="{DynamicResource Accent}" />
                 <StackPanel Orientation="Horizontal" Spacing="6">
-                    <TextBlock Text="工具：" Foreground="{StaticResource FgMuted}" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock Text="工具：" Foreground="{DynamicResource FgMuted}" FontSize="13" VerticalAlignment="Center" />
                     <TextBlock x:Name="ToolNameText" FontSize="13" FontWeight="SemiBold"
-                               Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                               Foreground="{DynamicResource FgPrimary}" VerticalAlignment="Center" />
                 </StackPanel>
             </StackPanel>
         </Border>
 
         <!-- 底部：记住 + 决定按钮 -->
-        <Border DockPanel.Dock="Bottom" Padding="20,12" Background="{StaticResource BgElev}"
-                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
+        <Border DockPanel.Dock="Bottom" Padding="20,12" Background="{DynamicResource BgElev}"
+                BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0">
             <StackPanel Spacing="10">
-                <CheckBox x:Name="RememberBox" Foreground="{StaticResource FgPrimary}" FontSize="12"
+                <CheckBox x:Name="RememberBox" Foreground="{DynamicResource FgPrimary}" FontSize="12"
                           Content="记住我的选择（以后此工具不再询问；可在 设置 → 工具权限 中改回）" />
                 <Grid ColumnDefinitions="*,Auto,Auto">
-                    <TextBlock Grid.Column="0" Foreground="{StaticResource FgMuted}" FontSize="11"
+                    <TextBlock Grid.Column="0" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                VerticalAlignment="Center" TextWrapping="Wrap"
                                Text="拒绝的原因会如实返回给模型，模型可改用其他方式完成任务。" />
                     <Button Grid.Column="1" Content="拒绝" Click="OnDenyClick" Margin="0,0,8,0"
-                            Background="{StaticResource Danger}" Foreground="White" MinWidth="96" />
+                            Background="{DynamicResource Danger}" Foreground="White" MinWidth="96" />
                     <Button Grid.Column="2" Content="允许" Click="OnAllowClick"
-                            Background="{StaticResource Accent}" Foreground="White" MinWidth="96" />
+                            Background="{DynamicResource Accent}" Foreground="White" MinWidth="96" />
                 </Grid>
             </StackPanel>
         </Border>
@@ -42,21 +42,21 @@
         <Border Padding="20,12">
             <DockPanel LastChildFill="True">
                 <TextBlock DockPanel.Dock="Top" Text="将要用到的参数" FontSize="12"
-                           FontWeight="SemiBold" Foreground="{StaticResource FgMuted}" Margin="0,0,0,6" />
+                           FontWeight="SemiBold" Foreground="{DynamicResource FgMuted}" Margin="0,0,0,6" />
                 <!-- 智能审批建议（G5）：无建议器/无可用建议时整块隐藏 -->
                 <Border DockPanel.Dock="Top" x:Name="AdvisorCard" IsVisible="False"
-                        Background="#1B2333" BorderBrush="{StaticResource Accent}"
+                        Background="#1B2333" BorderBrush="{DynamicResource Accent}"
                         BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,6">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock Text="" FontSize="13" VerticalAlignment="Center" />
-                        <TextBlock x:Name="AdvisorText" Foreground="{StaticResource Accent}"
+                        <TextBlock x:Name="AdvisorText" Foreground="{DynamicResource Accent}"
                                    FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
                     </StackPanel>
                 </Border>
-                <Border Background="{StaticResource BgElev}" BorderBrush="{StaticResource Border}"
+                <Border Background="{DynamicResource BgElev}" BorderBrush="{DynamicResource Border}"
                         BorderThickness="1" CornerRadius="4" Padding="10">
                     <ScrollViewer>
-                        <TextBlock x:Name="ArgsText" Foreground="{StaticResource FgPrimary}"
+                        <TextBlock x:Name="ArgsText" Foreground="{DynamicResource FgPrimary}"
                                    FontSize="12" FontFamily="Consolas,Menlo,monospace"
                                    TextWrapping="Wrap" />
                     </ScrollViewer>

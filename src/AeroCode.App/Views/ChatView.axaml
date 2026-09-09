@@ -11,21 +11,21 @@
         <conv:BoolToOpacityConverter x:Key="StreamingOpacity" />
     </UserControl.Resources>
 
-    <Grid ColumnDefinitions="260,6,*" Background="{StaticResource ChatBg}">
+    <Grid ColumnDefinitions="260,6,*" Background="{DynamicResource ChatBg}">
 
         <!-- 左栏：会话列表 + todo 清单 -->
-        <Border Grid.Column="0" Background="{StaticResource ChatPanel}"
-                BorderBrush="{StaticResource ChatBorder}" BorderThickness="0,0,1,0">
+        <Border Grid.Column="0" Background="{DynamicResource ChatPanel}"
+                BorderBrush="{DynamicResource ChatBorder}" BorderThickness="0,0,1,0">
             <DockPanel LastChildFill="True">
                 <Button DockPanel.Dock="Top" Margin="10" HorizontalAlignment="Stretch"
                         Content="＋ 新会话" Command="{Binding NewSessionCommand}" />
 
                 <!-- 待办清单（G5）：当前会话 TodoStore 条目，勾选/删除真实落库 -->
                 <Border DockPanel.Dock="Bottom" MaxHeight="230"
-                        BorderBrush="{StaticResource ChatBorder}" BorderThickness="0,1,0,0">
+                        BorderBrush="{DynamicResource ChatBorder}" BorderThickness="0,1,0,0">
                     <DockPanel>
                         <TextBlock DockPanel.Dock="Top" Text="待办清单" Margin="10,8,10,4"
-                                   FontWeight="SemiBold" Foreground="{StaticResource ChatAccent}" FontSize="12" />
+                                   FontWeight="SemiBold" Foreground="{DynamicResource ChatAccent}" FontSize="12" />
                         <ListBox ItemsSource="{Binding Todos}" Background="Transparent" BorderThickness="0">
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="vm:TodoItemViewModel">
@@ -37,7 +37,7 @@
                                                   CommandParameter="{Binding}" />
                                         <TextBlock Grid.Column="1" Text="{Binding Content}" FontSize="12"
                                                    TextWrapping="Wrap" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource ChatFg}" />
+                                                   Foreground="{DynamicResource ChatFg}" />
                                         <Button Grid.Column="2" Content="删除" FontSize="10" Padding="3"
                                                 VerticalAlignment="Center" ToolTip.Tip="删除待办"
                                                 Command="{Binding $parent[ListBox].DataContext.DeleteTodoCommand}"
@@ -57,11 +57,11 @@
                         <DataTemplate x:DataType="vm:SessionItemViewModel">
                             <Grid ColumnDefinitions="*,Auto" Margin="2">
                                 <StackPanel Grid.Column="0" Spacing="2">
-                                    <TextBlock Text="{Binding Title}" Foreground="{StaticResource ChatFg}"
+                                    <TextBlock Text="{Binding Title}" Foreground="{DynamicResource ChatFg}"
                                                FontSize="13" TextTrimming="CharacterEllipsis" />
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock Text="{Binding DisplayTime}" Foreground="{StaticResource ChatMuted}" FontSize="10" />
-                                        <TextBlock Text="{Binding Strategy}" Foreground="{StaticResource ChatCyan}" FontSize="10" />
+                                        <TextBlock Text="{Binding DisplayTime}" Foreground="{DynamicResource ChatMuted}" FontSize="10" />
+                                        <TextBlock Text="{Binding Strategy}" Foreground="{DynamicResource ChatCyan}" FontSize="10" />
                                     </StackPanel>
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
@@ -86,7 +86,7 @@
         </Border>
 
         <!-- 右区：消息流 + 输入 -->
-        <GridSplitter Grid.Column="1" Width="6" Background="{StaticResource ChatBorder}" ResizeDirection="Columns" />
+        <GridSplitter Grid.Column="1" Width="6" Background="{DynamicResource ChatBorder}" ResizeDirection="Columns" />
         <Grid Grid.Column="2" RowDefinitions="*,Auto">
 
             <!-- 消息流 -->
@@ -98,16 +98,16 @@
                             <Grid Margin="0,6" ColumnDefinitions="*,Auto,*">
                                 <!-- 用户消息靠右 -->
                                 <Border Grid.Column="2" IsVisible="{Binding IsUser}"
-                                        Background="{StaticResource ChatUserBubble}"
+                                        Background="{DynamicResource ChatUserBubble}"
                                         CornerRadius="12,12,2,12" Padding="12,8"
                                         MaxWidth="560" HorizontalAlignment="Right">
                                     <StackPanel Spacing="4">
                                         <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
-                                                   Foreground="{StaticResource ChatFg}" FontSize="14" />
+                                                   Foreground="{DynamicResource ChatFg}" FontSize="14" />
                                         <TextBlock Text="{Binding AttachmentSummary}"
                                                    IsVisible="{Binding !!AttachmentSummary}"
                                                    TextWrapping="Wrap"
-                                                   Foreground="{StaticResource ChatMuted}" FontSize="11" />
+                                                   Foreground="{DynamicResource ChatMuted}" FontSize="11" />
                                     </StackPanel>
                                 </Border>
 
@@ -116,25 +116,25 @@
                                             Margin="{Binding IndentMargin}"
                                             MaxWidth="680" HorizontalAlignment="Left" Spacing="4">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Border Background="{StaticResource ChatCyan}" CornerRadius="6" Padding="6,2">
+                                        <Border Background="{DynamicResource ChatCyan}" CornerRadius="6" Padding="6,2">
                                             <TextBlock Text="{Binding ToolBadge}" FontSize="10"
                                                        Foreground="White" />
                                         </Border>
                                         <TextBlock Text="{Binding StatusGlyph}" IsVisible="{Binding !!StatusGlyph}"
-                                                   Foreground="{StaticResource ChatRed}" FontSize="10"
+                                                   Foreground="{DynamicResource ChatRed}" FontSize="10"
                                                    VerticalAlignment="Center" />
                                     </StackPanel>
-                                    <Border Background="{StaticResource ChatPanel}"
+                                    <Border Background="{DynamicResource ChatPanel}"
                                             CornerRadius="2,10,10,10" Padding="10,6"
-                                            BorderBrush="{StaticResource ChatBorder}" BorderThickness="1">
+                                            BorderBrush="{DynamicResource ChatBorder}" BorderThickness="1">
                                         <StackPanel Spacing="4">
                                             <TextBlock Text="{Binding ToolArguments}"
                                                        IsVisible="{Binding !!ToolArguments}"
-                                                       Foreground="{StaticResource ChatMuted}" FontSize="10"
+                                                       Foreground="{DynamicResource ChatMuted}" FontSize="10"
                                                        TextTrimming="CharacterEllipsis"
                                                        ToolTip.Tip="{Binding ToolArguments}" />
                                             <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
-                                                       Foreground="{StaticResource ChatFg}" FontSize="12" />
+                                                       Foreground="{DynamicResource ChatFg}" FontSize="12" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
@@ -144,41 +144,41 @@
                                             Margin="{Binding IndentMargin}"
                                             MaxWidth="680" HorizontalAlignment="Left" Spacing="4">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Border Background="{StaticResource ChatAccent}" CornerRadius="6"
+                                        <Border Background="{DynamicResource ChatAccent}" CornerRadius="6"
                                                 Padding="6,2" IsVisible="{Binding !!AttributionBadge}">
                                             <TextBlock Text="{Binding AttributionBadge}" FontSize="10"
                                                        Foreground="White" />
                                         </Border>
-                                        <Border Background="{StaticResource ChatCyan}" CornerRadius="6"
+                                        <Border Background="{DynamicResource ChatCyan}" CornerRadius="6"
                                                 Padding="6,2" IsVisible="{Binding !!Label}">
                                             <TextBlock Text="{Binding Label}" FontSize="10"
                                                        Foreground="White" />
                                         </Border>
-                                        <Border Background="{StaticResource ChatBorder}" CornerRadius="6"
+                                        <Border Background="{DynamicResource ChatBorder}" CornerRadius="6"
                                                 Padding="6,2" IsVisible="{Binding !!ToolCallsBadge}">
                                             <TextBlock Text="{Binding ToolCallsBadge}" FontSize="10"
-                                                       Foreground="{StaticResource ChatFg}" />
+                                                       Foreground="{DynamicResource ChatFg}" />
                                         </Border>
                                         <TextBlock Text="{Binding StatusGlyph}" IsVisible="{Binding !!StatusGlyph}"
-                                                   Foreground="{StaticResource ChatRed}" FontSize="10"
+                                                   Foreground="{DynamicResource ChatRed}" FontSize="10"
                                                    VerticalAlignment="Center" />
                                         <TextBlock Text="{Binding UsageBadge}" IsVisible="{Binding !!UsageBadge}"
-                                                   Foreground="{StaticResource ChatMuted}" FontSize="10"
+                                                   Foreground="{DynamicResource ChatMuted}" FontSize="10"
                                                    VerticalAlignment="Center" />
                                         <TextBlock Text="{Binding CostBadge}" IsVisible="{Binding !!CostBadge}"
-                                                   Foreground="{StaticResource ChatMuted}" FontSize="10"
+                                                   Foreground="{DynamicResource ChatMuted}" FontSize="10"
                                                    VerticalAlignment="Center" />
                                     </StackPanel>
-                                    <Border Background="{StaticResource ChatAiBubble}"
+                                    <Border Background="{DynamicResource ChatAiBubble}"
                                             CornerRadius="2,12,12,12" Padding="12,8"
-                                            BorderBrush="{StaticResource ChatBorder}" BorderThickness="1">
+                                            BorderBrush="{DynamicResource ChatBorder}" BorderThickness="1">
                                         <StackPanel Spacing="6">
                                             <TextBlock Text="{Binding ReasoningContent}" IsVisible="{Binding !!ReasoningContent}"
-                                                       Foreground="{StaticResource ChatMuted}" FontSize="11"
+                                                       Foreground="{DynamicResource ChatMuted}" FontSize="11"
                                                        FontStyle="Italic" TextWrapping="Wrap" />
                                             <ContentControl Content="{Binding Content, Converter={StaticResource MdToControl}}" />
                                             <TextBlock Text="{Binding ErrorText}" IsVisible="{Binding !!ErrorText}"
-                                                       Foreground="{StaticResource ChatRed}" FontSize="12"
+                                                       Foreground="{DynamicResource ChatRed}" FontSize="12"
                                                        TextWrapping="Wrap" />
                                         </StackPanel>
                                     </Border>
@@ -190,19 +190,19 @@
             </ScrollViewer>
 
             <!-- 输入区 -->
-            <Border Grid.Row="1" Background="{StaticResource ChatPanel}"
-                    BorderBrush="{StaticResource ChatBorder}" BorderThickness="0,1,0,0" Padding="12">
+            <Border Grid.Row="1" Background="{DynamicResource ChatPanel}"
+                    BorderBrush="{DynamicResource ChatBorder}" BorderThickness="0,1,0,0" Padding="12">
                 <StackPanel Spacing="8">
                     <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto">
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="Provider" Foreground="{StaticResource ChatMuted}"
+                            <TextBlock Text="Provider" Foreground="{DynamicResource ChatMuted}"
                                        FontSize="11" VerticalAlignment="Center" />
                             <ComboBox ItemsSource="{Binding ProviderIds}"
                                       SelectedItem="{Binding SelectedProviderId, Mode=TwoWay}"
                                       MinWidth="140" FontSize="12" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0">
-                            <TextBlock Text="策略" Foreground="{StaticResource ChatMuted}"
+                            <TextBlock Text="策略" Foreground="{DynamicResource ChatMuted}"
                                        FontSize="11" VerticalAlignment="Center" />
                             <ComboBox ItemsSource="{Binding Strategies}"
                                       SelectedItem="{Binding SelectedStrategy, Mode=TwoWay}"
@@ -210,22 +210,22 @@
                                       MinWidth="110" FontSize="12" />
                             <TextBlock Text="{Binding ExpertsGatewayHint}"
                                        IsVisible="{Binding IsExpertsSelected}"
-                                       Foreground="{StaticResource ChatMuted}" FontSize="10"
+                                       Foreground="{DynamicResource ChatMuted}" FontSize="10"
                                        MaxWidth="320" TextWrapping="Wrap"
                                        VerticalAlignment="Center" Margin="4,0,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0">
-                            <TextBlock Text="档位" Foreground="{StaticResource ChatMuted}"
+                            <TextBlock Text="档位" Foreground="{DynamicResource ChatMuted}"
                                        FontSize="11" VerticalAlignment="Center" />
                             <ComboBox ItemsSource="{Binding PermissionModes}"
                                       SelectedItem="{Binding SelectedMode, Mode=TwoWay}"
                                       MinWidth="104" FontSize="12"
                                       ToolTip.Tip="权限档位：Default 逐工具规则 / AcceptEdits 自动接受编辑 / Plan 只读规划（write_plan 落 PLAN.md）/ Bypass 跳过询问（显式拒绝与危险命令拦截不受影响）" />
-                            <TextBlock Text="{Binding ModeDescription}" Foreground="{StaticResource ChatMuted}"
+                            <TextBlock Text="{Binding ModeDescription}" Foreground="{DynamicResource ChatMuted}"
                                        FontSize="10" VerticalAlignment="Center" />
                         </StackPanel>
                         <TextBlock Grid.Column="4" Text="{Binding StatusText}"
-                                   Foreground="{StaticResource ChatMuted}" FontSize="11"
+                                   Foreground="{DynamicResource ChatMuted}" FontSize="11"
                                    VerticalAlignment="Center" Margin="12,0" />
                     </Grid>
                     <!-- Steer 插话（G5）：流式进行中可见，经 SteerQueue 下一轮注入 -->
@@ -248,15 +248,15 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="models:MessageAttachment">
-                                <Border Background="{StaticResource ChatPanel}"
+                                <Border Background="{DynamicResource ChatPanel}"
                                         CornerRadius="6" Padding="8,4" Margin="0,0,6,4"
-                                        BorderBrush="{StaticResource ChatBorder}" BorderThickness="1">
+                                        BorderBrush="{DynamicResource ChatBorder}" BorderThickness="1">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <TextBlock Text="{Binding FileName}" FontSize="11"
-                                                   Foreground="{StaticResource ChatFg}"
+                                                   Foreground="{DynamicResource ChatFg}"
                                                    VerticalAlignment="Center" />
                                         <TextBlock FontSize="10"
-                                                   Foreground="{StaticResource ChatMuted}"
+                                                   Foreground="{DynamicResource ChatMuted}"
                                                    VerticalAlignment="Center">
                                             <TextBlock.Text>
                                                 <Binding Path="DisplaySize" />
@@ -266,7 +266,7 @@
                                                 Command="{Binding $parent[UserControl].DataContext.RemoveAttachmentCommand}"
                                                 CommandParameter="{Binding}"
                                                 Background="Transparent" BorderThickness="0"
-                                                Foreground="{StaticResource ChatRed}"
+                                                Foreground="{DynamicResource ChatRed}"
                                                 ToolTip.Tip="移除附件" />
                                     </StackPanel>
                                 </Border>
@@ -279,7 +279,7 @@
                                 ToolTip.Tip="添加图片附件"
                                 Background="Transparent" BorderThickness="0"
                                 FontSize="13" Padding="8,4"
-                                Foreground="{StaticResource ChatMuted}"
+                                Foreground="{DynamicResource ChatMuted}"
                                 VerticalAlignment="Bottom" />
                         <TextBox Grid.Column="1" x:Name="InputBox"
                                  Text="{Binding InputText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"

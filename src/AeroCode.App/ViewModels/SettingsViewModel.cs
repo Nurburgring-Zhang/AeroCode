@@ -356,6 +356,19 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _selectedTheme = ThemeService.Dark;
 
+    /// <summary>主题下拉选中项（ThemeChoice）。UIR/崩溃修复：ComboBox 的 SelectedItem
+    /// 必须绑定到与 ItemsSource（ThemeChoice 集合）同类型的属性，不能绑 string，
+    /// 更不能误用 ObjectConverters.IsNotNull 作 TwoWay 转换器（会导致回写崩溃）。</summary>
+    [ObservableProperty]
+    private ThemeChoice? _selectedThemeChoice;
+
+    /// <summary>选择项变化时同步到字符串主题值（Save/Apply 消费）。</summary>
+    partial void OnSelectedThemeChoiceChanged(ThemeChoice? value)
+    {
+        if (value is not null)
+            SelectedTheme = value.Id;
+    }
+
     [ObservableProperty]
     private int _fontSize = 14;
 
@@ -752,6 +765,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var s = _settings.Current;
         SelectedTheme = string.IsNullOrWhiteSpace(s.Ui.Theme) ? ThemeService.Dark : s.Ui.Theme;
+        SelectedThemeChoice = Themes.FirstOrDefault(t => t.Id == SelectedTheme)
+                              ?? Themes.First(t => t.Id == ThemeService.Dark);
         FontSize = Math.Clamp(s.Ui.FontSize, 10, 22);
         DefaultProviderId = s.Ai.DefaultProviderId;
         DefaultModel = s.Ai.DefaultModel;
@@ -1540,5 +1555,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         SchedulerStatusText = "调度轮询已停止（任务定义保留）";
     }
 
-    public sealed record ThemeChoice(string Id, string Display);
 }
+
+/// <summary>主题下拉选项（命名空间级，供 SettingsView x:DataType 解析）。</summary>
+public sealed record ThemeChoice(string Id, string Display);

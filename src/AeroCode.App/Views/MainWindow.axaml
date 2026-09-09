@@ -2,7 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="using:AeroCode.App.Views"
         x:Class="AeroCode.App.Views.MainWindow"
-        Title="AeroCode · 本地优先笔记 + AI 助手 + Agent Harness (V3.0 · r5 build 2026-09-09)"
+        Icon="/Assets/aerocode.ico"
+        Title="AeroCode · 本地优先笔记 + AI 助手 + Agent Harness (V3.0 · r5.1 build 2026-09-09)"
         Width="1440" Height="900"
         MinWidth="1100" MinHeight="700"
         WindowStartupLocation="CenterScreen">

@@ -2,21 +2,22 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AeroCode.App.ViewModels"
              xmlns:models="clr-namespace:AeroCode.AI.Models;assembly=AeroCode.AI"
+             xmlns:services="using:AeroCode.App.Services"
              x:Class="AeroCode.App.Views.AIAssistantView"
              x:DataType="vm:AIAssistantViewModel">
     <UserControl.Resources>
     </UserControl.Resources>
 
-    <Grid RowDefinitions="Auto,*,Auto,Auto" Background="{StaticResource BgDeep}">
+    <Grid RowDefinitions="Auto,*,Auto,Auto" Background="{DynamicResource BgDeep}">
 
         <!-- ============ 顶部工具栏: Provider + Model + Skill 选择 ============ -->
-        <Border Grid.Row="0" Background="{StaticResource BgPanel}"
-                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
+        <Border Grid.Row="0" Background="{DynamicResource BgPanel}"
+                BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
                 <TextBlock Grid.Column="0" Text="AI 助手" FontSize="15" FontWeight="Bold"
-                           Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
+                           Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding StatusText}"
-                           Foreground="{StaticResource FgMuted}" FontSize="12"
+                           Foreground="{DynamicResource FgMuted}" FontSize="12"
                            VerticalAlignment="Center" Margin="14,0" TextTrimming="CharacterEllipsis"/>
                 <ComboBox Grid.Column="2" Width="160"
                           ItemsSource="{Binding AvailableProviders}"
@@ -34,7 +35,7 @@
                         <DataTemplate DataType="vm:SkillSummary">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <TextBlock Text="{Binding Name}" />
-                                <TextBlock Text="{Binding Category}" Foreground="{StaticResource FgMuted}" FontSize="11"/>
+                                <TextBlock Text="{Binding Category}" Foreground="{DynamicResource FgMuted}" FontSize="11"/>
                             </StackPanel>
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
@@ -45,23 +46,23 @@
         </Border>
 
         <!-- ============ 中部: 对话历史 ============ -->
-        <ScrollViewer Grid.Row="1" Padding="16" Background="{StaticResource BgDeep}">
+        <ScrollViewer Grid.Row="1" Padding="16" Background="{DynamicResource BgDeep}">
             <StackPanel Spacing="8">
                 <ItemsControl ItemsSource="{Binding History}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="models:ChatMessage">
                             <Border Padding="12,10" Margin="0,4" CornerRadius="8"
-                                    Background="{StaticResource BgPanel}"
-                                    BorderBrush="{StaticResource Border}" BorderThickness="1">
+                                    Background="{DynamicResource BgPanel}"
+                                    BorderBrush="{DynamicResource Border}" BorderThickness="1">
                                 <StackPanel>
-                                    <TextBlock FontSize="11" Foreground="{StaticResource Accent}"
+                                    <TextBlock FontSize="11" Foreground="{DynamicResource Accent}"
                                                FontWeight="SemiBold">
                                         <Run Text="{Binding Role}" />
                                         <Run Text="· " />
                                         <Run Text="{Binding Name, FallbackValue=''}" />
                                     </TextBlock>
                                     <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
-                                               Foreground="{StaticResource FgPrimary}"
+                                               Foreground="{DynamicResource FgPrimary}"
                                                FontSize="13" Margin="0,4,0,0" />
                                 </StackPanel>
                             </Border>
@@ -69,14 +70,14 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
                 <Border IsVisible="{Binding IsStreaming}" Padding="12,10"
-                        Background="{StaticResource BgElevated}"
-                        BorderBrush="{StaticResource Accent}" BorderThickness="1"
+                        Background="{DynamicResource BgElevated}"
+                        BorderBrush="{DynamicResource Accent}" BorderThickness="1"
                         CornerRadius="8">
                     <StackPanel>
-                        <TextBlock Text="✨ 实时生成中..." Foreground="{StaticResource Accent}"
+                        <TextBlock Text="✨ 实时生成中..." Foreground="{DynamicResource Accent}"
                                    FontWeight="SemiBold" FontSize="12" />
                         <TextBlock Text="{Binding AssistantReply}" TextWrapping="Wrap"
-                                   Foreground="{StaticResource FgPrimary}" FontSize="13"
+                                   Foreground="{DynamicResource FgPrimary}" FontSize="13"
                                    FontFamily="Consolas,JetBrains Mono,monospace" Margin="0,6,0,0" />
                     </StackPanel>
                 </Border>
@@ -84,23 +85,23 @@
         </ScrollViewer>
 
         <!-- ============ 第二工具栏: 6 Capability 按钮 + 消息操作 ============ -->
-        <Border Grid.Row="2" Background="{StaticResource BgPanel}"
-                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,1" Padding="14,8">
+        <Border Grid.Row="2" Background="{DynamicResource BgPanel}"
+                BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,1" Padding="14,8">
             <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*">
                 <!-- Capability 1-6 (主行) -->
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6">
                     <Button Content="摘要" Command="{Binding SummarizeLastCommand}"
-                            ToolTip.Tip="压缩最后一条用户消息" Background="{StaticResource Accent}" />
+                            ToolTip.Tip="压缩最后一条用户消息" Background="{DynamicResource Accent}" />
                     <Button Content="翻译" Command="{Binding TranslateCommand}"
-                            ToolTip.Tip="翻译下面的文本到目标语言" Background="{StaticResource Accent}" />
+                            ToolTip.Tip="翻译下面的文本到目标语言" Background="{DynamicResource Accent}" />
                     <Button Content="自动标签" Command="{Binding AutoTagLastCommand}"
-                            ToolTip.Tip="从最后内容提取 1-5 个标签" Background="{StaticResource Accent}" />
+                            ToolTip.Tip="从最后内容提取 1-5 个标签" Background="{DynamicResource Accent}" />
                     <Button Content="语义搜索" Command="{Binding SemanticSearchCommand}"
-                            ToolTip.Tip="基于查询从所有笔记找最相关 top-5" Background="{StaticResource Accent}" />
+                            ToolTip.Tip="基于查询从所有笔记找最相关 top-5" Background="{DynamicResource Accent}" />
                     <Button Content="✍ 写作" Command="{Binding WriteCommand}"
-                            ToolTip.Tip="基于主题生成结构化内容" Background="{StaticResource Accent}" />
+                            ToolTip.Tip="基于主题生成结构化内容" Background="{DynamicResource Accent}" />
                     <Button Content="问答" Command="{Binding AnswerFromNotesCommand}"
-                            ToolTip.Tip="基于笔记 RAG 回答问题" Background="{StaticResource Danger}" />
+                            ToolTip.Tip="基于笔记 RAG 回答问题" Background="{DynamicResource Danger}" />
                 </StackPanel>
                 <!-- 翻译输入区 -->
                 <Grid Grid.Row="1" ColumnDefinitions="*,180,Auto" Margin="0,8,0,0">
@@ -146,33 +147,83 @@
                     <TextBox Grid.Column="0" Watermark="多模态生成：输入画面描述（生图 / 生视频）…"
                              Text="{Binding MediaPrompt, Mode=TwoWay}" Margin="0,0,6,0" />
                     <Button Grid.Column="1" Content="🖼 生图" Command="{Binding GenerateImageCommand}"
-                            ToolTip.Tip="真实调用 MiniMax image-01 生成图片，保存到本地" Background="{StaticResource Accent}" />
+                            ToolTip.Tip="真实调用 MiniMax image-01 生成图片，保存到本地" Background="{DynamicResource Accent}" />
                     <Button Grid.Column="2" Content="🎬 生视频" Command="{Binding GenerateVideoCommand}" Margin="6,0,0,0"
-                            ToolTip.Tip="真实调用 MiniMax video-01 生成视频（异步任务，需等待）" Background="{StaticResource Accent}" />
+                            ToolTip.Tip="真实调用 MiniMax video-01 生成视频（异步任务，需等待）" Background="{DynamicResource Accent}" />
                 </Grid>
             </Grid>
         </Border>
 
-        <!-- ============ 底部: 用户输入 + 发送 + Skill + 消息操作 ============ -->
-        <Border Grid.Row="3" Background="{StaticResource BgPanel}"
-                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="14,10">
-            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
-                <TextBox Grid.Column="0"
-                         Watermark="输入问题,Enter 发送 (Shift+Enter 换行)"
-                         Text="{Binding UserInput, Mode=TwoWay}"
-                         AcceptsReturn="True" TextWrapping="Wrap"
-                         MinHeight="44" MaxHeight="120" />
-                <Button Grid.Column="1" Margin="6,0,0,0" Content="跑 Skill"
-                        Command="{Binding RunSelectedSkillCommand}"
-                        ToolTip.Tip="执行选中的 V3 Skill" />
-                <Button Grid.Column="2" Margin="6,0,0,0" Content="复制"
-                        Command="{Binding CopyLastCommand}" />
-                <Button Grid.Column="3" Margin="6,0,0,0" Content="重新生成"
-                        Command="{Binding RegenerateCommand}" />
-                <Button Grid.Column="4" Margin="6,0,0,0" Content="发送"
-                        Command="{Binding SendCommand}"
-                        Background="{StaticResource Accent}" />
-            </Grid>
+        <!-- ============ 底部: 用户输入 + 发送 + Skill + 消息操作 + 指令队列 ============ -->
+        <Border Grid.Row="3" Background="{DynamicResource BgPanel}"
+                BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="14,10">
+            <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto">
+                    <TextBox Grid.Column="0"
+                             Watermark="输入问题,Enter 发送 (Shift+Enter 换行)"
+                             Text="{Binding UserInput, Mode=TwoWay}"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             MinHeight="44" MaxHeight="120" />
+                    <Button Grid.Column="1" Margin="6,0,0,0" Content="跑 Skill"
+                            Command="{Binding RunSelectedSkillCommand}"
+                            ToolTip.Tip="执行选中的 V3 Skill" />
+                    <Button Grid.Column="2" Margin="6,0,0,0" Content="复制"
+                            Command="{Binding CopyLastCommand}" />
+                    <Button Grid.Column="3" Margin="6,0,0,0" Content="重新生成"
+                            Command="{Binding RegenerateCommand}" />
+                    <Button Grid.Column="4" Margin="6,0,0,0" Content="入队"
+                            Command="{Binding EnqueueCommand}"
+                            ToolTip.Tip="把指令加入队列，逐条自动执行" />
+                    <Button Grid.Column="5" Margin="6,0,0,0" Content="发送"
+                            Command="{Binding SendCommand}"
+                            Background="{DynamicResource Accent}" />
+                </Grid>
+
+                <!-- 指令队列（UIR-5）：可折叠；逐条自动执行，支持排序/插队/编辑/删除 -->
+                <Border Background="{DynamicResource BgElev}" BorderBrush="{DynamicResource Border}"
+                        BorderThickness="1" CornerRadius="6" Padding="10,8">
+                    <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                            <Button Grid.Column="0" Content="≡"
+                                    Background="Transparent" BorderThickness="0" Padding="4,2"
+                                    Command="{Binding ToggleQueueCollapsedCommand}" ToolTip.Tip="折叠/展开队列" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="12"
+                                       Foreground="{DynamicResource FgPrimary}">
+                                <Run Text="指令队列（" /><Run Text="{Binding CommandQueue.Count}" /><Run Text=" 条）" />
+                            </TextBlock>
+                            <Button Grid.Column="2" Content="▶ 运行队列" Command="{Binding RunQueueCommand}"
+                                    IsEnabled="{Binding !IsQueueRunning}" FontSize="12" />
+                            <Button Grid.Column="3" Content="停止" Command="{Binding StopQueueCommand}" Margin="6,0,0,0"
+                                    IsEnabled="{Binding IsQueueRunning}" FontSize="12" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding CommandQueue}"
+                                      IsVisible="{Binding !IsQueueCollapsed}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:QueuedCommandViewModel">
+                                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,2">
+                                        <TextBlock Grid.Column="0" Text="≡" Foreground="{DynamicResource FgMuted}"
+                                                   VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <TextBox Grid.Column="1" Text="{Binding Text, Mode=TwoWay}" FontSize="12"
+                                                 Watermark="指令内容（可编辑）" Padding="6,4" />
+                                        <Button Grid.Column="2" Content="↑" Margin="6,0,0,0" Padding="6,2" FontSize="12"
+                                                ToolTip.Tip="上移一位"
+                                                Command="{Binding $parent[ItemsControl].DataContext.MoveQueuedUpCommand}"
+                                                CommandParameter="{Binding}" />
+                                        <Button Grid.Column="3" Content="插队" Margin="4,0,0,0" Padding="6,2" FontSize="12"
+                                                ToolTip.Tip="移到队首，下一个执行"
+                                                Command="{Binding $parent[ItemsControl].DataContext.JumpQueuedToFrontCommand}"
+                                                CommandParameter="{Binding}" />
+                                        <Button Grid.Column="4" Content="删除" Margin="4,0,0,0" Padding="6,2" FontSize="12"
+                                                ToolTip.Tip="从队列删除"
+                                                Command="{Binding $parent[ItemsControl].DataContext.RemoveQueuedCommand}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
         </Border>
     </Grid>
 </UserControl>

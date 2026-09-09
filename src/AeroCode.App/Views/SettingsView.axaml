@@ -2,81 +2,85 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AeroCode.App.ViewModels"
              xmlns:cfg="using:AeroCode.AI.Configuration"
+             xmlns:views="using:AeroCode.App.Views"
              x:Class="AeroCode.App.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
 
     <UserControl.Resources>
     </UserControl.Resources>
 
+    <!-- UIR-1：技能/记忆/诊断 从主导航移入设置，作为分页呈现 -->
+    <TabControl>
+        <TabItem Header="设置">
     <DockPanel LastChildFill="True">
-        <Border DockPanel.Dock="Top" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="20,14">
+        <Border DockPanel.Dock="Top" Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="20,14">
             <StackPanel>
-                <TextBlock Text="AeroCode 全局设置" FontSize="18" FontWeight="Bold" Foreground="{StaticResource Accent}" />
+                <TextBlock Text="AeroCode 全局设置" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Accent}" />
                 <TextBlock Text="配置 AI Provider、UI 主题、内存上限等。所有变更持久化到 settings.json。"
-                           Foreground="{StaticResource FgMuted}" FontSize="11" Margin="0,4,0,0" />
+                           Foreground="{DynamicResource FgMuted}" FontSize="11" Margin="0,4,0,0" />
             </StackPanel>
         </Border>
 
-        <Border DockPanel.Dock="Bottom" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="20,12">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="20,12">
             <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
-                <TextBlock Grid.Column="0" Text="{Binding StatusText}" Foreground="{StaticResource FgMuted}" FontSize="12" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="0" Text="{Binding StatusText}" Foreground="{DynamicResource FgMuted}" FontSize="12" VerticalAlignment="Center" />
                 <Button Grid.Column="1" Content="Health" Command="{Binding HealthCheckAllCommand}" Margin="0,0,8,0" />
                 <Button Grid.Column="2" Content="Reload" Command="{Binding ReloadCommand}" Margin="0,0,8,0" />
                 <Button Grid.Column="3" Content="Cancel" Click="OnCancelClick" Margin="0,0,8,0" />
-                <Button Grid.Column="4" Content="Save" Command="{Binding SaveCommand}" Background="{StaticResource Accent}" Foreground="White" />
+                <Button Grid.Column="4" Content="Save" Command="{Binding SaveCommand}" Background="{DynamicResource Accent}" Foreground="White" />
             </Grid>
         </Border>
 
-        <ScrollViewer Background="{StaticResource BgElev}">
+        <ScrollViewer Background="{DynamicResource BgElev}">
             <StackPanel Spacing="16" Margin="20">
 
                 <!-- ====================== UI 主题与外观 ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="UI 外观" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                        <TextBlock Text="UI 外观" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                         <Grid ColumnDefinitions="160,*" Margin="0,4,0,0">
-                            <TextBlock Grid.Column="0" Text="主题 (Theme)" Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="0" Text="主题 (Theme)" Foreground="{DynamicResource FgPrimary}" VerticalAlignment="Center" />
                             <ComboBox Grid.Column="1"
                                       ItemsSource="{Binding Themes}"
-                                      SelectedItem="{Binding SelectedTheme, Mode=TwoWay, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                      SelectedItem="{Binding SelectedThemeChoice, Mode=TwoWay}"
                                       HorizontalAlignment="Stretch">
                                 <ComboBox.ItemTemplate>
-                                    <DataTemplate>
+                                    <DataTemplate x:DataType="vm:ThemeChoice">
                                         <TextBlock Text="{Binding Display}" />
                                     </DataTemplate>
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
                         </Grid>
                         <Grid ColumnDefinitions="160,*" Margin="0,8,0,0">
-                            <TextBlock Grid.Column="0" Text="字体大小 (pt)" Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="0" Text="字体大小 (pt)" Foreground="{DynamicResource FgPrimary}" VerticalAlignment="Center" />
                             <NumericUpDown Grid.Column="1" Value="{Binding FontSize, Mode=TwoWay}" Minimum="10" Maximum="22" Increment="1" />
                         </Grid>
                     </StackPanel>
                 </Border>
 
                 <!-- ====================== AI Provider 默认 ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="AI Provider 默认值" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                        <TextBlock Text="AI Provider 默认值" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                         <Grid ColumnDefinitions="160,*" Margin="0,4,0,0">
-                            <TextBlock Grid.Column="0" Text="默认 Provider" Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="0" Text="默认 Provider" Foreground="{DynamicResource FgPrimary}" VerticalAlignment="Center" />
                             <ComboBox Grid.Column="1"
                                       ItemsSource="{Binding AvailableProviderIds}"
                                       SelectedItem="{Binding DefaultProviderId, Mode=TwoWay}"
                                       HorizontalAlignment="Stretch" />
                         </Grid>
                         <Grid ColumnDefinitions="160,*" Margin="0,8,0,0">
-                            <TextBlock Grid.Column="0" Text="默认模型" Foreground="{StaticResource FgPrimary}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="0" Text="默认模型" Foreground="{DynamicResource FgPrimary}" VerticalAlignment="Center" />
                             <TextBox Grid.Column="1" Text="{Binding DefaultModel, Mode=TwoWay}" Watermark="deepseek-v4-flash" />
                         </Grid>
                     </StackPanel>
                 </Border>
 
                 <!-- ====================== Provider 列表 ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
                         <Grid ColumnDefinitions="*,Auto,Auto">
-                            <TextBlock Grid.Column="0" Text="Provider 列表" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                            <TextBlock Grid.Column="0" Text="Provider 列表" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                             <Button Grid.Column="1" Content="Add" Command="{Binding AddProviderCommand}" Margin="0,0,8,0" />
                             <Button Grid.Column="2" Content="Remove" Command="{Binding RemoveSelectedProviderCommand}" />
                         </Grid>
@@ -86,20 +90,20 @@
                                     <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,0">
                                         <StackPanel Grid.Column="0" Margin="6,4,0,4">
                                             <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
-                                            <TextBlock FontSize="10" Foreground="{StaticResource FgMuted}">
+                                            <TextBlock FontSize="10" Foreground="{DynamicResource FgMuted}">
                                                 <Run Text="{Binding Id}" /><Run Text="· " /><Run Text="{Binding BaseUrl}" />
                                             </TextBlock>
                                         </StackPanel>
-                                        <TextBlock Grid.Column="1" Text="{Binding Kind}" Foreground="{StaticResource FgMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Kind}" Foreground="{DynamicResource FgMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0" />
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
                         <!-- 编辑区 -->
-                        <Border IsVisible="{Binding SelectedProvider, Converter={x:Static ObjectConverters.IsNotNull}}" Background="{StaticResource BgElev}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="4" Padding="12">
+                        <Border IsVisible="{Binding SelectedProvider, Converter={x:Static ObjectConverters.IsNotNull}}" Background="{DynamicResource BgElev}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="4" Padding="12">
                             <StackPanel Spacing="6">
                                 <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Text="Provider 详情" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Accent}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="0" Text="Provider 详情" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" />
                                     <Button Grid.Column="1" Content="测试连通" Command="{Binding TestSelectedProviderCommand}" />
                                 </Grid>
                                 <Grid ColumnDefinitions="120,*" Margin="0,4,0,0">
@@ -157,27 +161,27 @@
                                               Watermark='{}{"reasoning_split": true}（JSON 对象，值任意类型，原样合并进请求 body）' />
                                 </Grid>
                                 <TextBlock Text="ExtraHeaders / ExtraBody 在切换 Provider 与保存时做 JSON 校验；非法文本会保留原文并阻止保存。"
-                                           Foreground="{StaticResource FgMuted}" FontSize="10" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                           Foreground="{DynamicResource FgMuted}" FontSize="10" TextWrapping="Wrap" Margin="0,4,0,0" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
                 </Border>
 
                 <!-- ====================== 工具权限 ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="工具权限" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
-                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                        <TextBlock Text="工具权限" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                    Text="模型调用工具前的授权策略：允许 = 直接执行；拒绝 = 永不执行（原因如实返回给模型）；每次询问 = 弹窗确认。修改随 Save 生效并持久化到 permissions.json。危险模式探测（如 run_shell 的 rm/format）不受降级影响。" />
                         <ItemsControl ItemsSource="{Binding PermissionRules}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="vm:PermissionRuleItem">
                                     <Grid ColumnDefinitions="190,*,170" Margin="0,2">
                                         <TextBlock Grid.Column="0" Text="{Binding ToolName}"
-                                                   Foreground="{StaticResource FgPrimary}" FontSize="12"
+                                                   Foreground="{DynamicResource FgPrimary}" FontSize="12"
                                                    VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="{Binding Notes}"
-                                                   Foreground="{StaticResource FgMuted}" FontSize="11"
+                                                   Foreground="{DynamicResource FgMuted}" FontSize="11"
                                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                                    Margin="8,0" />
                                         <ComboBox Grid.Column="2"
@@ -198,14 +202,14 @@
                 </Border>
 
                 <!-- ====================== 模型画像 ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
                         <Grid ColumnDefinitions="*,Auto,Auto">
-                            <TextBlock Grid.Column="0" Text="模型画像" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                            <TextBlock Grid.Column="0" Text="模型画像" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                             <Button Grid.Column="1" Content="Add" Command="{Binding AddProfileCommand}" Margin="0,0,8,0" />
                             <Button Grid.Column="2" Content="Remove" Command="{Binding RemoveSelectedProfileCommand}" />
                         </Grid>
-                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                    Text="画像供 MOA 路由分配：强项决定子任务去向，上下文/成本/速度参与打分与预算核算。成本留空 = 未知（核算时跳过，绝不估算）；调用统计为运行时自学习，只读。保存后写入 moa-profiles.json 并立即生效。" />
                         <ListBox ItemsSource="{Binding ProfileEditors}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Background="Transparent" MinHeight="90">
                             <ListBox.ItemTemplate>
@@ -214,15 +218,15 @@
                                         <TextBlock Grid.Column="0" FontWeight="SemiBold" FontSize="12">
                                             <Run Text="{Binding ProviderId}" /><Run Text=":: " /><Run Text="{Binding ModelId}" />
                                         </TextBlock>
-                                        <TextBlock Grid.Column="1" Text="{Binding StatsText}" Foreground="{StaticResource FgMuted}" FontSize="10" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                        <TextBlock Grid.Column="1" Text="{Binding StatsText}" Foreground="{DynamicResource FgMuted}" FontSize="10" VerticalAlignment="Center" Margin="0,0,8,0" />
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
                         <!-- 画像编辑区 -->
-                        <Border IsVisible="{Binding SelectedProfile, Converter={x:Static ObjectConverters.IsNotNull}}" Background="{StaticResource BgElev}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="4" Padding="12">
+                        <Border IsVisible="{Binding SelectedProfile, Converter={x:Static ObjectConverters.IsNotNull}}" Background="{DynamicResource BgElev}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="4" Padding="12">
                             <StackPanel Spacing="6">
-                                <TextBlock Text="画像详情" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                                <TextBlock Text="画像详情" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                                 <Grid ColumnDefinitions="120,*" Margin="0,4,0,0">
                                     <TextBlock Grid.Column="0" Text="Provider Id" VerticalAlignment="Center" />
                                     <TextBox  Grid.Column="1" Text="{Binding SelectedProfile.ProviderId, Mode=TwoWay}" Watermark="deepseek" />
@@ -271,7 +275,7 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                                <TextBlock Margin="0,8,0,0" FontSize="11" Foreground="{StaticResource FgMuted}" TextWrapping="Wrap">
+                                <TextBlock Margin="0,8,0,0" FontSize="11" Foreground="{DynamicResource FgMuted}" TextWrapping="Wrap">
                                     <Run Text="运行统计（只读）：" /><Run Text="{Binding SelectedProfile.StatsText}" />
                                 </TextBlock>
                             </StackPanel>
@@ -280,17 +284,17 @@
                 </Border>
 
                 <!-- ====================== MOA 编排策略 ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="MOA 编排策略" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
-                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                        <TextBlock Text="MOA 编排策略" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                    Text="默认策略用于新建会话（会话内仍可单独切换）；四角色绑定固定由哪个模型承担对应环节，自动分配 = 按画像强项打分指派。Ensemble 规模为集成策略并行作答的模型数（2-4）；单轮预算只统计已计价调用，留空 = 不限制。保存写入 moa-options.json 并立即热生效，无需重启。" />
                         <Grid ColumnDefinitions="140,*" Margin="0,4,0,0">
-                            <TextBlock Grid.Column="0" Text="默认策略" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <TextBlock Grid.Column="0" Text="默认策略" VerticalAlignment="Center" Foreground="{DynamicResource FgPrimary}" />
                             <ComboBox Grid.Column="1" ItemsSource="{Binding StrategyChoices}" SelectedItem="{Binding DefaultStrategy, Mode=TwoWay}" HorizontalAlignment="Stretch" />
                         </Grid>
                         <Grid ColumnDefinitions="140,*" Margin="0,6,0,0">
-                            <TextBlock Grid.Column="0" Text="Router 绑定" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <TextBlock Grid.Column="0" Text="Router 绑定" VerticalAlignment="Center" Foreground="{DynamicResource FgPrimary}" />
                             <ComboBox Grid.Column="1" ItemsSource="{Binding RoleBindingChoices}" SelectedItem="{Binding RouterChoice, Mode=TwoWay}" HorizontalAlignment="Stretch">
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate DataType="vm:RoleBindingChoice">
@@ -300,7 +304,7 @@
                             </ComboBox>
                         </Grid>
                         <Grid ColumnDefinitions="140,*" Margin="0,6,0,0">
-                            <TextBlock Grid.Column="0" Text="Planner 绑定" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <TextBlock Grid.Column="0" Text="Planner 绑定" VerticalAlignment="Center" Foreground="{DynamicResource FgPrimary}" />
                             <ComboBox Grid.Column="1" ItemsSource="{Binding RoleBindingChoices}" SelectedItem="{Binding PlannerChoice, Mode=TwoWay}" HorizontalAlignment="Stretch">
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate DataType="vm:RoleBindingChoice">
@@ -310,7 +314,7 @@
                             </ComboBox>
                         </Grid>
                         <Grid ColumnDefinitions="140,*" Margin="0,6,0,0">
-                            <TextBlock Grid.Column="0" Text="Synthesizer 绑定" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <TextBlock Grid.Column="0" Text="Synthesizer 绑定" VerticalAlignment="Center" Foreground="{DynamicResource FgPrimary}" />
                             <ComboBox Grid.Column="1" ItemsSource="{Binding RoleBindingChoices}" SelectedItem="{Binding SynthesizerChoice, Mode=TwoWay}" HorizontalAlignment="Stretch">
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate DataType="vm:RoleBindingChoice">
@@ -320,7 +324,7 @@
                             </ComboBox>
                         </Grid>
                         <Grid ColumnDefinitions="140,*" Margin="0,6,0,0">
-                            <TextBlock Grid.Column="0" Text="Judge 绑定" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <TextBlock Grid.Column="0" Text="Judge 绑定" VerticalAlignment="Center" Foreground="{DynamicResource FgPrimary}" />
                             <ComboBox Grid.Column="1" ItemsSource="{Binding RoleBindingChoices}" SelectedItem="{Binding JudgeChoice, Mode=TwoWay}" HorizontalAlignment="Stretch">
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate DataType="vm:RoleBindingChoice">
@@ -330,11 +334,11 @@
                             </ComboBox>
                         </Grid>
                         <Grid ColumnDefinitions="140,*" Margin="0,6,0,0">
-                            <TextBlock Grid.Column="0" Text="Ensemble 规模" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <TextBlock Grid.Column="0" Text="Ensemble 规模" VerticalAlignment="Center" Foreground="{DynamicResource FgPrimary}" />
                             <NumericUpDown Grid.Column="1" Value="{Binding EnsembleSize, Mode=TwoWay}" Minimum="2" Maximum="4" Increment="1" />
                         </Grid>
                         <Grid ColumnDefinitions="140,*" Margin="0,6,0,0">
-                            <TextBlock Grid.Column="0" Text="单轮预算 (USD)" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
+                            <TextBlock Grid.Column="0" Text="单轮预算 (USD)" VerticalAlignment="Center" Foreground="{DynamicResource FgPrimary}" />
                             <TextBox Grid.Column="1" Text="{Binding MaxUsdText, Mode=TwoWay}" Watermark="留空 = 不限制（仅已计价调用计入）" />
                         </Grid>
                         <CheckBox IsChecked="{Binding ToolsEnabled, Mode=TwoWay}" Content="启用工具循环（worker 携带工具多轮执行）" Margin="140,4,0,0" />
@@ -342,23 +346,23 @@
                 </Border>
 
                 <!-- ====================== Memory 容量 ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="Memory 容量" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
-                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                        <TextBlock Text="Memory 容量" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                    Text="MEMORY.md / USER.md 是 agent 长期记忆，内容会注入对话上下文。现已无字符上限，按原样完整保存与注入（不再截断）。" />
                     </StackPanel>
                 </Border>
 
                 <!-- ====================== 事件钩子（G5） ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
                         <Grid ColumnDefinitions="*,Auto,Auto">
-                            <TextBlock Grid.Column="0" Text="事件钩子" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                            <TextBlock Grid.Column="0" Text="事件钩子" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                             <Button Grid.Column="1" Content="打开 hooks.json" Command="{Binding OpenHooksJsonCommand}" Margin="0,0,8,0" />
                             <Button Grid.Column="2" Content="重新加载" Command="{Binding ReloadHooksCommand}" />
                         </Grid>
-                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                    Text="事件钩子：Harness 事件（13 类白名单）触发用户配置的 shell 命令（事件 JSON 以 stdin 传入；单钩子失败不阻塞主流程，结果留痕 HookExecutedEvent）。配置文件为 AppData/AeroCode/hooks.json（HookDef 数组：id/event/match/command/timeoutSec/enabled）；坏配置整份拒载（fail-safe 保留当前有效配置）。启用开关随 Save 落盘，加载发生在应用启动——改开关后重启生效。" />
                         <CheckBox IsChecked="{Binding HooksEnabled, Mode=TwoWay}" Content="启用事件钩子引擎（Hooks.Enabled）" />
                         <ListBox ItemsSource="{Binding HookItems}" Background="Transparent" BorderThickness="0" MinHeight="40" MaxHeight="220">
@@ -366,30 +370,30 @@
                                 <DataTemplate DataType="vm:HookItemViewModel">
                                     <Grid ColumnDefinitions="110,110,*,Auto,64" Margin="0,2">
                                         <TextBlock Grid.Column="0" Text="{Binding Id}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="1" Text="{Binding Event}" FontSize="11" Foreground="{StaticResource Accent}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="2" Text="{Binding Command}" FontSize="11" Foreground="{StaticResource FgMuted}" VerticalAlignment="Center" Margin="6,0" TextTrimming="CharacterEllipsis"
+                                        <TextBlock Grid.Column="1" Text="{Binding Event}" FontSize="11" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Command}" FontSize="11" Foreground="{DynamicResource FgMuted}" VerticalAlignment="Center" Margin="6,0" TextTrimming="CharacterEllipsis"
                                                    ToolTip.Tip="{Binding Command}" />
-                                        <TextBlock Grid.Column="3" Text="{Binding MatchText}" FontSize="10" Foreground="{StaticResource FgMuted}" VerticalAlignment="Center" Margin="0,0,8,0" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="4" Text="{Binding EnabledText}" FontSize="10" Foreground="{StaticResource Accent}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="3" Text="{Binding MatchText}" FontSize="10" Foreground="{DynamicResource FgMuted}" VerticalAlignment="Center" Margin="0,0,8,0" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="4" Text="{Binding EnabledText}" FontSize="10" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" />
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <TextBlock Text="{Binding HooksStatusText}" Foreground="{StaticResource FgMuted}" FontSize="11" />
+                        <TextBlock Text="{Binding HooksStatusText}" Foreground="{DynamicResource FgMuted}" FontSize="11" />
                     </StackPanel>
                 </Border>
 
                 <!-- ====================== 自动调度（G5） ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
                         <Grid ColumnDefinitions="*,Auto,Auto">
-                            <TextBlock Grid.Column="0" Text="自动调度" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                            <TextBlock Grid.Column="0" Text="自动调度" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                             <Button Grid.Column="1" Content="▶ 启动轮询" Command="{Binding StartSchedulerCommand}" Margin="0,0,8,0"
                                     IsEnabled="{Binding !IsSchedulerRunning}" />
                             <Button Grid.Column="2" Content="停止轮询" Command="{Binding StopSchedulerCommand}"
                                     IsEnabled="{Binding IsSchedulerRunning}" />
                         </Grid>
-                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                    Text="调度任务以真实子进程执行（jobs.json 持久化，原子写；cron 按本地时间求值，一次性任务消耗后停用）。急停哨兵存在时触发前拦截（任务不消耗）。运行状态为本进程 Timer 的真实状态；「开机自动轮询」开关随 Save 落盘，重启后由组合根按档启动。" />
                         <Grid ColumnDefinitions="140,*,140,*,Auto">
                             <TextBox Grid.Column="0" Text="{Binding NewJobId, Mode=TwoWay}" Watermark="任务 Id*" FontSize="12" />
@@ -404,11 +408,11 @@
                                     <Grid ColumnDefinitions="110,*,Auto,Auto" Margin="0,2">
                                         <TextBlock Grid.Column="0" Text="{Binding Id}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding TriggerText}" FontSize="11" Foreground="{StaticResource Accent}" />
-                                            <TextBlock Text="{Binding Command}" FontSize="11" Foreground="{StaticResource FgMuted}" TextTrimming="CharacterEllipsis"
+                                            <TextBlock Text="{Binding TriggerText}" FontSize="11" Foreground="{DynamicResource Accent}" />
+                                            <TextBlock Text="{Binding Command}" FontSize="11" Foreground="{DynamicResource FgMuted}" TextTrimming="CharacterEllipsis"
                                                        ToolTip.Tip="{Binding Command}" />
                                         </StackPanel>
-                                        <TextBlock Grid.Column="2" Text="{Binding EnabledText}" FontSize="10" Foreground="{StaticResource Accent}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <TextBlock Grid.Column="2" Text="{Binding EnabledText}" FontSize="10" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" Margin="0,0,6,0" />
                                         <StackPanel Grid.Column="3" Orientation="Horizontal">
                                             <Button Content="" FontSize="10" Padding="4,2" Margin="0,0,4,0"
                                                     ToolTip.Tip="启用/停用（真实落盘）"
@@ -423,57 +427,71 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <TextBlock Text="{Binding SchedulerStatusText}" Foreground="{StaticResource FgMuted}" FontSize="11" />
+                        <TextBlock Text="{Binding SchedulerStatusText}" Foreground="{DynamicResource FgMuted}" FontSize="11" />
                     </StackPanel>
                 </Border>
 
                 <!-- ACS 纪律运行时 -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="ACS 纪律运行时" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                        <TextBlock Text="ACS 纪律运行时" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                         <Grid ColumnDefinitions="Auto,Auto">
                             <CheckBox Grid.Column="0" Content="启用 ACS 纪律运行时（分级/成本闸门/有界重试/交接/诚实台账）"
                                       IsChecked="{Binding AcsEnabled, Mode=TwoWay}" />
                         </Grid>
                         <Grid ColumnDefinitions="160,*,160,*">
-                            <TextBlock Grid.Column="0" Text="单步预算（分钟）" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" />
+                            <TextBlock Grid.Column="0" Text="单步预算（分钟）" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
                             <NumericUpDown Grid.Column="1" Value="{Binding AcsMaxBudgetMin, Mode=TwoWay}" Minimum="1" Maximum="240" Increment="5" FontSize="12" />
-                            <TextBlock Grid.Column="2" Text="总结字符上限" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                            <TextBlock Grid.Column="2" Text="总结字符上限" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
                             <NumericUpDown Grid.Column="3" Value="{Binding AcsMaxSummaryChars, Mode=TwoWay}" Minimum="100" Maximum="10000" Increment="100" FontSize="12" />
                         </Grid>
                         <Grid ColumnDefinitions="160,*,160,*">
-                            <TextBlock Grid.Column="0" Text="空转 strike 上限" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" />
+                            <TextBlock Grid.Column="0" Text="空转 strike 上限" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
                             <NumericUpDown Grid.Column="1" Value="{Binding AcsSpinStrikes, Mode=TwoWay}" Minimum="1" Maximum="10" Increment="1" FontSize="12" />
-                            <TextBlock Grid.Column="2" Text="最大重试次数" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                            <TextBlock Grid.Column="2" Text="最大重试次数" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
                             <NumericUpDown Grid.Column="3" Value="{Binding AcsMaxRetries, Mode=TwoWay}" Minimum="0" Maximum="10" Increment="1" FontSize="12" />
                         </Grid>
                         <Grid ColumnDefinitions="160,*">
-                            <TextBlock Grid.Column="0" Text="思考占比警戒线" VerticalAlignment="Center" Foreground="{StaticResource FgMuted}" FontSize="12" />
+                            <TextBlock Grid.Column="0" Text="思考占比警戒线" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
                             <NumericUpDown Grid.Column="1" Value="{Binding AcsMaxThinkRatio, Mode=TwoWay}" Minimum="0.05" Maximum="1.0" Increment="0.05" FontSize="12" />
                         </Grid>
-                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                    Text="ACS v2.3.0 纪律运行时：T0-T3 任务分级、四道成本闸门（窄步/回灌/空转/思考预算）、有界重试、压缩交接、诚实台账。阈值默认镜像 ACS spec/thresholds.json；关闭时纪律组件不注入，现行为不变。随 Save 落盘。" />
                     </StackPanel>
                 </Border>
 
                 <!-- ====================== SOUL / 长系统提示词 ====================== -->
-                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
                         <Grid ColumnDefinitions="*,Auto,Auto">
-                            <TextBlock Grid.Column="0" Text="SOUL / 长系统提示词" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                            <TextBlock Grid.Column="0" Text="SOUL / 长系统提示词" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                             <Button Grid.Column="1" Content="安装内置预设" Command="{Binding InstallSoulPresetCommand}" Margin="0,0,8,0"
                                     ToolTip.Tip="把随包内置的参考级长系统提示词写为全局 SOUL.md（覆盖）" />
                             <Button Grid.Column="2" Content="移除 SOUL" Command="{Binding ClearSoulCommand}"
                                     ToolTip.Tip="删除全局 SOUL.md（项目级不受影响）" />
                         </Grid>
-                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
                                    Text="SOUL.md 是人格与行为基线设定，与 AGENTS.md/CLAUDE.md 一起在每轮对话作为独立 system 消息全文注入（不截断、不占用户消息体，支持 2 万字以上直至数十万字符）。全局位于 AppData/AeroCode/SOUL.md，项目级位于工作区根 SOUL.md（优先生效）。内置预设为参考级完整系统提示词，安装后下一轮对话即生效。" />
-                        <TextBlock Text="{Binding SoulStatusText}" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource FgPrimary}" />
-                        <TextBlock Text="{Binding SoulPresetText}" TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource FgMuted}" />
+                        <TextBlock Text="{Binding SoulStatusText}" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource FgPrimary}" />
+                        <TextBlock Text="{Binding SoulPresetText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource FgMuted}" />
                     </StackPanel>
                 </Border>
 
             </StackPanel>
         </ScrollViewer>
     </DockPanel>
+        </TabItem>
+
+        <TabItem Header="技能">
+            <views:SkillsView />
+        </TabItem>
+
+        <TabItem Header="记忆">
+            <views:MemoryView />
+        </TabItem>
+
+        <TabItem Header="诊断">
+            <views:DiagnosticsView />
+        </TabItem>
+    </TabControl>
 </UserControl>
