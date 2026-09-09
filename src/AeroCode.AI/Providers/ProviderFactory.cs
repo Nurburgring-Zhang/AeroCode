@@ -25,7 +25,6 @@ public sealed class ProviderFactory : IProviderRegistry, IDisposable
     private readonly Dictionary<string, IAiProvider> _cache = new();
     private readonly Dictionary<string, AiResiliencePipeline> _pipelines = new();
     private readonly Dictionary<string, HttpClient> _ownedHttp = new();
-    private HttpClient? _probeHttp;
     private AIOptions _options;
 
     /// <summary>配置热重载完成（provider 缓存已清空，UI 应刷新下拉列表等）。</summary>
@@ -77,8 +76,6 @@ public sealed class ProviderFactory : IProviderRegistry, IDisposable
         {
             foreach (var client in _ownedHttp.Values) client.Dispose();
             _ownedHttp.Clear();
-            _probeHttp?.Dispose();
-            _probeHttp = null;
             _cache.Clear();
             _pipelines.Clear();
         }
@@ -150,18 +147,15 @@ public sealed class ProviderFactory : IProviderRegistry, IDisposable
     /// 按给定配置（可以是未保存/编辑中的）构建一次性探针实例：
     /// 不进缓存、独立弹性管线——设置页单个 provider 连通性测试专用，
     /// 不干扰运行中编排使用的缓存实例，也不改变已加载配置。
-    /// 探针共用一个懒加载 HttpClient，避免每次点击泄漏客户端
-    /// （探针为一次性短请求；并发探测时 Timeout 以最后设置者为准）。
+    /// 探针每次新建独立 HttpClient（短请求、用完即弃），保证构造期可安全设置 Timeout。
     /// </summary>
     public IAiProvider CreateProbe(ProviderConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        HttpClient probe;
-        lock (_sync)
-        {
-            _probeHttp ??= new HttpClient();
-            probe = _probeHttp;
-        }
+        // 每次探针新建 HttpClient：provider 构造时会 set_Timeout，而 HttpClient 只允许在
+        // 首次请求前设置 Timeout——共享复用的探针 client 在第二次起会抛
+        // InvalidOperationException，导致后续连通性测试/健康检查全部失败。
+        var probe = new HttpClient();
         return Create(config, new AiResiliencePipeline(_resilienceOptions), probe);
     }
 

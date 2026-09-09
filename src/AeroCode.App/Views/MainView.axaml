@@ -181,6 +181,7 @@
                                                FontSize="12" FontWeight="SemiBold"
                                                Foreground="{DynamicResource FgMuted}" />
                                     <TextBox AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas,JetBrains Mono,monospace" FontSize="13" Padding="12" Background="{DynamicResource BgPanel}"
+                                             AutomationProperties.AutomationId="NoteContentEditor"
                                              Text="{Binding SelectedNote.Content, Mode=TwoWay}" />
                                 </DockPanel>
                                 <GridSplitter Grid.Column="1" Width="6" Background="{DynamicResource Border}" ResizeDirection="Columns" />

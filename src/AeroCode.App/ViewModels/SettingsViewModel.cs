@@ -997,6 +997,12 @@ public sealed partial class SettingsViewModel : ObservableObject
             return;
         }
 
+        // 重入守卫：避免与 Health/Save/Reload 并发，互相改写 Providers 造成不一致。
+        if (IsBusy)
+        {
+            return;
+        }
+
         CommitExtraTexts(p);
         if (_pendingExtras.TryGetValue(p, out var pending))
         {
@@ -1188,6 +1194,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     public async Task ReloadAsync()
     {
+        // 重入守卫：Reload 会经 HydrateFromSettings 重建 Providers，
+        // 若在 Health/单点测试探针进行中执行会改写正在被引用的集合。
+        if (IsBusy)
+        {
+            return;
+        }
+
         try
         {
             await _settings.LoadAsync();
@@ -1207,6 +1220,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     public async Task HealthCheckAllAsync()
     {
+        // 重入守卫：与 Save/Reload/单点测试共用 IsBusy，避免并发操作互相改写 Providers。
+        if (IsBusy)
+        {
+            return;
+        }
+
         try
         {
             IsBusy = true;
@@ -1214,7 +1233,9 @@ public sealed partial class SettingsViewModel : ObservableObject
             CommitExtraTexts(SelectedProvider);
             var healthy = 0;
             var total = 0;
-            foreach (var p in Providers)
+            // 快照后遍历：循环体内有 await，期间 Reload/热重载可能改写 Providers，
+            // 直接 foreach ObservableCollection 会抛 "Collection was modified" 崩溃。
+            foreach (var p in Providers.ToList())
             {
                 total++;
                 try
