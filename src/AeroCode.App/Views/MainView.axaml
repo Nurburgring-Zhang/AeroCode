@@ -134,6 +134,7 @@
                             <Border Grid.Row="0" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="16,10">
                                 <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                                     <TextBox Grid.Column="0" Watermark="笔记标题…" FontSize="18" FontWeight="SemiBold" Background="Transparent" BorderThickness="0"
+                                             AutomationProperties.AutomationId="NoteTitleEditor"
                                              Text="{Binding SelectedNote.Title, Mode=TwoWay}" />
                                     <Button Grid.Column="1" Margin="6,0,0,0" Content="置顶" Command="{Binding TogglePinCommand}" />
                                     <Button Grid.Column="2" Margin="6,0,0,0" Content="保存" Classes="Primary" Command="{Binding SaveNoteCommand}" />
