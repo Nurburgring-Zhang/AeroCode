@@ -18,8 +18,6 @@ public partial class MemoryViewModel : ObservableObject
 {
     private readonly string _memoryDir;
     private readonly SessionMemoryService? _memory;
-    private const int MemoryMaxChars = 2200;  // Hermes hard rule
-    private const int UserMaxChars = 1375;    // Hermes hard rule
 
     [ObservableProperty] private string _memoryContent = string.Empty;
     [ObservableProperty] private string _userContent = string.Empty;
@@ -38,9 +36,6 @@ public partial class MemoryViewModel : ObservableObject
 
     /// <summary>人工沉淀内容（真实来源=用户手写，入库为 Fact 经验）。</summary>
     [ObservableProperty] private string _manualContent = string.Empty;
-
-    public string MemoryMaxDisplay => $"{MemoryMaxChars} chars max";
-    public string UserMaxDisplay => $"{UserMaxChars} chars max";
 
     public MemoryViewModel(AeroCode.App.Services.AppDataPaths paths, SessionMemoryService? memory = null)
     {
@@ -72,16 +67,6 @@ public partial class MemoryViewModel : ObservableObject
     {
         try
         {
-            if (MemoryContent.Length > MemoryMaxChars)
-            {
-                StatusText = $"⚠ MEMORY.md 超过 {MemoryMaxChars} 字符 (当前 {MemoryContent.Length}), 截断保存";
-                MemoryContent = MemoryContent[..MemoryMaxChars];
-            }
-            if (UserContent.Length > UserMaxChars)
-            {
-                StatusText = $"⚠ USER.md 超过 {UserMaxChars} 字符, 截断保存";
-                UserContent = UserContent[..UserMaxChars];
-            }
             await File.WriteAllTextAsync(MemoryFile, MemoryContent);
             await File.WriteAllTextAsync(UserFile, UserContent);
             MemoryCharCount = MemoryContent.Length;
@@ -94,7 +79,7 @@ public partial class MemoryViewModel : ObservableObject
     private static string DefaultMemory() => """
         # MEMORY.md (AeroCode 长期记忆)
         # 此文件内容会自动注入到每次对话的 system prompt。
-        # 字符上限 2200。超过会截断。
+        # 无字符上限。
 
         ## 用户工程偏好
         - C# / .NET 9, 启用 Nullable + TreatWarningsAsErrors
@@ -108,7 +93,7 @@ public partial class MemoryViewModel : ObservableObject
 
     private static string DefaultUser() => """
         # USER.md (用户画像)
-        # 字符上限 1375。超过会截断。
+        # 无字符上限。
         - 阿里通义千问 Qwen 多媒体/多模态数据策略团队负责人
         - 关注: 大模型训练数据 / 质量 / 审美 / 策略
         - 沟通风格: 直接, 要数据, 要质量, 不接受批量模板

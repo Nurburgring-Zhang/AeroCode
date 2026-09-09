@@ -242,11 +242,10 @@ public class R4_Skills_E2E
 public class R5_Memory_E2E
 {
     [Fact]
-    public async Task Memory_WriteRead_RespectsLimit()
+    public async Task Memory_WriteRead_NoLimit()
     {
-        // 旧版用例是自证式（测试自己写文件自己截断，未触碰产品代码）。
-        // 现改为真实调用 MemoryViewModel：AppDataPaths(string rootDirectory) 支持注入临时根目录，
-        // 截断治理是 MemoryViewModel.SaveAsync 的产品逻辑（MEMORY.md 2200 / USER.md 1375）。
+        // 记忆已无字符上限：真实调用 MemoryViewModel，超旧上限的内容原样写盘、原样读回。
+        // AppDataPaths(string rootDirectory) 支持注入临时根目录，不触碰用户真实数据。
         var tmp = Path.Combine(Path.GetTempPath(), "aerocode_mem_" + Guid.NewGuid().ToString("N"));
         try
         {
@@ -259,14 +258,14 @@ public class R5_Memory_E2E
 
             var memoryFile = Path.Combine(tmp, "memories", "MEMORY.md");
             var userFile = Path.Combine(tmp, "memories", "USER.md");
-            Assert.Equal(2200, File.ReadAllText(memoryFile).Length); // Hermes MEMORY.md cap
-            Assert.Equal(1375, File.ReadAllText(userFile).Length);   // Hermes USER.md cap
+            Assert.Equal(3000, File.ReadAllText(memoryFile).Length); // 无上限，原样落盘
+            Assert.Equal(2000, File.ReadAllText(userFile).Length);
 
-            // 读侧回环：新 VM 重载读到的正是截断后的内容，计数一致
+            // 读侧回环：新 VM 重载读到的是完整内容，计数一致
             var vm2 = new AeroCode.App.ViewModels.MemoryViewModel(new AeroCode.App.Services.AppDataPaths(tmp));
-            Assert.Equal(2200, vm2.MemoryContent.Length);
-            Assert.Equal(2200, vm2.MemoryCharCount);
-            Assert.Equal(1375, vm2.UserCharCount);
+            Assert.Equal(3000, vm2.MemoryContent.Length);
+            Assert.Equal(3000, vm2.MemoryCharCount);
+            Assert.Equal(2000, vm2.UserCharCount);
         }
         finally { try { Directory.Delete(tmp, true); } catch { } }
     }
@@ -484,7 +483,8 @@ public class R10_CrossCutting_E2E
         s1.Current.Ai.DefaultProviderId = origProvider == "deepseek" ? "qwen" : "deepseek";
         var origTheme = s1.Current.Ui.Theme;
         s1.Current.Ui.Theme = origTheme == "Light" ? "Dark" : "Light";
-        s1.Current.Ui.MemoryMaxChars = 3000;
+        var origFont = s1.Current.Ui.FontSize;
+        s1.Current.Ui.FontSize = origFont == 14 ? 16 : 14;
         await s1.SaveAsync();
 
         // Reload fresh
@@ -492,12 +492,12 @@ public class R10_CrossCutting_E2E
         await s2.LoadAsync();
         Assert.Equal(origProvider == "deepseek" ? "qwen" : "deepseek", s2.Current.Ai.DefaultProviderId);
         Assert.Equal(origTheme == "Light" ? "Dark" : "Light", s2.Current.Ui.Theme);
-        Assert.Equal(3000, s2.Current.Ui.MemoryMaxChars);
+        Assert.Equal(origFont == 14 ? 16 : 14, s2.Current.Ui.FontSize);
 
         // Restore original
         s1.Current.Ai.DefaultProviderId = origProvider;
         s1.Current.Ui.Theme = origTheme;
-        s1.Current.Ui.MemoryMaxChars = 2200;
+        s1.Current.Ui.FontSize = origFont;
         await s1.SaveAsync();
     }
 }

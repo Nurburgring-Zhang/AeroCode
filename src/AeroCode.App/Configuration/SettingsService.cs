@@ -515,12 +515,6 @@ public sealed class UiSettings
 
     [JsonPropertyName("fontSize")]
     public int FontSize { get; set; } = 14;
-
-    [JsonPropertyName("memoryMaxChars")]
-    public int MemoryMaxChars { get; set; } = 2200;        // Hermes MEMORY.md cap
-
-    [JsonPropertyName("userProfileMaxChars")]
-    public int UserProfileMaxChars { get; set; } = 1375;   // Hermes USER.md cap
 }
 
 /// <summary>

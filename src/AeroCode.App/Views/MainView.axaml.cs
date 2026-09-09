@@ -164,6 +164,31 @@ public partial class MainView : UserControl
         }
     }
 
+    private void OnCollapseSidebarClick(object? sender, RoutedEventArgs e)
+    {
+        MainGrid.ColumnDefinitions[0].Width = new GridLength(0);
+        SidebarBorder.IsVisible = false;
+        ExpandSidebarButton.IsVisible = true;
+    }
+
+    private void OnExpandSidebarClick(object? sender, RoutedEventArgs e)
+    {
+        MainGrid.ColumnDefinitions[0].Width = new GridLength(216);
+        SidebarBorder.IsVisible = true;
+        ExpandSidebarButton.IsVisible = false;
+    }
+
+    private void OnExitClick(object? sender, RoutedEventArgs e)
+    {
+        // 桌面：经经典桌面生命周期 Shutdown；single-view 平台（Android）无桌面退出 API，
+        // 交由系统返回键/任务管理退出，按钮如实不执行破坏性操作。
+        if (Application.Current?.ApplicationLifetime
+            is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.Shutdown();
+        }
+    }
+
     /// <summary>主题保存失败不应静默：观察异常并写入控制台错误通道。</summary>
     private static async Task ObserveSettingsSaveAsync(AeroCode.App.Configuration.SettingsService settings)
     {

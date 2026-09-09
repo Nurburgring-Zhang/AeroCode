@@ -54,7 +54,7 @@ public sealed class SettingsLoadSemanticsTests : IDisposable
         Assert.Equal(4, svc.Current.Ai.Providers.Count);
         Assert.Contains(svc.Current.Ai.Providers, p => p.Id == "deepseek");
         Assert.Equal("Dark", svc.Current.Ui.Theme);
-        Assert.Equal(2200, svc.Current.Ui.MemoryMaxChars);
+        Assert.Equal(14, svc.Current.Ui.FontSize);
 
         // 错误状态非空（拒载事实可观测，仿 MoaOptions.LastLoadError）。
         Assert.NotNull(svc.LastLoadError);

@@ -341,20 +341,12 @@
                     </StackPanel>
                 </Border>
 
-                <!-- ====================== Memory 上限 ====================== -->
+                <!-- ====================== Memory 容量 ====================== -->
                 <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">
                         <TextBlock Text="Memory 容量" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
                         <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
-                                   Text="MEMORY.md / USER.md 是 Hermes 风格 agent 长期记忆。超过上限会被截断,默认 2200 / 1375 (Hermes 推荐值)。" />
-                        <Grid ColumnDefinitions="160,*" Margin="0,4,0,0">
-                            <TextBlock Grid.Column="0" Text="MEMORY.md 上限" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
-                            <NumericUpDown Grid.Column="1" Value="{Binding MemoryMaxChars, Mode=TwoWay}" Minimum="200" Maximum="20000" Increment="100" />
-                        </Grid>
-                        <Grid ColumnDefinitions="160,*" Margin="0,8,0,0">
-                            <TextBlock Grid.Column="0" Text="USER.md 上限" VerticalAlignment="Center" Foreground="{StaticResource FgPrimary}" />
-                            <NumericUpDown Grid.Column="1" Value="{Binding UserProfileMaxChars, Mode=TwoWay}" Minimum="200" Maximum="10000" Increment="100" />
-                        </Grid>
+                                   Text="MEMORY.md / USER.md 是 agent 长期记忆，内容会注入对话上下文。现已无字符上限，按原样完整保存与注入（不再截断）。" />
                     </StackPanel>
                 </Border>
 

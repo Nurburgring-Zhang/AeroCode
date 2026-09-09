@@ -9,6 +9,9 @@ public partial class DiagnosticsView : UserControl
     public DiagnosticsView()
     {
         InitializeComponent();
+        // 不设则继承 MainView 的 MainWindowViewModel：内容绑定静默失败，
+        // 且 OnLoaded 的 `DataContext is DiagnosticsViewModel` 判定恒假、初始化不触发。
+        DataContext ??= App.Services.GetService(typeof(DiagnosticsViewModel));
         Loaded += OnLoaded;
     }
 

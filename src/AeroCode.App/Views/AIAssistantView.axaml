@@ -86,7 +86,7 @@
         <!-- ============ 第二工具栏: 6 Capability 按钮 + 消息操作 ============ -->
         <Border Grid.Row="2" Background="{StaticResource BgPanel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,1" Padding="14,8">
-            <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*">
                 <!-- Capability 1-6 (主行) -->
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6">
                     <Button Content="摘要" Command="{Binding SummarizeLastCommand}"
@@ -122,6 +122,33 @@
                              Text="{Binding SemanticQuery, Mode=TwoWay}" Margin="0,0,3,0" />
                     <TextBox Grid.Column="1" Watermark="基于笔记问问题..."
                              Text="{Binding QaQuestion, Mode=TwoWay}" Margin="3,0,0,0" />
+                </Grid>
+                <!-- 文本处理（AIF-2）：改写/扩写/续写/大纲/待办提取/表格化 -->
+                <Grid Grid.Row="4" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,6,0,0">
+                    <TextBox Grid.Column="0" Watermark="文本处理：粘贴要处理的文本…"
+                             Text="{Binding TextInput, Mode=TwoWay}" AcceptsReturn="True"
+                             TextWrapping="Wrap" MinHeight="34" MaxHeight="90" Margin="0,0,6,0" />
+                    <Button Grid.Column="1" Content="改写" Command="{Binding RewriteTextCommand}"
+                            ToolTip.Tip="保留原意换种表达" />
+                    <Button Grid.Column="2" Content="扩写" Command="{Binding ExpandTextCommand}" Margin="6,0,0,0"
+                            ToolTip.Tip="在原文基础上扩充细节" />
+                    <Button Grid.Column="3" Content="续写" Command="{Binding ContinueTextCommand}" Margin="6,0,0,0"
+                            ToolTip.Tip="顺着原文继续写" />
+                    <Button Grid.Column="4" Content="大纲" Command="{Binding OutlineTextCommand}" Margin="6,0,0,0"
+                            ToolTip.Tip="提炼结构化大纲" />
+                    <Button Grid.Column="5" Content="待办提取" Command="{Binding ExtractTodosCommand}" Margin="6,0,0,0"
+                            ToolTip.Tip="抽取可执行待办清单" />
+                    <Button Grid.Column="6" Content="表格化" Command="{Binding TabularizeTextCommand}" Margin="6,0,0,0"
+                            ToolTip.Tip="整理成 Markdown 表格" />
+                </Grid>
+                <!-- 多模态生成（AIF-4）：文生图 / 文生视频（真接 MiniMax image-01 / video-01） -->
+                <Grid Grid.Row="5" ColumnDefinitions="*,Auto,Auto" Margin="0,6,0,0">
+                    <TextBox Grid.Column="0" Watermark="多模态生成：输入画面描述（生图 / 生视频）…"
+                             Text="{Binding MediaPrompt, Mode=TwoWay}" Margin="0,0,6,0" />
+                    <Button Grid.Column="1" Content="🖼 生图" Command="{Binding GenerateImageCommand}"
+                            ToolTip.Tip="真实调用 MiniMax image-01 生成图片，保存到本地" Background="{StaticResource Accent}" />
+                    <Button Grid.Column="2" Content="🎬 生视频" Command="{Binding GenerateVideoCommand}" Margin="6,0,0,0"
+                            ToolTip.Tip="真实调用 MiniMax video-01 生成视频（异步任务，需等待）" Background="{StaticResource Accent}" />
                 </Grid>
             </Grid>
         </Border>

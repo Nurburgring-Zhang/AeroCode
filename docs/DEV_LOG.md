@@ -324,3 +324,33 @@ zip 56,053,840 B（SHA256 e34c87cb…9c58，328 条目零增零删）；APK 126,
 - 长系统提示词注入必须在请求组装层做独立 system 消息：VM 层用户文本前缀会把 N 万字设定按轮次平方级灌进持久化历史。
 - .NET Android Release 的 libaot-*.dll.so 是纯代码段（单一 .text），字符串字面量不可静态扫描——包内容验证要前移到 AOT 输入程序集（bin 托管 dll）层做字节探针。
 - 嵌入资源验证用内容唯一短语（LLM_behavior）而非资源名，资源名在清单里、内容才证明"真的带上了"。
+
+## 2026-09-09 · R5/SOUL 后续：面板切换修复 + UIX 体验 + AIF 全面 AI 增强（结论）
+
+### BUG-P0 面板切换"点击无响应"真因与修复
+- 真因：`MainView` 把各功能面板（AI助手/对话/Mission/技能/记忆等）的 `IsVisible` 直接绑在**子视图自身**，
+  而子视图构造时把 DataContext 覆盖为各自 VM → `SelectedNavIndex` 绑定静默失败 → 面板恒可见并互相遮盖。
+- 修复：`IsVisible` 改挂在继承 MainView DataContext 的 `<Panel>` 容器上（含 AutomationId NavPanel0-7 供 UIA 验证）。
+- 实证：像素差分 4 组导航切换内容区差异 45-58%（真实切换）；此前 UIA Select 探针绕过命中测试造成误判。
+
+### UIX 体验改进
+- UIX-1 去除 MEMORY.md/USER.md 字符上限（2200/1375 截断移除，原样保存/注入；设置面板同步去上限控件）。
+- UIX-2 笔记工作区三栏 + 会话列表加 GridSplitter，分块可拖拽。
+- UIX-3 侧边栏加"退出"按钮（桌面 Shutdown；Android 如实不执行破坏操作）。窗口最小化/最大化/关闭本在系统标题栏。
+- UIX-4 侧边栏收起/展开（◀ 收起 / ☰ 展开）。
+- UIX-5 底部按钮组上移（底边距 12→28）。
+
+### AIF 全面 AI 增强（全部真实 LLM/多模态调用，零假装）
+- AIF-1 笔记内 AI：问答/分析/整理/摘要/应用到笔记（MainWindowViewModel 注入 ProviderFactory，真实流式）。
+  实证：UIA 驱动点"摘要"→ 真实 MiniMax 返回中文摘要（len=241）。
+- AIF-2 AI 助手文本处理：改写/扩写/续写/大纲/待办提取/表格化（6 能力，流式入 History）。
+- AIF-3 多角色对抗代码评审：批评者→辩护者→裁判 三轮真实 LLM 调用；单 provider 时如实标注"同模型多角色对抗"。
+- AIF-4 多模态：文生图（image-01 同步）+ 文生视频（video-01 异步任务）。
+  实证：MiniMaxMultimodalClient 端到端生成真实 JPEG（223KB，magic bytes 校验）。
+  探测结论（如实）：image-01/video-01 可用；TTS(t2a_v2) 端点在但参数格式未确认未接入；"MiniMax-H3" chat 模型名不存在（实际 chat 模型为 M3）。
+
+### 验证与部署
+- 全量回归 1976/0/24（24 为需外部真实服务的诚实跳过）。
+- 桌面 win-x64 + aerocode-mcp 自包含 publish 入 deliverables/r5/win-x64（330 文件，剔 pdb）。
+- APK（Release + EmbedAssembliesIntoApk + SignAndroidPackage）重建入 deliverables/r5/。
+- 部署要点：应用需在环境变量 MINIMAX_API_KEY 存在时才能调用 AI/多模态。

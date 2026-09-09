@@ -11,7 +11,7 @@
         <conv:BoolToOpacityConverter x:Key="StreamingOpacity" />
     </UserControl.Resources>
 
-    <Grid ColumnDefinitions="260,*" Background="{StaticResource ChatBg}">
+    <Grid ColumnDefinitions="260,6,*" Background="{StaticResource ChatBg}">
 
         <!-- 左栏：会话列表 + todo 清单 -->
         <Border Grid.Column="0" Background="{StaticResource ChatPanel}"
@@ -86,7 +86,8 @@
         </Border>
 
         <!-- 右区：消息流 + 输入 -->
-        <Grid Grid.Column="1" RowDefinitions="*,Auto">
+        <GridSplitter Grid.Column="1" Width="6" Background="{StaticResource ChatBorder}" ResizeDirection="Columns" />
+        <Grid Grid.Column="2" RowDefinitions="*,Auto">
 
             <!-- 消息流 -->
             <ScrollViewer x:Name="MessageScroller" Grid.Row="0" Padding="16,12"

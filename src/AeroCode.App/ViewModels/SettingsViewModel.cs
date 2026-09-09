@@ -360,11 +360,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     private int _fontSize = 14;
 
     [ObservableProperty]
-    private int _memoryMaxChars = 2200;       // MEMORY.md cap (Hermes)
-    [ObservableProperty]
-    private int _userProfileMaxChars = 1375;  // USER.md cap (Hermes)
-
-    [ObservableProperty]
     private string _defaultProviderId = "deepseek";
     [ObservableProperty]
     private string _defaultModel = string.Empty;
@@ -758,8 +753,6 @@ public sealed partial class SettingsViewModel : ObservableObject
         var s = _settings.Current;
         SelectedTheme = string.IsNullOrWhiteSpace(s.Ui.Theme) ? ThemeService.Dark : s.Ui.Theme;
         FontSize = Math.Clamp(s.Ui.FontSize, 10, 22);
-        MemoryMaxChars = Math.Clamp(s.Ui.MemoryMaxChars > 0 ? s.Ui.MemoryMaxChars : 2200, 200, 20000);
-        UserProfileMaxChars = Math.Clamp(s.Ui.UserProfileMaxChars > 0 ? s.Ui.UserProfileMaxChars : 1375, 200, 10000);
         DefaultProviderId = s.Ai.DefaultProviderId;
         DefaultModel = s.Ai.DefaultModel;
         AvailableProviderIds.Clear();
@@ -1093,8 +1086,6 @@ public sealed partial class SettingsViewModel : ObservableObject
             var s = _settings.Current;
             s.Ui.Theme = SelectedTheme;
             s.Ui.FontSize = Math.Clamp(FontSize, 10, 22);
-            s.Ui.MemoryMaxChars = Math.Clamp(MemoryMaxChars, 200, 20000);
-            s.Ui.UserProfileMaxChars = Math.Clamp(UserProfileMaxChars, 200, 10000);
             s.Ai.DefaultProviderId = DefaultProviderId;
             s.Ai.DefaultModel = string.IsNullOrWhiteSpace(DefaultModel) ? "deepseek-v4-flash" : DefaultModel;
             s.Ai.Providers.Clear();

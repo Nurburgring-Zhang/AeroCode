@@ -10,7 +10,7 @@
         <!-- Toolbar -->
         <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource BgPanel}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="14,10">
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
                 <TextBlock Grid.Column="0" Text="V3 Code Review" FontSize="15" FontWeight="Bold"
                            Foreground="{StaticResource Accent}" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1" Text="{Binding StatusText}"
@@ -18,7 +18,11 @@
                 <Button Grid.Column="2" Content="选文件" Command="{Binding PickFileCommand}" />
                 <Button Grid.Column="3" Content="▶ Review" Margin="6,0,0,0"
                         Command="{Binding ReviewCommand}" Background="{StaticResource Accent}" />
-                <Button Grid.Column="4" Content="清空" Margin="6,0,0,0"
+                <Button Grid.Column="4" Content="⚔ 对抗评审" Margin="6,0,0,0"
+                        Command="{Binding AdversarialReviewCommand}"
+                        ToolTip.Tip="批评者→辩护者→裁判 三角色对抗评审（真实 LLM）"
+                        Background="{StaticResource Danger}" />
+                <Button Grid.Column="5" Content="清空" Margin="6,0,0,0"
                         Command="{Binding ClearCommand}" />
             </Grid>
         </Border>

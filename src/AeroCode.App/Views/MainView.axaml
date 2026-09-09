@@ -24,22 +24,31 @@
     </UserControl.KeyBindings>
 
     <Grid>
-        <Grid ColumnDefinitions="216,*">
+        <Grid x:Name="MainGrid">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="216" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
             <!-- 左侧边栏：品牌 + 导航 + 底部设置/主题 -->
-            <Border Grid.Column="0" Background="{DynamicResource BgPanel}"
+            <Border x:Name="SidebarBorder" Grid.Column="0" Background="{DynamicResource BgPanel}"
                     BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0">
                 <DockPanel LastChildFill="True">
-                    <!-- 品牌区 -->
-                    <StackPanel DockPanel.Dock="Top" Margin="16,18,16,14" Spacing="2">
-                        <TextBlock Text="AeroCode" FontSize="17" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource FgPrimary}" />
-                        <TextBlock Text="本地优先 · AI 工作台" FontSize="11"
-                                   Foreground="{DynamicResource FgMuted}" />
-                    </StackPanel>
+                    <!-- 品牌区 + 收起按钮 -->
+                    <Grid DockPanel.Dock="Top" Margin="16,18,10,14" ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2">
+                            <TextBlock Text="AeroCode" FontSize="17" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource FgPrimary}" />
+                            <TextBlock Text="本地优先 · AI 工作台" FontSize="11"
+                                       Foreground="{DynamicResource FgMuted}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="◀" Background="Transparent" BorderThickness="0"
+                                VerticalAlignment="Top" Padding="6,2" FontSize="12"
+                                ToolTip.Tip="收起侧边栏" Click="OnCollapseSidebarClick" />
+                    </Grid>
 
-                    <!-- 底部：设置 / 主题 -->
-                    <StackPanel DockPanel.Dock="Bottom" Margin="10,8,10,12" Spacing="4">
+                    <!-- 底部：设置 / 主题 / 退出（上移远离底边） -->
+                    <StackPanel DockPanel.Dock="Bottom" Margin="10,8,10,28" Spacing="4">
                         <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                 Background="Transparent" BorderThickness="0"
                                 Content="设置" Click="OnOpenSettingsClick" />
@@ -47,6 +56,10 @@
                                 Background="Transparent" BorderThickness="0"
                                 Content="切换主题" Click="OnCycleThemeClick"
                                 ToolTip.Tip="Light / Dark / System 循环切换" />
+                        <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                Background="Transparent" BorderThickness="0"
+                                Content="退出" Click="OnExitClick"
+                                ToolTip.Tip="退出 AeroCode" />
                     </StackPanel>
 
                     <!-- 导航列表 -->
@@ -68,14 +81,17 @@
                 <!-- 顶部 slim 工具条 -->
                 <Border Grid.Row="0" BorderBrush="{DynamicResource Border}"
                         BorderThickness="0,0,0,1" Padding="14,9">
-                    <Grid ColumnDefinitions="*,Auto,Auto">
-                        <TextBox Grid.Column="0" x:Name="SearchBox" MaxWidth="360"
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                        <Button Grid.Column="0" x:Name="ExpandSidebarButton" Content="☰" IsVisible="False"
+                                Background="Transparent" BorderThickness="0" Padding="6,2" FontSize="14"
+                                ToolTip.Tip="展开侧边栏" Click="OnExpandSidebarClick" Margin="0,0,10,0" />
+                        <TextBox Grid.Column="1" x:Name="SearchBox" MaxWidth="360"
                                  HorizontalAlignment="Left" Width="360"
                                  Watermark="搜索笔记…"
                                  Text="{Binding SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <Button Grid.Column="1" Margin="10,0,0,0" Content="新建笔记"
+                        <Button Grid.Column="2" Margin="10,0,0,0" Content="新建笔记"
                                 Command="{Binding CreateNoteCommand}" />
-                        <Button Grid.Column="2" Margin="8,0,0,0" Content="新建笔记本"
+                        <Button Grid.Column="3" Margin="8,0,0,0" Content="新建笔记本"
                                 Command="{Binding CreateNotebookCommand}" />
                     </Grid>
                 </Border>
@@ -84,8 +100,8 @@
                 <Grid Grid.Row="1">
 
                     <!-- 0 笔记 -->
-                    <Grid IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=0}"
-                          ColumnDefinitions="232,320,*">
+                    <Grid AutomationProperties.AutomationId="NavPanel0" IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=0}"
+                          ColumnDefinitions="232,6,320,6,*">
                         <Border Grid.Column="0" Background="{DynamicResource BgPanel}"
                                 BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0">
                             <Grid RowDefinitions="*,Auto,Auto,*">
@@ -115,7 +131,9 @@
                             </Grid>
                         </Border>
 
-                        <Border Grid.Column="1" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0">
+                        <GridSplitter Grid.Column="1" Width="6" Background="{DynamicResource Border}" ResizeDirection="Columns" />
+
+                        <Border Grid.Column="2" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0">
                             <DockPanel>
                                 <TextBlock DockPanel.Dock="Top" Text="笔记" Padding="14,10"
                                            FontWeight="SemiBold" FontSize="12"
@@ -139,7 +157,9 @@
                             </DockPanel>
                         </Border>
 
-                        <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto">
+                        <GridSplitter Grid.Column="3" Width="6" Background="{DynamicResource Border}" ResizeDirection="Columns" />
+
+                        <Grid Grid.Column="4" RowDefinitions="Auto,Auto,*,Auto">
                             <Border Grid.Row="0" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="16,10">
                                 <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                                     <TextBox Grid.Column="0" Watermark="笔记标题…" FontSize="18" FontWeight="SemiBold" Background="Transparent" BorderThickness="0"
@@ -149,7 +169,33 @@
                                     <Button Grid.Column="3" Margin="6,0,0,0" Content="删除" Command="{Binding DeleteNoteCommand}" />
                                 </Grid>
                             </Border>
-                            <Grid Grid.Row="1" ColumnDefinitions="*,6,*">
+                            <!-- 笔记内 AI（AIF-1）：对当前笔记的真实 LLM 操作 -->
+                            <Border Grid.Row="1" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1"
+                                    Padding="16,8" Background="{DynamicResource BgPanel}">
+                                <StackPanel Spacing="6">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+                                        <TextBox Grid.Column="0" Watermark="问这篇笔记 / 输入指令…" FontSize="12"
+                                                 AutomationProperties.AutomationId="NoteAiInput"
+                                                 Text="{Binding NoteAiInput, Mode=TwoWay}" />
+                                        <Button Grid.Column="1" Margin="6,0,0,0" Content="问答" Command="{Binding NoteAiAskCommand}"
+                                                AutomationProperties.AutomationId="NoteAiAsk" IsEnabled="{Binding !IsNoteAiBusy}" />
+                                        <Button Grid.Column="2" Margin="6,0,0,0" Content="分析" Command="{Binding NoteAiAnalyzeCommand}"
+                                                AutomationProperties.AutomationId="NoteAiAnalyze" IsEnabled="{Binding !IsNoteAiBusy}" />
+                                        <Button Grid.Column="3" Margin="6,0,0,0" Content="整理" Command="{Binding NoteAiOrganizeCommand}"
+                                                AutomationProperties.AutomationId="NoteAiOrganize" IsEnabled="{Binding !IsNoteAiBusy}" />
+                                        <Button Grid.Column="4" Margin="6,0,0,0" Content="摘要" Command="{Binding NoteAiSummarizeCommand}"
+                                                AutomationProperties.AutomationId="NoteAiSummarize" IsEnabled="{Binding !IsNoteAiBusy}" />
+                                        <Button Grid.Column="5" Margin="6,0,0,0" Content="应用到笔记" Command="{Binding NoteAiApplyCommand}"
+                                                AutomationProperties.AutomationId="NoteAiApply" IsEnabled="{Binding !IsNoteAiBusy}" />
+                                    </Grid>
+                                    <TextBox IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="140"
+                                             AutomationProperties.AutomationId="NoteAiResult"
+                                             Watermark="AI 结果将显示在这里（流式）…" FontSize="12" Padding="8"
+                                             Background="{DynamicResource BgDeep}"
+                                             Text="{Binding NoteAiResult}" />
+                                </StackPanel>
+                            </Border>
+                            <Grid Grid.Row="2" ColumnDefinitions="*,6,*">
                                 <DockPanel Grid.Column="0">
                                     <TextBlock DockPanel.Dock="Top" Text="编辑" Padding="14,6"
                                                FontSize="12" FontWeight="SemiBold"
@@ -162,7 +208,7 @@
                                     <views:MarkdownPreviewView x:Name="PreviewView" />
                                 </DockPanel>
                             </Grid>
-                            <Border Grid.Row="2" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="14,6">
+                            <Border Grid.Row="3" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="14,6">
                                 <TextBlock FontSize="11" Foreground="{DynamicResource FgMuted}">
                                     <Run Text="ID: " /><Run Text="{Binding SelectedNote.Id, FallbackValue='-'}" />
                                     <Run Text="字数: " /><Run Text="{Binding SelectedNote.WordCount, FallbackValue=0}" />
@@ -172,19 +218,36 @@
                     </Grid>
 
                     <!-- 1 AI 助手 -->
-                    <views:AIAssistantView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=1}" />
+                    <!-- 面板切换修复：IsVisible 必须挂在继承 MainView DataContext 的容器上——
+                         子视图自身 DataContext 是各自 VM，直接绑 SelectedNavIndex 会静默失败、
+                         面板恒可见并互相遮盖（点击导航"没反应"的根因）。 -->
+                    <Panel AutomationProperties.AutomationId="NavPanel1" IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=1}">
+                        <views:AIAssistantView />
+                    </Panel>
                     <!-- 2 对话 -->
-                    <views:ChatView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=2}" />
+                    <Panel AutomationProperties.AutomationId="NavPanel2" IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=2}">
+                        <views:ChatView />
+                    </Panel>
                     <!-- 3 Mission -->
-                    <views:MissionView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=3}" />
+                    <Panel AutomationProperties.AutomationId="NavPanel3" IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=3}">
+                        <views:MissionView />
+                    </Panel>
                     <!-- 4 技能 -->
-                    <views:SkillsView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=4}" />
+                    <Panel AutomationProperties.AutomationId="NavPanel4" IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=4}">
+                        <views:SkillsView />
+                    </Panel>
                     <!-- 5 记忆 -->
-                    <views:MemoryView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=5}" />
+                    <Panel AutomationProperties.AutomationId="NavPanel5" IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=5}">
+                        <views:MemoryView />
+                    </Panel>
                     <!-- 6 代码评审 -->
-                    <views:CodeReviewView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=6}" />
+                    <Panel AutomationProperties.AutomationId="NavPanel6" IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=6}">
+                        <views:CodeReviewView />
+                    </Panel>
                     <!-- 7 诊断 -->
-                    <views:DiagnosticsView IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=7}" />
+                    <Panel AutomationProperties.AutomationId="NavPanel7" IsVisible="{Binding SelectedNavIndex, Converter={StaticResource Idx}, ConverterParameter=7}">
+                        <views:DiagnosticsView />
+                    </Panel>
                 </Grid>
 
                 <!-- 底部状态栏 -->

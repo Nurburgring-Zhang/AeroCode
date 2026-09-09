@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -55,6 +57,15 @@ public partial class AIAssistantViewModel : ObservableObject
     [ObservableProperty] private string _writeTopic = string.Empty;
     [ObservableProperty] private string _qaQuestion = string.Empty;
     [ObservableProperty] private string _semanticQuery = string.Empty;
+
+    /// <summary>AIF-2 文本处理输入：改写/扩写/续写/大纲/待办提取/表格化的源文本。</summary>
+    [ObservableProperty] private string _textInput = string.Empty;
+
+    /// <summary>AIF-4 多模态生成输入：文生图 / 文生视频的提示词。</summary>
+    [ObservableProperty] private string _mediaPrompt = string.Empty;
+
+    private AeroCode.AI.Multimodal.MiniMaxMultimodalClient? _multimodal;
+    private static readonly HttpClient MediaHttp = new() { Timeout = TimeSpan.FromSeconds(180) };
 
     public string[] CommonLanguages { get; } = new[]
     {
@@ -400,6 +411,191 @@ public partial class AIAssistantViewModel : ObservableObject
         }
         catch (Exception ex) { StatusText = $"✗ {ex.Message}"; }
         finally { IsStreaming = false; }
+    }
+
+    // ============== Capability 7-12: 文本处理（AIF-2）==============
+
+    /// <summary>改写：保留原意换种表达。</summary>
+    [RelayCommand]
+    private Task RewriteTextAsync() => RunTextOpAsync("改写",
+        "你是改写助手。把给定文本换一种表达方式重写，保留原意与事实，不新增虚构内容。只输出改写后的正文。");
+
+    /// <summary>扩写：在原文基础上扩充细节。</summary>
+    [RelayCommand]
+    private Task ExpandTextAsync() => RunTextOpAsync("扩写",
+        "你是扩写助手。在给定文本基础上扩充细节、补充论据与例子，使内容更丰满，但不偏离原意、不编造事实。只输出扩写后的正文。");
+
+    /// <summary>续写：顺着原文继续写。</summary>
+    [RelayCommand]
+    private Task ContinueTextAsync() => RunTextOpAsync("续写",
+        "你是续写助手。顺着给定文本的思路、风格与语气继续往下写一段自然衔接的内容。只输出续写部分。");
+
+    /// <summary>大纲：提炼结构化大纲。</summary>
+    [RelayCommand]
+    private Task OutlineTextAsync() => RunTextOpAsync("大纲",
+        "你是大纲助手。把给定文本提炼为层级清晰的 Markdown 大纲（用标题与列表），只基于原文内容，不新增虚构信息。只输出大纲。");
+
+    /// <summary>待办提取：抽出可执行待办清单。</summary>
+    [RelayCommand]
+    private Task ExtractTodosAsync() => RunTextOpAsync("待办提取",
+        "你是待办提取助手。从给定文本中抽取所有可执行的待办事项，输出为 Markdown 任务列表（- [ ] 开头）；没有则如实说明没有可提取的待办。只输出任务列表。");
+
+    /// <summary>表格化：把内容整理成 Markdown 表格。</summary>
+    [RelayCommand]
+    private Task TabularizeTextAsync() => RunTextOpAsync("表格化",
+        "你是表格化助手。把给定文本中的信息整理成结构合理的 Markdown 表格（自行判断合适的列）；内容不适合表格时如实说明。只输出表格。");
+
+    /// <summary>
+    /// 文本处理公共执行路径：TextInput 作源文本，按指定 system 提示流式调用当前 provider，
+    /// 结果写入 History。无文本/无 provider 时如实提示，不伪造结果。
+    /// </summary>
+    private async Task RunTextOpAsync(string opName, string systemPrompt)
+    {
+        if (string.IsNullOrWhiteSpace(TextInput))
+        {
+            StatusText = $"请先在「文本处理」输入框填入要{opName}的文本";
+            return;
+        }
+
+        if (IsStreaming) return;
+        IsStreaming = true;
+        StatusText = $"{opName}中...";
+        var sb = new StringBuilder();
+        try
+        {
+            var req = new ChatRequest
+            {
+                Model = SelectedModel,
+                Stream = true,
+                EnableThinking = false,
+                Temperature = 0.4,
+                Messages = new[]
+                {
+                    new ChatMessage { Role = "system", Content = systemPrompt },
+                    new ChatMessage { Role = "user", Content = TextInput },
+                },
+            };
+            var provider = _factory.Get(SelectedProviderId);
+            await foreach (var chunk in provider.StreamChatAsync(req))
+            {
+                if (chunk.DeltaContent is { Length: > 0 } c)
+                {
+                    sb.Append(c);
+                    AssistantReply = sb.ToString();
+                }
+            }
+
+            History.Add(new ChatMessage { Role = "user", Content = $"[{opName}] {Truncate(TextInput, 80)}" });
+            History.Add(new ChatMessage { Role = "assistant", Content = sb.ToString() });
+            TextInput = string.Empty;
+            StatusText = sb.Length > 0 ? $"✓ {opName} 完成" : $"{opName} 未返回内容";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ {opName} 失败：{ex.Message}";
+        }
+        finally
+        {
+            IsStreaming = false;
+        }
+    }
+
+    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
+
+    // ============== Capability 13-14: 多模态生成（AIF-4，真接 MiniMax image-01 / video-01）==============
+
+    /// <summary>文生图：真实调用 MiniMax image-01，下载图片到 AppData/media，报告保存路径。</summary>
+    [RelayCommand]
+    private async Task GenerateImageAsync()
+    {
+        if (string.IsNullOrWhiteSpace(MediaPrompt)) { StatusText = "请输入生图提示词"; return; }
+        if (IsStreaming) return;
+        IsStreaming = true;
+        StatusText = "生图中（真实调用 MiniMax image-01）…";
+        try
+        {
+            _multimodal ??= new AeroCode.AI.Multimodal.MiniMaxMultimodalClient();
+            var result = await _multimodal.GenerateImageAsync(MediaPrompt);
+            var url = result.ImageUrls[0];
+            var path = await DownloadToMediaDirAsync(url, ".jpg");
+            History.Add(new ChatMessage { Role = "user", Content = $"[生图] {Truncate(MediaPrompt, 80)}" });
+            History.Add(new ChatMessage { Role = "assistant", Content = $"🖼 已生成图片并保存：\n{path}\n来源 URL：{Truncate(url, 120)}" });
+            MediaPrompt = string.Empty;
+            StatusText = $"✓ 图片已保存：{path}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ 生图失败：{ex.Message}";
+        }
+        finally
+        {
+            IsStreaming = false;
+        }
+    }
+
+    /// <summary>文生视频：真实调用 MiniMax video-01（创建任务→轮询→下载），报告保存路径。</summary>
+    [RelayCommand]
+    private async Task GenerateVideoAsync()
+    {
+        if (string.IsNullOrWhiteSpace(MediaPrompt)) { StatusText = "请输入生视频提示词"; return; }
+        if (IsStreaming) return;
+        IsStreaming = true;
+        try
+        {
+            _multimodal ??= new AeroCode.AI.Multimodal.MiniMaxMultimodalClient();
+            StatusText = "创建视频任务（真实调用 MiniMax video-01）…";
+            var created = await _multimodal.CreateVideoTaskAsync(MediaPrompt);
+            // 轮询最多 ~5 分钟（视频生成本身耗时，属真实异步任务）
+            AeroCode.AI.Multimodal.VideoTaskStatus? status = null;
+            for (var i = 0; i < 60; i++)
+            {
+                await Task.Delay(5000);
+                status = await _multimodal.QueryVideoTaskAsync(created.TaskId);
+                StatusText = $"视频生成中… 状态={status.Status}（{(i + 1) * 5}s）";
+                if (status.IsCompleted || status.IsFailed) break;
+            }
+
+            if (status is null || status.IsFailed)
+            {
+                StatusText = $"✗ 视频生成失败：{status?.Status ?? "未知"}";
+                return;
+            }
+
+            if (!status.IsCompleted || status.VideoUrl is null)
+            {
+                StatusText = $"⚠ 视频未在时限内完成（最后状态 {status.Status}），task_id={created.TaskId}";
+                return;
+            }
+
+            var path = await DownloadToMediaDirAsync(status.VideoUrl, ".mp4");
+            History.Add(new ChatMessage { Role = "user", Content = $"[生视频] {Truncate(MediaPrompt, 80)}" });
+            History.Add(new ChatMessage { Role = "assistant", Content = $"🎬 已生成视频并保存：\n{path}" });
+            MediaPrompt = string.Empty;
+            StatusText = $"✓ 视频已保存：{path}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ 生视频失败：{ex.Message}";
+        }
+        finally
+        {
+            IsStreaming = false;
+        }
+    }
+
+    /// <summary>下载媒体到 AppData/AeroCode/media/，返回本地文件路径。</summary>
+    private static async Task<string> DownloadToMediaDirAsync(string url, string ext)
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AeroCode", "media");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, $"gen_{DateTime.Now:yyyyMMdd_HHmmss}{ext}");
+        using var resp = await MediaHttp.GetAsync(url).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+        await using var fs = File.Create(path);
+        await resp.Content.CopyToAsync(fs).ConfigureAwait(false);
+        return path;
     }
 
     // ============== Skill Execution (V3) ==============

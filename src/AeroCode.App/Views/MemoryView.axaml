@@ -33,7 +33,7 @@
                             <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
                                 <TextBlock Grid.Column="0" Text="{Binding MemoryContent.Length, StringFormat='{}{0} 字符'}"
                                            Foreground="{StaticResource FgMuted}" FontSize="11" />
-                                <TextBlock Grid.Column="1" Text="上限 2200 字符 (Hermes hard rule)"
+                                <TextBlock Grid.Column="1" Text="无上限"
                                            Foreground="{StaticResource FgMuted}" FontSize="11" />
                             </Grid>
                         </StackPanel>
@@ -55,7 +55,7 @@
                             <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
                                 <TextBlock Grid.Column="0" Text="{Binding UserContent.Length, StringFormat='{}{0} 字符'}"
                                            Foreground="{StaticResource FgMuted}" FontSize="11" />
-                                <TextBlock Grid.Column="1" Text="上限 1375 字符 (Hermes hard rule)"
+                                <TextBlock Grid.Column="1" Text="无上限"
                                            Foreground="{StaticResource FgMuted}" FontSize="11" />
                             </Grid>
                         </StackPanel>
