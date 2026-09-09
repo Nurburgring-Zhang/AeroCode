@@ -277,7 +277,7 @@
                     <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
                         <Button Grid.Column="0" Content="附件"
                                 Command="{Binding AttachFileCommand}"
-                                ToolTip.Tip="添加图片附件"
+                                ToolTip.Tip="添加附件（任意类型，最多 100 个 / 合计 10GB）"
                                 Background="Transparent" BorderThickness="0"
                                 FontSize="13" Padding="8,4"
                                 Foreground="{DynamicResource ChatMuted}"

@@ -33,6 +33,8 @@ public sealed class MessageAttachmentTests
     [InlineData(1536, "1.5KB")]
     [InlineData(1048576, "1.0MB")]
     [InlineData(2621440, "2.5MB")]
+    [InlineData(1073741824, "1.00GB")]
+    [InlineData(10737418240, "10.00GB")]
     public void DisplaySize_FormatsCorrectly(long bytes, string expected)
     {
         var att = new MessageAttachment("test.png", "image/png", bytes);
@@ -48,7 +50,7 @@ public sealed class MessageAttachmentTests
         Assert.Contains("screenshot.png", desc);
         Assert.Contains("2.0KB", desc);
         Assert.Contains("image/png", desc);
-        Assert.StartsWith("[Attached image:", desc);
+        Assert.StartsWith("[Attached file:", desc);
     }
 
     [Fact]
@@ -62,6 +64,123 @@ public sealed class MessageAttachmentTests
         var json = System.Text.Json.JsonSerializer.Serialize(att);
         Assert.DoesNotContain("PreviewBytes", json);
         Assert.DoesNotContain("previewBytes", json);
+    }
+
+    [Fact]
+    public void ToInjectionBlock_TextAttachment_IncludesContent()
+    {
+        var att = new MessageAttachment("notes.md", "text/markdown", 50, null, textContent: "hello world", contentTruncated: false);
+        var block = att.ToInjectionBlock();
+
+        Assert.Contains("notes.md", block);
+        Assert.Contains("hello world", block);
+        Assert.DoesNotContain("未注入正文", block);
+    }
+
+    [Fact]
+    public void ToInjectionBlock_TruncatedText_AnnotatesTruncation()
+    {
+        var att = new MessageAttachment("big.txt", "text/plain", 10_000_000, null, textContent: "head", contentTruncated: true);
+        var block = att.ToInjectionBlock();
+
+        Assert.Contains("head", block);
+        Assert.Contains("仅注入开头部分", block);
+    }
+
+    [Fact]
+    public void ToInjectionBlock_BinaryAttachment_MetadataOnly()
+    {
+        var att = new MessageAttachment("photo.png", "image/png", 2048);
+        var block = att.ToInjectionBlock();
+
+        Assert.Contains("photo.png", block);
+        Assert.Contains("未注入正文", block);
+    }
+
+    [Fact]
+    public void BuildInjection_RespectsBudget_AnnotatesReferencedOnly()
+    {
+        // 两个文本附件，预算只够第一个 → 第二个应降级为「已引用未注入正文」。
+        var a = new MessageAttachment("a.txt", "text/plain", 100, null, textContent: new string('A', 300), false);
+        var b = new MessageAttachment("b.txt", "text/plain", 100, null, textContent: new string('B', 300), false);
+
+        var result = MessageAttachment.BuildInjection(new[] { a, b }, totalCharBudget: 400);
+
+        Assert.Contains("a.txt", result);
+        Assert.Contains(new string('A', 300), result);
+        Assert.Contains("b.txt", result);
+        Assert.Contains("已引用未注入正文", result);
+        Assert.DoesNotContain(new string('B', 300), result);
+    }
+
+    [Fact]
+    public void BuildInjection_EmptyList_ReturnsEmpty()
+    {
+        Assert.Equal(string.Empty, MessageAttachment.BuildInjection(System.Array.Empty<MessageAttachment>(), 1000));
+    }
+}
+
+/// <summary>R5.3：ChatViewModel.BuildAttachment 用真实文件验证抽取/截断/MIME。</summary>
+public sealed class BuildAttachmentTests : System.IDisposable
+{
+    private readonly string _dir = System.IO.Directory.CreateTempSubdirectory("aeroatt").FullName;
+
+    public void Dispose()
+    {
+        try { System.IO.Directory.Delete(_dir, true); } catch { /* best effort */ }
+    }
+
+    private string Write(string name, string content)
+    {
+        var p = System.IO.Path.Combine(_dir, name);
+        System.IO.File.WriteAllText(p, content);
+        return p;
+    }
+
+    [Fact]
+    public void TextFile_ExtractsContent()
+    {
+        var path = Write("note.md", "# 标题\n正文内容");
+        var att = AeroCode.App.ViewModels.ChatViewModel.BuildAttachment(new System.IO.FileInfo(path));
+
+        Assert.Equal("text/markdown", att.MimeType);
+        Assert.True(att.HasText);
+        Assert.Contains("正文内容", att.TextContent);
+        Assert.False(att.ContentTruncated);
+    }
+
+    [Fact]
+    public void LargeTextFile_TruncatesToBudget()
+    {
+        // 超出单文件预算（128K 字符）→ 截断并标注。
+        var path = Write("big.txt", new string('x', 200_000));
+        var att = AeroCode.App.ViewModels.ChatViewModel.BuildAttachment(new System.IO.FileInfo(path));
+
+        Assert.True(att.HasText);
+        Assert.True(att.ContentTruncated);
+        Assert.Equal(128 * 1024, att.TextContent!.Length);
+    }
+
+    [Fact]
+    public void BinaryFile_NoTextContent()
+    {
+        var p = System.IO.Path.Combine(_dir, "img.png");
+        System.IO.File.WriteAllBytes(p, new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A });
+        var att = AeroCode.App.ViewModels.ChatViewModel.BuildAttachment(new System.IO.FileInfo(p));
+
+        Assert.Equal("image/png", att.MimeType);
+        Assert.False(att.HasText);
+        Assert.Null(att.TextContent);
+    }
+
+    [Fact]
+    public void CodeFile_TreatedAsText()
+    {
+        var path = Write("prog.cs", "class C { }");
+        var att = AeroCode.App.ViewModels.ChatViewModel.BuildAttachment(new System.IO.FileInfo(path));
+
+        Assert.True(att.HasText);
+        Assert.Contains("class C", att.TextContent);
     }
 }
 
@@ -307,11 +426,11 @@ public sealed class FacadeAttachmentTests : IDisposable
         var messages = (await _sessions.GetMessagesAsync(session.Id)).Value!;
         var userMsg = messages.First(m => m.Role == ChatRole.User);
 
-        Assert.Contains("[Attached image: photo.png", userMsg.Content);
-        Assert.Contains("[Attached image: diagram.jpg", userMsg.Content);
+        Assert.Contains("[Attached file: photo.png", userMsg.Content);
+        Assert.Contains("[Attached file: diagram.jpg", userMsg.Content);
         Assert.Contains("请分析", userMsg.Content);
         // 描述在文本前面。
-        Assert.True(userMsg.Content.IndexOf("[Attached image:") < userMsg.Content.IndexOf("请分析"));
+        Assert.True(userMsg.Content.IndexOf("[Attached file:") < userMsg.Content.IndexOf("请分析"));
 
         // AttachmentsJson 持久化（不含 PreviewBytes）。
         Assert.NotNull(userMsg.AttachmentsJson);

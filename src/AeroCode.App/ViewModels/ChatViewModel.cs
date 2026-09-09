@@ -390,10 +390,20 @@ public partial class ChatViewModel : ObservableObject
     /// <summary>当前会话的 todo 清单（G5 面板；经 ITodoStore 真实读写）。</summary>
     public ObservableCollection<TodoItemViewModel> Todos { get; } = new();
 
-    /// <summary>R4-γ：待发送的图片附件列表（选中后显示预览条，发送时传给门面）。</summary>
+    /// <summary>待发送附件列表（R5.3：任意类型，选中后显示预览条，发送时传给门面分块注入）。</summary>
     public ObservableCollection<MessageAttachment> PendingAttachments { get; } = new();
 
-    /// <summary>R4-γ：打开文件选择器添加图片附件（最小实现：支持 png/jpg/jpeg/gif/webp）。</summary>
+    // ── R5.3 多附件上限与文本抽取预算 ──
+    /// <summary>单条消息最多附件数量。</summary>
+    private const int MaxAttachmentCount = 100;
+
+    /// <summary>单条消息附件总大小上限（10GB）。</summary>
+    private const long MaxAttachmentTotalBytes = 10L * 1024 * 1024 * 1024;
+
+    /// <summary>单个文本类附件抽取正文的字符预算（超出标注截断）。</summary>
+    private const int PerFileTextReadBudgetChars = 128 * 1024;
+
+    /// <summary>R5.3：打开文件选择器添加附件（任意类型；上限 100 个 / 合计 10GB）。</summary>
     [RelayCommand]
     private async Task AttachFileAsync()
     {
@@ -412,15 +422,9 @@ public partial class ChatViewModel : ObservableObject
         var files = await lifetime.MainWindow.StorageProvider.OpenFilePickerAsync(
             new Avalonia.Platform.Storage.FilePickerOpenOptions
             {
-                Title = "选择图片附件",
+                Title = $"选择附件（任意类型，最多 {MaxAttachmentCount} 个 / 合计 10GB）",
                 AllowMultiple = true,
-                FileTypeFilter = new[]
-                {
-                    new Avalonia.Platform.Storage.FilePickerFileType("图片")
-                    {
-                        Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp" },
-                    },
-                },
+                // 不限定类型：接受任意文件，MIME 按扩展名推断。
             });
 
         foreach (var file in files)
@@ -431,31 +435,27 @@ public partial class ChatViewModel : ObservableObject
                 continue;
             }
 
+            // 上限：数量。
+            if (PendingAttachments.Count >= MaxAttachmentCount)
+            {
+                StatusText = $"已达附件数量上限（{MaxAttachmentCount} 个），其余未添加";
+                break;
+            }
+
             try
             {
                 var info = new FileInfo(path);
-                var ext = info.Extension.TrimStart('.').ToLowerInvariant();
-                var mime = ext switch
-                {
-                    "png" => "image/png",
-                    "jpg" or "jpeg" => "image/jpeg",
-                    "gif" => "image/gif",
-                    "webp" => "image/webp",
-                    _ => "application/octet-stream",
-                };
 
-                // 预览字节取前 4KB（缩略图占位，R4-γ 最小实现不渲染）。
-                byte[]? preview = null;
-                if (info.Length > 0)
+                // 上限：总大小。
+                var currentTotal = PendingAttachments.Sum(a => a.SizeBytes);
+                if (currentTotal + info.Length > MaxAttachmentTotalBytes)
                 {
-                    var read = (int)Math.Min(info.Length, 4096);
-                    preview = new byte[read];
-                    await using var fs = info.OpenRead();
-                    _ = await fs.ReadAsync(preview.AsMemory());
+                    StatusText = $"附件总大小将超 10GB，{info.Name} 未添加";
+                    continue;
                 }
 
-                PendingAttachments.Add(new MessageAttachment(
-                    info.Name, mime, info.Length, preview));
+                PendingAttachments.Add(BuildAttachment(info));
+                StatusText = $"已添加附件 {info.Name}（共 {PendingAttachments.Count} 个）";
             }
             catch (Exception ex)
             {
@@ -464,6 +464,81 @@ public partial class ChatViewModel : ObservableObject
             }
         }
     }
+
+    /// <summary>
+    /// 由单个文件构建附件：推断 MIME、读前 4KB 预览占位、对文本类文件按单文件预算抽取正文
+    /// （超出标注截断）。抽成独立方法便于真实文件的单元测试。
+    /// </summary>
+    internal static MessageAttachment BuildAttachment(FileInfo info)
+    {
+        var ext = info.Extension.TrimStart('.').ToLowerInvariant();
+        var mime = GuessMime(ext);
+
+        byte[]? preview = null;
+        if (info.Length > 0)
+        {
+            var read = (int)Math.Min(info.Length, 4096);
+            preview = new byte[read];
+            using var fs = info.OpenRead();
+            fs.ReadExactly(preview.AsSpan());
+        }
+
+        string? textContent = null;
+        var truncated = false;
+        if (info.Length > 0 && IsTextLike(ext))
+        {
+            try
+            {
+                using var reader = info.OpenText();
+                var buf = new char[PerFileTextReadBudgetChars + 1];
+                var n = reader.Read(buf.AsSpan());
+                truncated = n > PerFileTextReadBudgetChars;
+                textContent = new string(buf, 0, Math.Min(n, PerFileTextReadBudgetChars));
+            }
+            catch
+            {
+                // 抽取失败（编码/锁等）：降级为仅元信息，不阻塞附加。
+                textContent = null;
+                truncated = false;
+            }
+        }
+
+        return new MessageAttachment(info.Name, mime, info.Length, preview, textContent, truncated);
+    }
+
+    /// <summary>按扩展名推断 MIME（未知回落 application/octet-stream）。</summary>
+    private static string GuessMime(string ext) => ext switch
+    {
+        "png" => "image/png",
+        "jpg" or "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "txt" or "log" or "ini" or "cfg" or "conf" => "text/plain",
+        "md" or "markdown" => "text/markdown",
+        "csv" => "text/csv",
+        "html" or "htm" => "text/html",
+        "css" => "text/css",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "yaml" or "yml" => "text/yaml",
+        "zip" => "application/zip",
+        _ => IsTextLike(ext) ? "text/plain" : "application/octet-stream",
+    };
+
+    /// <summary>扩展名是否视为可抽取正文的文本类文件。</summary>
+    private static bool IsTextLike(string ext) => ext switch
+    {
+        "txt" or "md" or "markdown" or "log" or "csv" or "tsv" or "ini" or "cfg" or "conf"
+            or "toml" or "env" or "json" or "xml" or "yaml" or "yml" or "html" or "htm"
+            or "css" or "scss" or "js" or "mjs" or "ts" or "tsx" or "jsx" or "cs" or "java"
+            or "py" or "rb" or "php" or "go" or "rs" or "c" or "h" or "cpp" or "hpp" or "cc"
+            or "swift" or "kt" or "sql" or "sh" or "bash" or "bat" or "ps1" or "gitignore"
+            or "dockerfile" or "makefile" => true,
+        _ => false,
+    };
 
     /// <summary>R4-γ：从待发送列表移除一个附件。</summary>
     [RelayCommand]

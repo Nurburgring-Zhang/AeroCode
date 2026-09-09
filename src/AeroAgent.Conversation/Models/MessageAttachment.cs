@@ -1,45 +1,152 @@
 // Copyright (c) AeroCode
-// MessageAttachment — 用户消息附带的图片附件（R4-γ 最小可用：选择/粘贴/消息记录/发送描述）。
+// MessageAttachment — 用户消息附带的附件（R5.3 多类型 + 分块注入）。
+using System.Collections.Generic;
+using System.Text;
 using System.Text.Json.Serialization;
 
 namespace AeroAgent.Conversation.Models;
 
 /// <summary>
-/// 消息附件（图片）。最小可用范围：文件名/MIME/大小/可选预览占位。
-/// 完整图片字节不入消息持久化；PreviewBytes 仅前 4KB 占位（R4-γ 最小实现不渲染缩略图，
-/// 附件以文本描述注入模型上下文，非多模态上传）。
+/// 消息附件。支持任意类型文件；文本类文件在附加时抽取正文（可能截断），
+/// 发送时经 <see cref="BuildInjection"/> 按总预算分块注入模型上下文。
+/// 完整文件字节不入消息持久化；PreviewBytes 仅占位，TextContent 为注入用文本。
+/// 超出上下文预算的附件如实标注为「已引用未注入」，不伪造已读全文。
 /// </summary>
 public sealed record MessageAttachment
 {
-    public MessageAttachment(string fileName, string mimeType, long sizeBytes, byte[]? previewBytes = null)
+    public MessageAttachment(
+        string fileName,
+        string mimeType,
+        long sizeBytes,
+        byte[]? previewBytes = null,
+        string? textContent = null,
+        bool contentTruncated = false)
     {
         FileName = fileName;
         MimeType = mimeType;
         SizeBytes = sizeBytes;
         PreviewBytes = previewBytes;
+        TextContent = textContent;
+        ContentTruncated = contentTruncated;
     }
 
-    /// <summary>原始文件名（如 screenshot.png）。</summary>
+    /// <summary>原始文件名（如 report.md）。</summary>
     public string FileName { get; init; }
 
-    /// <summary>MIME 类型（如 image/png）。</summary>
+    /// <summary>MIME 类型（如 text/markdown、image/png）。</summary>
     public string MimeType { get; init; }
 
     /// <summary>原始文件大小（字节）。</summary>
     public long SizeBytes { get; init; }
 
-    /// <summary>可选缩略预览（JPEG/PNG 字节，上限约 64KB）。</summary>
+    /// <summary>可选缩略预览（图片字节占位，上限约 4KB）。</summary>
     [JsonIgnore]
     public byte[]? PreviewBytes { get; init; }
+
+    /// <summary>文本类文件抽取出的正文（可能已按单文件预算截断；二进制为 null）。</summary>
+    [JsonIgnore]
+    public string? TextContent { get; init; }
+
+    /// <summary>TextContent 是否因单文件预算被截断。</summary>
+    public bool ContentTruncated { get; init; }
+
+    /// <summary>是否抽到了可注入正文。</summary>
+    [JsonIgnore]
+    public bool HasText => !string.IsNullOrEmpty(TextContent);
 
     /// <summary>人类可读大小描述。</summary>
     public string DisplaySize => SizeBytes switch
     {
         < 1024 => $"{SizeBytes}B",
         < 1024 * 1024 => $"{SizeBytes / 1024.0:F1}KB",
-        _ => $"{SizeBytes / (1024.0 * 1024.0):F1}MB",
+        < 1024L * 1024 * 1024 => $"{SizeBytes / (1024.0 * 1024.0):F1}MB",
+        _ => $"{SizeBytes / (1024.0 * 1024.0 * 1024.0):F2}GB",
     };
 
-    /// <summary>生成发送时嵌入用户消息的描述文本。</summary>
-    public string ToDescription() => $"[Attached image: {FileName} ({DisplaySize}, {MimeType})]";
+    /// <summary>单行描述（消息气泡/持久化摘要用）。</summary>
+    public string ToDescription() => $"[Attached file: {FileName} ({DisplaySize}, {MimeType})]";
+
+    /// <summary>
+    /// 单个附件的注入块：文本类给出正文（截断时如实标注），二进制仅给出元信息。
+    /// </summary>
+    public string ToInjectionBlock()
+    {
+        if (!HasText)
+        {
+            return $"{ToDescription()}（二进制/图片附件，未注入正文，仅告知存在）";
+        }
+
+        var sb = new StringBuilder();
+        sb.Append($"[Attached file: {FileName} ({DisplaySize}, {MimeType})]\n```\n");
+        sb.Append(TextContent);
+        sb.Append("\n```");
+        if (ContentTruncated)
+        {
+            sb.Append($"\n（该文件较大，仅注入开头部分，全文 {DisplaySize}）");
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 按总字符预算把一组附件拼成注入文本（分块注入）：
+    /// 依次纳入附件正文，直到预算耗尽；其后仍有正文的附件降级为「已引用未注入」，
+    /// 二进制附件始终只占一行元信息。保证不超预算、不伪造已注入全文。
+    /// </summary>
+    public static string BuildInjection(IReadOnlyList<MessageAttachment> attachments, int totalCharBudget)
+    {
+        if (attachments is null || attachments.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        var used = 0;
+        var budgetExhausted = false;
+        foreach (var a in attachments)
+        {
+            if (!a.HasText)
+            {
+                // 二进制/图片：只占一行元信息，几乎不耗预算。
+                sb.Append(a.ToDescription()).Append('\n');
+                continue;
+            }
+
+            if (budgetExhausted)
+            {
+                sb.Append(a.ToDescription()).Append("（上下文预算已满，已引用未注入正文）\n");
+                continue;
+            }
+
+            var block = a.ToInjectionBlock();
+            if (used + block.Length <= totalCharBudget)
+            {
+                sb.Append(block).Append('\n');
+                used += block.Length;
+            }
+            else
+            {
+                // 放不下完整块：若剩余预算足够放一个有意义的片段则截断注入，否则降级引用。
+                var remaining = totalCharBudget - used;
+                var header = $"[Attached file: {a.FileName} ({a.DisplaySize}, {a.MimeType})]\n```\n";
+                var footer = "\n```（预算截断，仅注入片段）";
+                var minUseful = 200;
+                if (remaining - header.Length - footer.Length >= minUseful && a.TextContent is not null)
+                {
+                    var take = remaining - header.Length - footer.Length;
+                    take = System.Math.Min(take, a.TextContent.Length);
+                    sb.Append(header).Append(a.TextContent, 0, take).Append(footer).Append('\n');
+                    used = totalCharBudget;
+                }
+                else
+                {
+                    sb.Append(a.ToDescription()).Append("（上下文预算已满，已引用未注入正文）\n");
+                }
+
+                budgetExhausted = true;
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
 }

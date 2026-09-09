@@ -53,6 +53,12 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
     // 闸门按 sessionId 隔离，跨会话并行不受影响。
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionGates = new();
 
+    /// <summary>
+    /// 单条消息内所有附件合计可注入模型上下文的正文字符预算。
+    /// 超出预算的附件降级为「已引用未注入正文」，避免撑爆上下文窗口（分块注入的总量上限）。
+    /// </summary>
+    private const int AttachmentInjectionBudgetChars = 120_000;
+
     public ChatOrchestrationFacade(
         ISessionService sessions,
         IProviderRegistry providers,
@@ -109,12 +115,12 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         }
 
         // ---- 持久化用户消息 ----
-        // R4-γ：附件描述前缀注入 + 元数据持久化（预览字节不落 DB）。
+        // R5.3：附件分块注入（按总预算）+ 元数据持久化（预览/正文字节不落 DB）。
         var effectiveText = userText;
         string? attachmentsJson = null;
         if (attachments is { Count: > 0 })
         {
-            var descriptions = string.Join("\n", attachments.Select(a => a.ToDescription()));
+            var descriptions = MessageAttachment.BuildInjection(attachments, AttachmentInjectionBudgetChars);
             effectiveText = descriptions + "\n\n" + userText;
             attachmentsJson = JsonSerializer.Serialize(
                 attachments.Select(a => new { a.FileName, a.MimeType, a.SizeBytes }).ToArray());
