@@ -71,6 +71,10 @@ public sealed class ToolCallGuardrailValidatorTests
                      "git push origin main --force",
                      "git push origin +main:main",
                      "git push -f origin main",
+                     "git push --mirror origin",
+                     "git push origin --mirror",
+                     "git push origin --delete feature",
+                     "git push --delete origin feature",
                      "format D: /fs:ntfs",
                      "format /fs:ntfs C:",
                  })

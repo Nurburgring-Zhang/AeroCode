@@ -55,6 +55,10 @@ public sealed class ToolCallGuardrailValidator : IGuardrailValidator
             RegexOptions.Compiled | RegexOptions.IgnoreCase),
         // git 强推（force flag 前置：git push -f origin main；原词表只钉尾置 flag，R4 δ-1 补漏）。
         new(@"\bgit\s+push\s+(?:--force(?:-with-lease)?|-f)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        // git push --mirror：强推所有引用并删除本地不存在的远端引用（覆盖+批量删远端 ref，不可逆；R5.3 补漏）。
+        new(@"\bgit\s+push\s+[^;|&\r\n]*--mirror\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        // git push --delete：显式删除远端引用（R5.3 补漏）。
+        new(@"\bgit\s+push\s+[^;|&\r\n]*--delete\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
     };
 
     /// <inheritdoc />

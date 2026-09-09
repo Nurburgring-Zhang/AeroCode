@@ -311,8 +311,8 @@ public sealed class PermissionPolicy
         new(@"[>|]\s*/etc/(passwd|shadow|sudoers)", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
         // 注册表改写
         new(@"\breg\s+(delete|add)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
-        // 强制推送（历史不可恢复）
-        new(@"\bgit\s+push\s+[^|;&]*--force\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // 强制推送/镜像/删远端引用（历史不可恢复；R5.3 补 --force-with-lease/-f/--mirror/--delete）
+        new(@"\bgit\s+push\s+[^|;&]*(?:--force(?:-with-lease)?\b|\s-f\b|--mirror\b|--delete\b)", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
         // 关机/重启
         new(@"\b(shutdown|reboot|halt|poweroff)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
     };
