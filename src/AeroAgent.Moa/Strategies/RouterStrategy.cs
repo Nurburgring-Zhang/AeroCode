@@ -101,7 +101,7 @@ public sealed class RouterStrategy : IOrchestrationStrategy
                 await _runner.RunAsync(
                     context, workerAssignment, StrategyRole.Worker,
                     parentMessageId: routerOutcome.MessageId, label: null,
-                    HistoryMapper.ToProviderMessages(context.History),
+                    HistoryMapper.ToProviderMessages(context.History, context.SystemPrompt),
                     stream: true, isFinal: true, sink: workerChannel.Writer, budget, ct);
             }
             finally

@@ -23,9 +23,17 @@ namespace AeroAgent.Conversation.Orchestration;
 public static class HistoryMapper
 {
     public static IReadOnlyList<AiChatMessage> ToProviderMessages(
-        IReadOnlyList<EntityChatMessage> history)
+        IReadOnlyList<EntityChatMessage> history, string? systemPrompt = null)
     {
-        var result = new List<AiChatMessage>(history.Count);
+        var result = new List<AiChatMessage>(history.Count + 1);
+
+        // 系统上下文（SOUL + instructions）作为独立 system 消息前置：
+        // 不持久化、每轮新鲜注入，长文（数万至数十万字符）不占历史。
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            result.Add(new AiChatMessage { Role = "system", Content = systemPrompt });
+        }
+
         HashSet<string>? emittedToolCallIds = null;
 
         foreach (var m in history)

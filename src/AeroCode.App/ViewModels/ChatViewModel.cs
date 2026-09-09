@@ -215,7 +215,6 @@ public partial class ChatViewModel : ObservableObject
     private readonly IProviderRegistry _providers;
     private readonly MoaOptions _moaOptions;
     private readonly PermissionPolicy _permission;
-    private readonly InstructionLoader _instructions;
     private readonly WorkspaceContext? _workspace;
     private readonly PlanWorkflow? _planWorkflow;
     private readonly EventBus? _events;
@@ -238,7 +237,6 @@ public partial class ChatViewModel : ObservableObject
         IProviderRegistry providers,
         MoaOptions moaOptions,
         PermissionPolicy permission,
-        InstructionLoader instructions,
         WorkspaceContext? workspace = null,
         PlanWorkflow? planWorkflow = null,
         EventBus? eventBus = null,
@@ -253,7 +251,6 @@ public partial class ChatViewModel : ObservableObject
         _providers = providers;
         _moaOptions = moaOptions ?? throw new ArgumentNullException(nameof(moaOptions));
         _permission = permission ?? throw new ArgumentNullException(nameof(permission));
-        _instructions = instructions ?? throw new ArgumentNullException(nameof(instructions));
         _workspace = workspace;
         _planWorkflow = planWorkflow;
         _events = eventBus;
@@ -927,17 +924,8 @@ public partial class ChatViewModel : ObservableObject
         // @引用先于指令前缀展开：Expand 只扫原始输入，避免把指令内容误当 @记号解析。
         text = AtReference.Expand(text, ReadAtReference);
 
-        // 批次 A 最小接线：AGENTS.md/CLAUDE.md 指令作为 system 前缀拼进本次发送文本头部
-        //（<instructions…> 块由 InstructionLoader 产出；门面签名不动——批次 B 将下沉到
-        // 请求组装层，不再占用用户消息体）。
-        if (_instructions.HasAny)
-        {
-            var instructions = _instructions.Load();
-            if (instructions.Length > 0)
-            {
-                text = instructions + "\n\n" + text;
-            }
-        }
+        // SOUL + AGENTS.md/CLAUDE.md 已下沉到门面请求组装层，作为独立 system 消息
+        // 每轮前置注入（不持久化、不占用户消息体）——长系统提示词不再前缀拼接。
 
         // G2-3 记忆注入点：会话首轮（投影中尚无用户消息）把 MEMORY.md/USER.md
         // + 以本轮输入为查询的 Top-K 笔记语义召回，作为 <memory-context> 块前缀注入。

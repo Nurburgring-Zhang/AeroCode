@@ -43,7 +43,7 @@ public sealed class PipelineStrategy : IOrchestrationStrategy
         var draftStrength = RouterStrategy.HeuristicCategory(userText) == ModelStrength.Code
             ? ModelStrength.Code
             : ModelStrength.Writing;
-        var history = HistoryMapper.ToProviderMessages(context.History);
+        var history = HistoryMapper.ToProviderMessages(context.History, context.SystemPrompt);
 
         // ---- 阶段 1：起草（非流式，阶段产物可见）----
         var drafter = _resolver.Resolve(null, draftStrength);

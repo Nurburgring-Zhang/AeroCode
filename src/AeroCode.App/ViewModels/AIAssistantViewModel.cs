@@ -35,6 +35,7 @@ public partial class AIAssistantViewModel : ObservableObject
     private readonly SkillHub? _skills;
     private readonly EmbeddingClient? _embedding;
     private readonly VectorStore? _vectorStore;
+    private readonly AeroAgent.Conversation.Orchestration.InstructionLoader? _instructions;
 
     [ObservableProperty] private string _userInput = string.Empty;
     [ObservableProperty] private string _assistantReply = string.Empty;
@@ -61,13 +62,20 @@ public partial class AIAssistantViewModel : ObservableObject
         "Español", "Italiano", "Русский", "Português", "العربية", "हिन्दी"
     };
 
-    public AIAssistantViewModel(ProviderFactory factory, HarnessHost? harness = null, SkillHub? skills = null, EmbeddingClient? embedding = null, VectorStore? vectorStore = null)
+    public AIAssistantViewModel(
+        ProviderFactory factory,
+        HarnessHost? harness = null,
+        SkillHub? skills = null,
+        EmbeddingClient? embedding = null,
+        VectorStore? vectorStore = null,
+        AeroAgent.Conversation.Orchestration.InstructionLoader? instructions = null)
     {
         _factory = factory;
         _harness = harness;
         _skills = skills;
         _embedding = embedding;
         _vectorStore = vectorStore;
+        _instructions = instructions;
         foreach (var id in factory.ListConfiguredIds()) AvailableProviders.Add(id);
         if (AvailableProviders.Count > 0)
             SelectedProviderId = factory.GetDefault().ProviderId;
@@ -149,7 +157,7 @@ public partial class AIAssistantViewModel : ObservableObject
             var req = new ChatRequest
             {
                 Model = SelectedModel,
-                Messages = History.ToArray(),
+                Messages = ComposeRequestMessages(),
                 Stream = true,
                 EnableThinking = true,
                 ThinkingEffort = "high",
@@ -206,6 +214,39 @@ public partial class AIAssistantViewModel : ObservableObject
         if (History.Count > 0 && History[History.Count - 1].Role == "assistant")
             History.RemoveAt(History.Count - 1);
         await SendAsync(ct);
+    }
+
+    /// <summary>
+    /// 请求消息 = SOUL+instructions 的 system 消息（若有）+ 会话历史。
+    /// 装载失败如实降级为仅历史，不阻塞发送。
+    /// </summary>
+    private IReadOnlyList<ChatMessage> ComposeRequestMessages()
+    {
+        var history = History.ToArray();
+        if (_instructions is null || !_instructions.HasAny)
+        {
+            return history;
+        }
+
+        try
+        {
+            var systemPrompt = _instructions.Load();
+            if (systemPrompt.Length == 0)
+            {
+                return history;
+            }
+
+            var list = new List<ChatMessage>(history.Length + 1)
+            {
+                new() { Role = "system", Content = systemPrompt },
+            };
+            list.AddRange(history);
+            return list;
+        }
+        catch
+        {
+            return history;
+        }
     }
 
     // ============== Capability 1: Summarize ==============

@@ -85,7 +85,6 @@ internal static class UiPanelChatFactory
             new TestProviderRegistry(),
             new MoaOptions(),
             policy ?? new PermissionPolicy(new EventBus()),
-            new InstructionLoader("uipanel-tests-appdata", null),
             workspace: null,
             planWorkflow: plan,
             steerQueue: steer,

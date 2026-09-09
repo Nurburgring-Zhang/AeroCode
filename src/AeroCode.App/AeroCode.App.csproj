@@ -57,4 +57,9 @@
     <InternalsVisibleTo Include="AeroCode.Tests" />
   </ItemGroup>
 
+  <!-- 内置 SOUL/长系统提示词预设：随双端（桌面/Android）打包，设置页可一键安装到 AppData/SOUL.md -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets/SoulPresets/*.md" />
+  </ItemGroup>
+
 </Project>

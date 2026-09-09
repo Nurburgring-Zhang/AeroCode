@@ -464,6 +464,23 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ====================== SOUL / 长系统提示词 ====================== -->
+                <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnDefinitions="*,Auto,Auto">
+                            <TextBlock Grid.Column="0" Text="SOUL / 长系统提示词" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                            <Button Grid.Column="1" Content="安装内置预设" Command="{Binding InstallSoulPresetCommand}" Margin="0,0,8,0"
+                                    ToolTip.Tip="把随包内置的参考级长系统提示词写为全局 SOUL.md（覆盖）" />
+                            <Button Grid.Column="2" Content="移除 SOUL" Command="{Binding ClearSoulCommand}"
+                                    ToolTip.Tip="删除全局 SOUL.md（项目级不受影响）" />
+                        </Grid>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource FgMuted}" FontSize="11"
+                                   Text="SOUL.md 是人格与行为基线设定，与 AGENTS.md/CLAUDE.md 一起在每轮对话作为独立 system 消息全文注入（不截断、不占用户消息体，支持 2 万字以上直至数十万字符）。全局位于 AppData/AeroCode/SOUL.md，项目级位于工作区根 SOUL.md（优先生效）。内置预设为参考级完整系统提示词，安装后下一轮对话即生效。" />
+                        <TextBlock Text="{Binding SoulStatusText}" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource FgPrimary}" />
+                        <TextBlock Text="{Binding SoulPresetText}" TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource FgMuted}" />
+                    </StackPanel>
+                </Border>
+
             </StackPanel>
         </ScrollViewer>
     </DockPanel>

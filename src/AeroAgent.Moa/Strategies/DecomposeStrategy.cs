@@ -88,7 +88,7 @@ public sealed class DecomposeStrategy : IOrchestrationStrategy
             {
                 return await _planner.PlanAsync(
                     context, plannerAssignment, userText,
-                    HistoryMapper.ToProviderMessages(context.History),
+                    HistoryMapper.ToProviderMessages(context.History, context.SystemPrompt),
                     budget, planChannel.Writer, ct);
             }
             finally

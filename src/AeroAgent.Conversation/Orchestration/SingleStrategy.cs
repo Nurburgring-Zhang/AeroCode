@@ -87,7 +87,7 @@ public sealed class SingleStrategy : IOrchestrationStrategy
         var request = new AiChatRequest
         {
             Model = model,
-            Messages = HistoryMapper.ToProviderMessages(context.History),
+            Messages = HistoryMapper.ToProviderMessages(context.History, context.SystemPrompt),
             Stream = provider.SupportsStreaming,
         };
 

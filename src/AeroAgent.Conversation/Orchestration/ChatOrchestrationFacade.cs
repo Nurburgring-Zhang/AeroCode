@@ -45,6 +45,7 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
     private readonly IProviderRegistry _providers;
     private readonly IReadOnlyDictionary<OrchestrationStrategy, IOrchestrationStrategy> _strategies;
     private readonly SteerQueue? _steer;
+    private readonly InstructionLoader? _instructions;
     private readonly ILogger<ChatOrchestrationFacade> _logger;
 
     // 会话级轮次闸门：同一会话同时最多一个进行中的轮次。
@@ -57,6 +58,7 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         IProviderRegistry providers,
         IEnumerable<IOrchestrationStrategy> strategies,
         SteerQueue? steerQueue = null,
+        InstructionLoader? instructions = null,
         ILogger<ChatOrchestrationFacade>? logger = null)
     {
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
@@ -64,6 +66,7 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         _strategies = (strategies ?? throw new ArgumentNullException(nameof(strategies)))
             .ToDictionary(s => s.Kind);
         _steer = steerQueue;
+        _instructions = instructions;
         _logger = logger ?? NullLogger<ChatOrchestrationFacade>.Instance;
     }
 
@@ -193,6 +196,9 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
             UserMessageId = userMessage.Id,
             Providers = _providers,
             CancellationToken = ct,
+            // SOUL + instructions 每轮新鲜装载（文件可在轮间修改）：作为独立 system
+            // 消息前置，不持久化——长系统提示词（2 万字以上）不占用户消息体、无历史膨胀。
+            SystemPrompt = ComposeSystemPrompt(),
         };
 
         // ---- 手动枚举策略流：异常收容在 MoveNextAsync 周围，
@@ -300,6 +306,30 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
             TotalMessages = totalMessages,
             TotalCostUsd = totalCost,
         };
+    }
+
+    /// <summary>
+    /// 组合本轮系统上下文（SOUL.md + AGENTS.md/CLAUDE.md）。无装载器/无文件返回 null。
+    /// 读取失败（文件损坏/IO 异常）如实降级为无系统上下文并告警——不阻塞对话。
+    /// </summary>
+    private string? ComposeSystemPrompt()
+    {
+        if (_instructions is null || !_instructions.HasAny)
+        {
+            return null;
+        }
+
+        try
+        {
+            var text = _instructions.Load();
+            return text.Length == 0 ? null : text;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "[DEGRADED] SOUL/instructions 装载失败，本轮按无系统上下文继续：{Error}", ex.Message);
+            return null;
+        }
     }
 
     /// <summary>

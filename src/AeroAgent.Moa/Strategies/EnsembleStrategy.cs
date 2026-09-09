@@ -78,7 +78,7 @@ public sealed class EnsembleStrategy : IOrchestrationStrategy
 
         // ---- 2. 并行作答（事件经 channel 汇入统一流）----
         var channel = Channel.CreateUnbounded<ChatEvent>();
-        var historyMessages = HistoryMapper.ToProviderMessages(context.History);
+        var historyMessages = HistoryMapper.ToProviderMessages(context.History, context.SystemPrompt);
 
         var workersTask = Task.Run(async () =>
         {

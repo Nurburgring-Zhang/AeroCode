@@ -15,6 +15,13 @@ public sealed record OrchestrationContext
     public required string UserMessageId { get; init; }
     public required IProviderRegistry Providers { get; init; }
     public CancellationToken CancellationToken { get; init; }
+
+    /// <summary>
+    /// 系统上下文（SOUL.md + AGENTS.md/CLAUDE.md 合成；可为空）。
+    /// 由门面在请求组装时作为独立 system 消息前置——不持久化、不占用户消息体，
+    /// 因此可承载长系统提示词（数万至数十万字符）而无历史膨胀。
+    /// </summary>
+    public string? SystemPrompt { get; init; }
 }
 
 /// <summary>

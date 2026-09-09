@@ -12,6 +12,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
+using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Moa.Profiles;
 using AeroAgent.Moa.Strategies;
 using AeroCode.AI.Configuration;
@@ -335,6 +336,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly IHookEngine? _hookEngine;
     private readonly SchedulerService? _scheduler;
     private readonly string? _hooksJsonPath;
+    private readonly InstructionLoader? _instructions;
 
     /// <summary>
     /// JSON 非法而未能提交的 ExtraHeaders/ExtraBody 文本（按 config 实例暂存）：
@@ -508,6 +510,16 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _newJobAtUtcLocal = string.Empty;
 
+    // ============== SOUL / 长系统提示词段 ==============
+
+    /// <summary>SOUL 现状（路径 + 字符数；未装载器/未安装如实说明）。</summary>
+    [ObservableProperty]
+    private string _soulStatusText = string.Empty;
+
+    /// <summary>内置预设信息（名称 + 字符数；资源缺失如实标注）。</summary>
+    [ObservableProperty]
+    private string _soulPresetText = string.Empty;
+
     public SettingsViewModel(
         SettingsService settings,
         ThemeService theme,
@@ -520,7 +532,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         ILogger<SettingsViewModel> logger,
         IHookEngine? hookEngine = null,
         SchedulerService? scheduler = null,
-        AppDataPaths? paths = null)
+        AppDataPaths? paths = null,
+        InstructionLoader? instructions = null)
     {
         _settings = settings;
         _theme = theme;
@@ -534,10 +547,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         _hookEngine = hookEngine;
         _scheduler = scheduler;
         _hooksJsonPath = paths is null ? null : Path.Combine(paths.RootDirectory, "hooks.json");
+        _instructions = instructions;
         HydrateFromSettings();
         HydratePermissionRules();
         HydrateProfiles();
         HydrateMoaSection();
+        RefreshSoulStatus();
     }
 
     /// <summary>从当前策略快照重建规则行（构造时 + Reload + 授权对话框改动后再打开设置页）。</summary>
@@ -656,6 +671,86 @@ public sealed partial class SettingsViewModel : ObservableObject
         HydratePermissionRules();
         HydrateProfiles();
         HydrateMoaSection();
+        RefreshSoulStatus();
+    }
+
+    /// <summary>
+    /// 刷新 SOUL 段状态：全局/项目 SOUL.md 字符数 + 内置预设字符数。
+    /// 全部来自真实文件/资源读取；未安装、资源缺失都如实标注，不伪造数字。
+    /// </summary>
+    public void RefreshSoulStatus()
+    {
+        var presetChars = SoulPresets.BuiltinCharCount;
+        SoulPresetText = presetChars > 0
+            ? $"{SoulPresets.BuiltinDisplayName} · {presetChars:N0} 字符（随包内置）"
+            : "内置预设资源缺失（嵌入资源未随包分发）";
+
+        if (_instructions is null)
+        {
+            SoulStatusText = "SOUL 装载器未装配（测试环境）";
+            return;
+        }
+
+        var (globalChars, projectChars) = _instructions.SoulStats();
+        var parts = new List<string>
+        {
+            globalChars > 0 ? $"全局 SOUL.md {globalChars:N0} 字符" : "全局 SOUL.md 未安装",
+        };
+        if (projectChars > 0)
+        {
+            parts.Add($"项目 SOUL.md {projectChars:N0} 字符（优先生效）");
+        }
+
+        parts.Add($"路径: {_instructions.GlobalSoulPath}");
+        SoulStatusText = string.Join(" · ", parts);
+    }
+
+    /// <summary>把内置长系统提示词预设安装为全局 SOUL.md（覆盖写入），下一轮对话即生效。</summary>
+    [RelayCommand]
+    private void InstallSoulPreset()
+    {
+        if (_instructions is null)
+        {
+            StatusText = "✗ SOUL 装载器未装配";
+            return;
+        }
+
+        try
+        {
+            var chars = SoulPresets.InstallBuiltin(_instructions.GlobalSoulPath);
+            RefreshSoulStatus();
+            StatusText = $"✅ 内置预设已安装为 SOUL.md（{chars:N0} 字符），下一轮对话生效";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ 安装失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>删除全局 SOUL.md（恢复无 SOUL 状态）；项目级 SOUL.md 不受影响。</summary>
+    [RelayCommand]
+    private void ClearSoul()
+    {
+        if (_instructions is null)
+        {
+            StatusText = "✗ SOUL 装载器未装配";
+            return;
+        }
+
+        try
+        {
+            if (File.Exists(_instructions.GlobalSoulPath))
+            {
+                File.Delete(_instructions.GlobalSoulPath);
+            }
+
+            RefreshSoulStatus();
+            StatusText = "全局 SOUL.md 已移除，下一轮对话生效";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ 移除失败：{ex.Message}";
+        }
     }
 
     private void HydrateFromSettings()

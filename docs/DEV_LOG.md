@@ -294,3 +294,33 @@ zip 56,053,840 B（SHA256 e34c87cb…9c58，328 条目零增零删）；APK 126,
 - 真实进程 E2E"单跑过、并发挂"的首因是负载抖动越过握手窗口：修法是给足超时余量 + 让降级警告自解释，而不是放宽断言。
 - xUnit `[CollectionDefinition]` 放在测试类上会静默吞掉该类全部测试——Collection 定义必须独立成类。
 - dotnet 调用坑：PATH 中的 dotnet + 正斜杠 DOTNET_ROOT 报 "No .NET SDKs were found"，必须反斜杠 `export DOTNET_ROOT="C:\\Users\\...\\.dotnet"` 并直连全路径 dotnet.exe。
+
+## 2026-09-09 · SOUL/长系统提示词全链路 + MiniMax 链路实证 + r5 双端交付（结论）
+
+### 范围
+
+- **SOUL.md 长系统提示词承载**（用户要求 ≥2 万字）：InstructionLoader 新增全局（AppData/AeroCode/SOUL.md）与项目级（工作区根 SOUL.md）装载，全文原样、无截断；输出 `<soul source="…">` 块先于 `<instructions>` 块。
+- **注入点下沉**：SOUL+instructions 由 ChatViewModel 用户文本前缀（每轮落库、长文必膨胀）下沉为门面请求组装层的独立 system 消息——OrchestrationContext.SystemPrompt → HistoryMapper 前置 → Single/Router/Decompose/Ensemble/Pipeline 五策略透传；用户消息体与 DB 持久化内容不再携带系统上下文。
+- **内置预设**：用户提供的参考级完整系统提示词（393,194 字符）作为嵌入资源随 AeroCode.App 打包（桌面/Android 共享），SoulPresets 服务支持读取/安装为全局 SOUL.md（UTF-8 无 BOM）。
+- **设置 UI**：SettingsView 新增「SOUL / 长系统提示词」面板（现状字符数/路径、内置预设信息、安装/移除命令）；AIAssistantViewModel 聊天请求同步注入 system 消息。
+- **MiniMax 修复随包**：MiniMaxProvider thinking.type=adaptive 覆盖（DeepSeek 协议 enabled 被 MiniMax 拒绝）进入本轮交付物。
+
+### 验证（真实执行，非静态推断）
+
+- 新增 13 测试全过：SOUL 装载（含 3 万字符无截断）/soul 先于 instructions/system 消息前置/门面 E2E（provider 首条 system + 落库用户消息无污染）/内置预设 ≥2 万字/安装逐字一致。
+- 全量回归 **1976 通过 / 0 失败 / 24 跳过**（跳过=需外部真实服务的既有基线）。
+- **MiniMax 真实链路 E2E**：内置预设前 20,000 字符写入 SOUL.md → InstructionLoader 装载 20,036 字符 → MiniMaxProvider（api.minimax.chat/v1, MiniMax-M3）真实调用 → 模型按指令回复 `SOUL-OK`。API 探活 HTTP 200。
+- **桌面**：自包含 win-x64 publish + aerocode-mcp sidecar 合并（330 文件/131.3MB，剔除 pdb）；字节探针确认 adaptive/MiniMaxProvider/SOUL.md 常量/394KB 预设内容在包内；窗口级启动冒烟通过（Avalonia 主窗口可见，标题含 AeroCode V3.0）。
+- **Android**：`-t:SignAndroidPackage -p:EmbedAssembliesIntoApk=true`（10m50s）；aapt2 badging（com.aerocode.app/1.0.0/targetSdk 35/launchable MainActivity）EXIT=0；apksigner verify 通过（同一 debug 证书 2053dd38…d5c6）；libaot 形态与 R4 交付一致（866 条目/390 AOT 镜像/双 ABI）；AOT 输入程序集（bin/Release/net9.0-android）逐一探针确认含 SOUL 装载器/预设全文/adaptive 修复。
+- [DEGRADED] Android 真机/模拟器运行时冒烟未做（本机无设备，R5 backlog 项）；AOT 镜像内嵌资源存活无法静态证明（格式特性：R4 镜像同样扫不到字符串字面量）。
+- [DEGRADED] 双 AI 互审未派发（子代理基础设施连续拒绝，按 R4 既定口径编排者自审）。
+
+### 交付物
+
+- `deliverables/r5/win-x64/`（330 文件/131.3MB）、`deliverables/r5/AeroCode-android-release.apk`（113,469,232 B）。
+
+### 教训
+
+- 长系统提示词注入必须在请求组装层做独立 system 消息：VM 层用户文本前缀会把 N 万字设定按轮次平方级灌进持久化历史。
+- .NET Android Release 的 libaot-*.dll.so 是纯代码段（单一 .text），字符串字面量不可静态扫描——包内容验证要前移到 AOT 输入程序集（bin 托管 dll）层做字节探针。
+- 嵌入资源验证用内容唯一短语（LLM_behavior）而非资源名，资源名在清单里、内容才证明"真的带上了"。
