@@ -18,6 +18,7 @@ public partial class DiagnosticsViewModel : ObservableObject, IDisposable
     private readonly ProviderFactory _factory;
     private readonly HarnessHost _harness;
     private readonly EventBus _eventBus;
+    private readonly AeroCode.Skills.SkillHub? _skills;
     private readonly System.Collections.Generic.List<Action> _unsubs = new();
 
     [ObservableProperty] private string _statusText = "就绪";
@@ -32,10 +33,11 @@ public partial class DiagnosticsViewModel : ObservableObject, IDisposable
     public ObservableCollection<ProviderHealth> ProviderHealths { get; } = new();
     public ObservableCollection<EventLog> RecentEvents { get; } = new();
 
-    public DiagnosticsViewModel(ProviderFactory factory, HarnessHost harness)
+    public DiagnosticsViewModel(ProviderFactory factory, HarnessHost harness, AeroCode.Skills.SkillHub? skills = null)
     {
         _factory = factory;
         _harness = harness;
+        _skills = skills;
         _eventBus = harness.EventBus;
 
         _unsubs.Add(_eventBus.Subscribe<ToolCallEvent>(e =>
@@ -100,7 +102,10 @@ public partial class DiagnosticsViewModel : ObservableObject, IDisposable
             ActivePresetId = _harness.Presets.Get(_harness.Presets.List().First().Id)?.Id ?? "standard";
             TotalPendingEdits = _harness.PlanMode.PendingCount;
             CompactionStrategy = _harness.Compactor.Strategy.ToString();
-            TotalInvocations = 0;  // Hook into SkillRegistry if needed
+            // 技能调用总数：真实来自 SkillRegistry 逐技能统计（无 hub 时如实为 0）。
+            TotalInvocations = _skills is null
+                ? 0
+                : _skills.List().Sum(s => _skills.Registry.GetStats(s.Id).invocations);
             StatusText = $"已刷新 {ProviderHealths.Count} 个 provider";
         }
         catch (Exception ex) { StatusText = $"✗ {ex.Message}"; }
