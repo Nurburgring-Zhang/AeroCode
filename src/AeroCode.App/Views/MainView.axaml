@@ -145,9 +145,12 @@
                                     Padding="16,8" Background="{DynamicResource BgPanel}">
                                 <StackPanel Spacing="6">
                                     <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
-                                        <TextBox Grid.Column="0" Watermark="问这篇笔记 / 输入指令…" FontSize="12"
+                                        <TextBox Grid.Column="0" Watermark="问这篇笔记 / 输入指令…（Enter 发送，Shift+Enter 换行）" FontSize="12"
                                                  AutomationProperties.AutomationId="NoteAiInput"
-                                                 Text="{Binding NoteAiInput, Mode=TwoWay}" />
+                                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                                 MaxHeight="96"
+                                                 Text="{Binding NoteAiInput, Mode=TwoWay}"
+                                                 KeyDown="OnNoteAiInputKeyDown" />
                                         <Button Grid.Column="1" Margin="6,0,0,0" Content="问答" Command="{Binding NoteAiAskCommand}"
                                                 AutomationProperties.AutomationId="NoteAiAsk" IsEnabled="{Binding !IsNoteAiBusy}" />
                                         <Button Grid.Column="2" Margin="6,0,0,0" Content="分析" Command="{Binding NoteAiAnalyzeCommand}"

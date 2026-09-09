@@ -7,6 +7,7 @@ using AeroCode.App.Services;
 using AeroCode.App.ViewModels;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Microsoft.Extensions.DependencyInjection;
@@ -176,6 +177,16 @@ public partial class MainView : UserControl
         MainGrid.ColumnDefinitions[0].Width = new GridLength(216);
         SidebarBorder.IsVisible = true;
         ExpandSidebarButton.IsVisible = false;
+    }
+
+    private void OnNoteAiInputKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && !e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            e.Handled = true;
+            if (DataContext is MainWindowViewModel vm && vm.NoteAiAskCommand.CanExecute(null))
+                vm.NoteAiAskCommand.Execute(null);
+        }
     }
 
     private void OnExitClick(object? sender, RoutedEventArgs e)
