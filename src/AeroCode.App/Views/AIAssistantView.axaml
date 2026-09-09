@@ -163,7 +163,8 @@
                              Watermark="输入问题,Enter 发送 (Shift+Enter 换行)"
                              Text="{Binding UserInput, Mode=TwoWay}"
                              AcceptsReturn="True" TextWrapping="Wrap"
-                             MinHeight="44" MaxHeight="120" />
+                             MinHeight="44" MaxHeight="120"
+                             KeyDown="OnUserInputKeyDown" />
                     <Button Grid.Column="1" Margin="6,0,0,0" Content="跑 Skill"
                             Command="{Binding RunSelectedSkillCommand}"
                             ToolTip.Tip="执行选中的 V3 Skill" />
