@@ -98,6 +98,38 @@ public partial class MissionViewModel : ObservableObject
 
     public ObservableCollection<MissionTransitionItem> Transitions { get; } = new();
 
+    /// <summary>复制执行摘要 + 状态轨迹到剪贴板。</summary>
+    [RelayCommand]
+    private async Task CopyTrajectoryAsync()
+    {
+        if (Transitions.Count == 0 && string.IsNullOrWhiteSpace(ExecutionSummary))
+        {
+            StatusText = "当前无任务轨迹可复制";
+            return;
+        }
+        try
+        {
+            var clipboard = Avalonia.Application.Current?.ApplicationLifetime
+                is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime d
+                ? d.MainWindow?.Clipboard : null;
+            if (clipboard is null) { StatusText = "✗ 剪贴板不可用"; return; }
+            var sb = new System.Text.StringBuilder();
+            if (!string.IsNullOrWhiteSpace(ExecutionSummary))
+            {
+                sb.AppendLine(ExecutionSummary).AppendLine();
+            }
+            foreach (var t in Transitions)
+            {
+                sb.Append(t.From).Append(" → ").Append(t.To);
+                if (!string.IsNullOrWhiteSpace(t.Artifact)) sb.Append("  [").Append(t.Artifact).Append(']');
+                sb.Append("  (").Append(t.AtLocal).AppendLine(")");
+            }
+            await clipboard.SetTextAsync(sb.ToString().TrimEnd());
+            StatusText = "✓ 已复制任务轨迹";
+        }
+        catch (Exception ex) { StatusText = $"✗ 复制失败：{ex.Message}"; }
+    }
+
     /// <summary>
     /// <paramref name="overlayService"/>：审批卡片承载（null = 卡片留队列不弹，诚实降级）；
     /// <paramref name="checkpointStore"/>：恢复可用性探针数据源（DI 未注册 = null，可用性未知）；

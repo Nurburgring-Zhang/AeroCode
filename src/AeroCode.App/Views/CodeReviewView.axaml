@@ -45,10 +45,15 @@
 
         <!-- Report panel -->
         <DockPanel Grid.Row="1" Grid.Column="2">
-            <TextBlock DockPanel.Dock="Top" Text="8 维度 Review 报告" Padding="14,10,14,4"
-                       Foreground="{DynamicResource Accent}" FontWeight="SemiBold" />
+            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="14,10,14,4">
+                <TextBlock Grid.Column="0" Text="8 维度 Review 报告"
+                           Foreground="{DynamicResource Accent}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="复制报告" FontSize="11" Padding="8,2"
+                        ToolTip.Tip="复制整份评审报告到剪贴板"
+                        Command="{Binding CopyReportCommand}" />
+            </Grid>
             <ScrollViewer Padding="14" Background="{DynamicResource BgPanel}">
-                <TextBlock Text="{Binding ReportText}" TextWrapping="Wrap"
+                <SelectableTextBlock Text="{Binding ReportText}" TextWrapping="Wrap"
                            Foreground="{DynamicResource FgPrimary}" FontSize="13"
                            FontFamily="Consolas,JetBrains Mono,monospace" />
             </ScrollViewer>

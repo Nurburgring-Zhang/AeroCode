@@ -36,6 +36,23 @@ public partial class CodeReviewViewModel : ObservableObject
         _providers = providers;
     }
 
+    /// <summary>复制整份评审报告到剪贴板。</summary>
+    [RelayCommand]
+    private async Task CopyReportAsync()
+    {
+        if (string.IsNullOrWhiteSpace(ReportText)) { StatusText = "当前无评审报告"; return; }
+        try
+        {
+            var clipboard = Avalonia.Application.Current?.ApplicationLifetime
+                is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime d
+                ? d.MainWindow?.Clipboard : null;
+            if (clipboard is null) { StatusText = "✗ 剪贴板不可用"; return; }
+            await clipboard.SetTextAsync(ReportText);
+            StatusText = "✓ 已复制评审报告";
+        }
+        catch (Exception ex) { StatusText = $"✗ 复制失败：{ex.Message}"; }
+    }
+
     [RelayCommand]
     private async Task PickFileAsync(CancellationToken ct)
     {

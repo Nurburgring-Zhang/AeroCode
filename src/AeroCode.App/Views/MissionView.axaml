@@ -56,8 +56,13 @@
 
         <!-- 状态轨迹 -->
         <Border Grid.Row="2" Background="{DynamicResource BgDeep}" Padding="14,8,14,2">
-            <TextBlock Text="状态轨迹（运行结束后按终态记录的真实 JSON 渲染）"
-                       Foreground="{DynamicResource FgMuted}" FontSize="11" />
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="状态轨迹（运行结束后按终态记录的真实 JSON 渲染）"
+                           Foreground="{DynamicResource FgMuted}" FontSize="11" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="复制轨迹" FontSize="11" Padding="8,2"
+                        ToolTip.Tip="复制执行摘要与状态轨迹到剪贴板"
+                        Command="{Binding CopyTrajectoryCommand}" />
+            </Grid>
         </Border>
         <ScrollViewer Grid.Row="3" Padding="14,4,14,8" VerticalScrollBarVisibility="Auto">
             <ItemsControl ItemsSource="{Binding Transitions}">
