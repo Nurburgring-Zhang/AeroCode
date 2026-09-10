@@ -857,6 +857,103 @@ public partial class ChatViewModel : ObservableObject
         SelectedSession = Sessions.FirstOrDefault(s => s.Id == result.Value!.Id);
     }
 
+    // ============== 消息级操作（复制/编辑/重跑/分叉，悬停工具栏） ==============
+
+    /// <summary>把文本写入桌面剪贴板；不可用（无窗口/非桌面）时返回 false 由调用方如实提示。</summary>
+    private static async Task<bool> CopyTextToClipboardAsync(string text)
+    {
+        var clipboard = Avalonia.Application.Current?.ApplicationLifetime
+            is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime d
+            ? d.MainWindow?.Clipboard
+            : null;
+        if (clipboard is null) return false;
+        await clipboard.SetTextAsync(text);
+        return true;
+    }
+
+    /// <summary>复制单条消息正文到剪贴板。</summary>
+    [RelayCommand]
+    private async Task CopyMessageAsync(MessageItemViewModel? msg)
+    {
+        if (msg is null) return;
+        try
+        {
+            if (!await CopyTextToClipboardAsync(msg.Content ?? string.Empty))
+            {
+                StatusText = "✗ 剪贴板不可用";
+                return;
+            }
+            StatusText = "✓ 已复制该条消息";
+        }
+        catch (Exception ex) { StatusText = $"✗ 复制失败：{ex.Message}"; }
+    }
+
+    /// <summary>一键复制整段对话（按 用户/助手 轮次格式化）。</summary>
+    [RelayCommand]
+    private async Task CopyConversationAsync()
+    {
+        if (Messages.Count == 0) { StatusText = "当前无对话内容"; return; }
+        try
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var m in Messages)
+            {
+                if (m.IsTool) continue; // 工具行不入整段复制（噪声大）
+                var who = m.IsUser ? "用户" : "助手";
+                sb.Append('[').Append(who).Append("] ").AppendLine(m.Content ?? string.Empty);
+            }
+            if (!await CopyTextToClipboardAsync(sb.ToString().TrimEnd()))
+            {
+                StatusText = "✗ 剪贴板不可用";
+                return;
+            }
+            StatusText = "✓ 已复制整段对话";
+        }
+        catch (Exception ex) { StatusText = $"✗ 复制失败：{ex.Message}"; }
+    }
+
+    /// <summary>编辑用户消息：把正文载入输入框供修改，之后可发送（重跑）或分叉运行。</summary>
+    [RelayCommand]
+    private void EditMessage(MessageItemViewModel? msg)
+    {
+        if (msg is null || !msg.IsUser) { StatusText = "仅支持编辑用户消息"; return; }
+        InputText = msg.Content ?? string.Empty;
+        StatusText = "已载入输入框，可修改后发送（重跑）或分叉运行";
+    }
+
+    /// <summary>重新运行某条用户消息：以其正文作为新一轮输入在当前会话重新执行。</summary>
+    [RelayCommand]
+    private async Task RerunMessageAsync(MessageItemViewModel? msg)
+    {
+        if (msg is null || !msg.IsUser) { StatusText = "仅支持重跑用户消息"; return; }
+        if (IsStreaming) { StatusText = "正在流式中，请先停止"; return; }
+        InputText = msg.Content ?? string.Empty;
+        await SendAsync();
+    }
+
+    /// <summary>分叉并运行：先 fork 当前会话为新分支，再在新分支以该消息正文重新执行。</summary>
+    [RelayCommand]
+    private async Task ForkAndRunMessageAsync(MessageItemViewModel? msg)
+    {
+        if (msg is null || !msg.IsUser) { StatusText = "仅支持对用户消息分叉运行"; return; }
+        if (SelectedSession is null) { StatusText = "请先选择会话"; return; }
+        if (_fork is null) { StatusText = "✗ 当前会话服务不支持分叉"; return; }
+        if (IsStreaming) { StatusText = "正在流式中，请先停止"; return; }
+
+        var result = await _fork.ForkAsync(SelectedSession.Id);
+        if (!result.IsSuccess || result.Value is null)
+        {
+            StatusText = $"fork 失败：{result.Error}";
+            return;
+        }
+
+        await ReloadSessionsAsync();
+        SelectedSession = Sessions.FirstOrDefault(s => s.Id == result.Value!.Id);
+        InputText = msg.Content ?? string.Empty;
+        StatusText = $"已分叉为「{result.Value.Title}」，正在新分支重新运行…";
+        await SendAsync();
+    }
+
     /// <summary>
     /// Steer 插话（G5 输入框，流式进行中可见）：入队下一轮注入。
     /// 队列满/无会话 = 诚实失败提示；入队成功发布 SteerRequestedEvent（审计留痕）。

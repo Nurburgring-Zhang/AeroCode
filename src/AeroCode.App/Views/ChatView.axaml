@@ -12,6 +12,21 @@
         <conv:BoolToOpacityConverter x:Key="StreamingOpacity" />
     </UserControl.Resources>
 
+    <UserControl.Styles>
+        <!-- 消息悬停操作条：默认隐藏，鼠标悬停气泡时浮现 -->
+        <Style Selector="StackPanel.msgActions">
+            <Setter Property="Opacity" Value="0" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.12" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Border.msgBubble:pointerover StackPanel.msgActions">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+    </UserControl.Styles>
+
     <Grid ColumnDefinitions="260,6,*" Background="{DynamicResource ChatBg}">
 
         <!-- 左栏：会话列表 + todo 清单 -->
@@ -98,17 +113,37 @@
                         <DataTemplate x:DataType="vm:MessageItemViewModel">
                             <Grid Margin="0,6" ColumnDefinitions="*,Auto,*">
                                 <!-- 用户消息靠右 -->
-                                <Border Grid.Column="2" IsVisible="{Binding IsUser}"
+                                <Border Grid.Column="2" IsVisible="{Binding IsUser}" Classes="msgBubble"
                                         Background="{DynamicResource ChatUserBubble}"
                                         CornerRadius="12,12,2,12" Padding="12,8"
                                         MaxWidth="560" HorizontalAlignment="Right">
                                     <StackPanel Spacing="4">
-                                        <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                        <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
                                                    Foreground="{DynamicResource ChatFg}" FontSize="14" />
                                         <TextBlock Text="{Binding AttachmentSummary}"
                                                    IsVisible="{Binding !!AttachmentSummary}"
                                                    TextWrapping="Wrap"
                                                    Foreground="{DynamicResource ChatMuted}" FontSize="11" />
+                                        <!-- 悬停操作条：复制/编辑/重跑/分叉运行 -->
+                                        <StackPanel Orientation="Horizontal" Spacing="4" Classes="msgActions"
+                                                    HorizontalAlignment="Right">
+                                            <Button Content="复制" FontSize="10" Padding="6,2"
+                                                    ToolTip.Tip="复制这条消息到剪贴板"
+                                                    Command="{Binding $parent[ItemsControl].DataContext.CopyMessageCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="编辑" FontSize="10" Padding="6,2"
+                                                    ToolTip.Tip="载入输入框编辑，改后可发送重跑或分叉运行"
+                                                    Command="{Binding $parent[ItemsControl].DataContext.EditMessageCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="重跑" FontSize="10" Padding="6,2"
+                                                    ToolTip.Tip="以这条内容在当前会话重新执行"
+                                                    Command="{Binding $parent[ItemsControl].DataContext.RerunMessageCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="分叉运行" FontSize="10" Padding="6,2"
+                                                    ToolTip.Tip="分叉为新分支并在新分支重新执行"
+                                                    Command="{Binding $parent[ItemsControl].DataContext.ForkAndRunMessageCommand}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
 
@@ -170,7 +205,7 @@
                                                    Foreground="{DynamicResource ChatMuted}" FontSize="10"
                                                    VerticalAlignment="Center" />
                                     </StackPanel>
-                                    <Border Background="{DynamicResource ChatAiBubble}"
+                                    <Border Background="{DynamicResource ChatAiBubble}" Classes="msgBubble"
                                             CornerRadius="2,12,12,12" Padding="12,8"
                                             BorderBrush="{DynamicResource ChatBorder}" BorderThickness="1">
                                         <StackPanel Spacing="6">
@@ -181,6 +216,14 @@
                                             <TextBlock Text="{Binding ErrorText}" IsVisible="{Binding !!ErrorText}"
                                                        Foreground="{DynamicResource ChatRed}" FontSize="12"
                                                        TextWrapping="Wrap" />
+                                            <!-- 悬停操作条：复制助手回复 -->
+                                            <StackPanel Orientation="Horizontal" Spacing="4" Classes="msgActions"
+                                                        HorizontalAlignment="Left">
+                                                <Button Content="复制" FontSize="10" Padding="6,2"
+                                                        ToolTip.Tip="复制这条回复到剪贴板"
+                                                        Command="{Binding $parent[ItemsControl].DataContext.CopyMessageCommand}"
+                                                        CommandParameter="{Binding}" />
+                                            </StackPanel>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
@@ -194,7 +237,7 @@
             <Border Grid.Row="1" Background="{DynamicResource ChatPanel}"
                     BorderBrush="{DynamicResource ChatBorder}" BorderThickness="0,1,0,0" Padding="12">
                 <StackPanel Spacing="8">
-                    <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto">
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
                             <TextBlock Text="Provider" Foreground="{DynamicResource ChatMuted}"
                                        FontSize="11" VerticalAlignment="Center" />
@@ -225,7 +268,11 @@
                             <TextBlock Text="{Binding ModeDescription}" Foreground="{DynamicResource ChatMuted}"
                                        FontSize="10" VerticalAlignment="Center" />
                         </StackPanel>
-                        <TextBlock Grid.Column="4" Text="{Binding StatusText}"
+                        <Button Grid.Column="4" Content="复制全部对话" FontSize="11" Padding="8,3"
+                                VerticalAlignment="Center"
+                                ToolTip.Tip="一键复制整段对话（按 用户/助手 轮次）到剪贴板"
+                                Command="{Binding CopyConversationCommand}" />
+                        <TextBlock Grid.Column="5" Text="{Binding StatusText}"
                                    Foreground="{DynamicResource ChatMuted}" FontSize="11"
                                    VerticalAlignment="Center" Margin="12,0" />
                     </Grid>
