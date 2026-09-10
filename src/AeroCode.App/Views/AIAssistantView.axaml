@@ -56,13 +56,19 @@
                                     Background="{DynamicResource BgPanel}"
                                     BorderBrush="{DynamicResource Border}" BorderThickness="1">
                                 <StackPanel>
-                                    <TextBlock FontSize="11" Foreground="{DynamicResource Accent}"
-                                               FontWeight="SemiBold">
-                                        <Run Text="{Binding Role}" />
-                                        <Run Text="· " />
-                                        <Run Text="{Binding Name, FallbackValue=''}" />
-                                    </TextBlock>
-                                    <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Grid.Column="0" FontSize="11" Foreground="{DynamicResource Accent}"
+                                                   FontWeight="SemiBold">
+                                            <Run Text="{Binding Role}" />
+                                            <Run Text="· " />
+                                            <Run Text="{Binding Name, FallbackValue=''}" />
+                                        </TextBlock>
+                                        <Button Grid.Column="1" Content="复制" FontSize="10" Padding="6,2"
+                                                ToolTip.Tip="复制这条消息到剪贴板"
+                                                Command="{Binding $parent[ItemsControl].DataContext.CopyHistoryMessageCommand}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                    <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
                                                Foreground="{DynamicResource FgPrimary}"
                                                FontSize="13" Margin="0,4,0,0" />
                                 </StackPanel>

@@ -240,6 +240,22 @@ public partial class AIAssistantViewModel : ObservableObject
         catch (Exception ex) { StatusText = $"✗ 复制失败: {ex.Message}"; }
     }
 
+    /// <summary>复制历史中指定一条消息到剪贴板（每条消息悬停工具栏的「复制」）。</summary>
+    [RelayCommand]
+    private async Task CopyHistoryMessageAsync(AeroCode.AI.Models.ChatMessage? msg)
+    {
+        if (msg is null) return;
+        try
+        {
+            var clipboard = Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime d
+                ? d.MainWindow?.Clipboard : null;
+            if (clipboard is null) { StatusText = "✗ 剪贴板不可用"; return; }
+            await clipboard.SetTextAsync(msg.Content ?? string.Empty);
+            StatusText = "✓ 已复制该条消息";
+        }
+        catch (Exception ex) { StatusText = $"✗ 复制失败: {ex.Message}"; }
+    }
+
     [RelayCommand]
     private async Task RegenerateAsync(CancellationToken ct)
     {
