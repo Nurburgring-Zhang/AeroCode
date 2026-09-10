@@ -14,6 +14,22 @@ public sealed class ChatMessage
     public string? ToolCallId { get; init; }
     public IReadOnlyList<ToolCall>? ToolCalls { get; init; }
     public string? ReasoningContent { get; init; } // DeepSeek thinking output
+
+    /// <summary>
+    /// 多模态图像输入（vision）。非空且 provider 支持 vision 时，content 以
+    /// OpenAI 兼容 content-parts（文本 + image_url/base64）上送；否则回退纯文本描述。
+    /// </summary>
+    public IReadOnlyList<ImageContent>? Images { get; init; }
+}
+
+/// <summary>单张图像内容（base64 内联 data URL 形式上送）。</summary>
+public sealed class ImageContent
+{
+    /// <summary>MIME 类型，如 image/png、image/jpeg。</summary>
+    public string Mime { get; init; } = "image/png";
+
+    /// <summary>图像字节的 base64 编码（不含 data: 前缀）。</summary>
+    public string DataBase64 { get; init; } = string.Empty;
 }
 
 public sealed class ToolCall

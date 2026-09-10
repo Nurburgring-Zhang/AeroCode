@@ -24,6 +24,9 @@ public sealed class ProviderConfig
     public bool SupportsStreaming { get; set; } = true;
     public bool SupportsToolCalling { get; set; } = true;
     public bool SupportsThinking { get; set; } = true;
+    /// <summary>是否支持多模态图像输入（vision）。false（默认）= 图片附件仅以文本描述注入（现行为）；
+    /// true = 图片以 OpenAI 兼容 content-parts（image_url/base64）真实上送供模型理解。</summary>
+    public bool SupportsVision { get; set; } = false;
     /// <summary>thinking 强度档位,逗号分隔,例如 "low,medium,high,max"</summary>
     public string? ThinkingEfforts { get; set; }
     /// <summary>HTTP 请求超时 (秒)</summary>

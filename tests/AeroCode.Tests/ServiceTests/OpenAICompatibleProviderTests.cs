@@ -164,4 +164,74 @@ public class OpenAICompatibleProviderTests
         var f = new ProviderFactory(opts, NullLoggerFactory.Instance);
         Assert.Contains("deepseek", f.ListConfiguredIds());
     }
+
+    [Fact]
+    public async Task VisionEnabled_SerializesImageAsContentParts()
+    {
+        Environment.SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-test-123");
+        var handler = new FakeHandler
+        {
+            ResponseBody = "{\"id\":\"1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+        };
+        var cfg = new ProviderConfig
+        {
+            Id = "deepseek", DisplayName = "DeepSeek", Kind = "OpenAICompatible",
+            BaseUrl = "https://api.deepseek.com/v1", DefaultModel = "deepseek-v4-flash",
+            ApiKeyEnvVar = "DEEPSEEK_API_KEY", RequiresApiKey = true,
+            SupportsVision = true,
+        };
+        var provider = MakeProvider(handler, cfg);
+
+        await provider.ChatAsync(new ChatRequest
+        {
+            Model = "deepseek-v4-flash",
+            Messages = new[]
+            {
+                new ChatMessage
+                {
+                    Role = "user",
+                    Content = "describe this image",
+                    Images = new[] { new ImageContent { Mime = "image/png", DataBase64 = "QUJD" } },
+                },
+            },
+        });
+
+        var body = handler.LastRequestBody ?? string.Empty;
+        // content 应为 parts 数组：含 text 与 image_url（data URL 内联 base64）。
+        Assert.Contains("\"image_url\"", body);
+        Assert.Contains("data:image/png;base64,QUJD", body);
+        Assert.Contains("\"type\":\"text\"", body);
+        Assert.Contains("describe this image", body);
+    }
+
+    [Fact]
+    public async Task VisionDisabled_DoesNotInjectImage()
+    {
+        Environment.SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-test-123");
+        var handler = new FakeHandler
+        {
+            ResponseBody = "{\"id\":\"1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+        };
+        // 默认 SupportsVision=false。
+        var provider = MakeProvider(handler);
+
+        await provider.ChatAsync(new ChatRequest
+        {
+            Model = "deepseek-v4-flash",
+            Messages = new[]
+            {
+                new ChatMessage
+                {
+                    Role = "user",
+                    Content = "hi",
+                    Images = new[] { new ImageContent { Mime = "image/png", DataBase64 = "QUJD" } },
+                },
+            },
+        });
+
+        var body = handler.LastRequestBody ?? string.Empty;
+        // 未启用 vision：content 保持纯文本，绝不出现 image_url（现行为不受影响）。
+        Assert.DoesNotContain("\"image_url\"", body);
+        Assert.Contains("\"content\":\"hi\"", body);
+    }
 }

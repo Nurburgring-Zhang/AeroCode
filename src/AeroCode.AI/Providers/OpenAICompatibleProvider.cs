@@ -66,6 +66,7 @@ public abstract class OpenAICompatibleProvider : IAiProvider
     public bool SupportsStreaming => Config.SupportsStreaming;
     public bool SupportsToolCalling => Config.SupportsToolCalling;
     public virtual bool SupportsThinking => Config.SupportsThinking;
+    public bool SupportsVision => Config.SupportsVision;
 
     protected virtual string ChatCompletionsPath => "/chat/completions";
 
@@ -82,10 +83,30 @@ public abstract class OpenAICompatibleProvider : IAiProvider
         var messages = new List<object>();
         foreach (var m in request.Messages)
         {
+            // vision：带图且 provider 支持时，content 以 content-parts 上送；否则纯文本（现行为）。
+            object contentValue = m.Content;
+            if (m.Images is { Count: > 0 } && Config.SupportsVision)
+            {
+                var parts = new List<object>();
+                if (!string.IsNullOrEmpty(m.Content))
+                {
+                    parts.Add(new { type = "text", text = m.Content });
+                }
+                foreach (var img in m.Images)
+                {
+                    parts.Add(new
+                    {
+                        type = "image_url",
+                        image_url = new { url = $"data:{img.Mime};base64,{img.DataBase64}" }
+                    });
+                }
+                contentValue = parts;
+            }
+
             var msg = new Dictionary<string, object?>
             {
                 ["role"] = m.Role,
-                ["content"] = m.Content
+                ["content"] = contentValue
             };
             if (!string.IsNullOrEmpty(m.Name)) msg["name"] = m.Name;
             if (!string.IsNullOrEmpty(m.ToolCallId)) msg["tool_call_id"] = m.ToolCallId;

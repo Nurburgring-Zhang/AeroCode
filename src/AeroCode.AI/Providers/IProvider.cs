@@ -32,6 +32,9 @@ public interface IAiProvider
     bool SupportsToolCalling { get; }
     bool SupportsThinking { get; }
 
+    /// <summary>是否支持多模态图像输入。默认 false（现行为）；vision provider 覆写为 true。</summary>
+    bool SupportsVision => false;
+
     Task<ChatResponse> ChatAsync(ChatRequest request, CancellationToken ct = default);
 
     IAsyncEnumerable<ChatChunk> StreamChatAsync(ChatRequest request, CancellationToken ct = default);
