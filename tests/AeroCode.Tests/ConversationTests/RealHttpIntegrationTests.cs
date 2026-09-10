@@ -151,6 +151,34 @@ public sealed class RealHttpIntegrationTests : IDisposable
             new IOrchestrationStrategy[] { new SingleStrategy(_sessions) });
     }
 
+    /// <summary>与 MakeFacade 相同，但 provider 开启 SupportsVision，用于 vision 上送链路测试。</summary>
+    private ChatOrchestrationFacade MakeVisionFacade()
+    {
+        var aiOptions = new AIOptions
+        {
+            DefaultProviderId = "mockhttp",
+            Providers =
+            {
+                new ProviderConfig
+                {
+                    Id = "mockhttp",
+                    DisplayName = "Mock HTTP",
+                    Kind = "OpenAICompatible",
+                    BaseUrl = $"{_baseUrl}v1",
+                    DefaultModel = "mock-model",
+                    RequiresApiKey = false,
+                    SupportsStreaming = true,
+                    SupportsVision = true,
+                    TimeoutSeconds = 30,
+                },
+            },
+        };
+        var factory = new ProviderFactory(aiOptions, NullLoggerFactory.Instance);
+        return new ChatOrchestrationFacade(
+            _sessions, factory,
+            new IOrchestrationStrategy[] { new SingleStrategy(_sessions) });
+    }
+
     [Fact]
     public async Task Send_ThroughRealHttp_StreamsAndPersists()
     {
@@ -214,4 +242,74 @@ public sealed class RealHttpIntegrationTests : IDisposable
         Assert.Contains("集成链路打通", contents); // 第一轮助手回复进历史
         Assert.Contains("第二问", contents);
     }
+
+    [Fact]
+    public async Task Send_WithImageAttachment_VisionOn_InjectsImageContentParts()
+    {
+        // 真实小 PNG（1x1 红点）落临时文件，附件携带 SourcePath。
+        var imgPath = Path.Combine(Path.GetTempPath(), $"aero_vision_{Guid.NewGuid():N}.png");
+        File.WriteAllBytes(imgPath, MinimalPng);
+        try
+        {
+            var facade = MakeVisionFacade();
+            var session = (await _sessions.CreateSessionAsync()).Value!;
+            var attachment = new MessageAttachment("pixel.png", "image/png", new FileInfo(imgPath).Length)
+            {
+                SourcePath = imgPath,
+            };
+
+            await foreach (var _ in facade.SendAsync(session.Id, "describe this image", new[] { attachment }))
+            {
+            }
+
+            Assert.Single(_receivedBodies);
+            var body = _receivedBodies[0];
+            // 全链路（门面→策略→HistoryMapper→provider）把图像以 content-parts 上送。
+            Assert.Contains("\"image_url\"", body);
+            Assert.Contains("data:image/png;base64,", body);
+            Assert.Contains("\"type\":\"text\"", body);
+        }
+        finally
+        {
+            try { File.Delete(imgPath); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task Send_WithImageAttachment_VisionOff_KeepsTextOnly()
+    {
+        var imgPath = Path.Combine(Path.GetTempPath(), $"aero_vision_{Guid.NewGuid():N}.png");
+        File.WriteAllBytes(imgPath, MinimalPng);
+        try
+        {
+            var facade = MakeFacade(); // SupportsVision=false（默认）
+            var session = (await _sessions.CreateSessionAsync()).Value!;
+            var attachment = new MessageAttachment("pixel.png", "image/png", new FileInfo(imgPath).Length)
+            {
+                SourcePath = imgPath,
+            };
+
+            await foreach (var _ in facade.SendAsync(session.Id, "describe this image", new[] { attachment }))
+            {
+            }
+
+            Assert.Single(_receivedBodies);
+            // 未开 vision：绝不注入 image_url，content 保持纯文本（零回归）。
+            Assert.DoesNotContain("\"image_url\"", _receivedBodies[0]);
+        }
+        finally
+        {
+            try { File.Delete(imgPath); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>1x1 红色 PNG 的最小合法字节序列。</summary>
+    private static readonly byte[] MinimalPng =
+    {
+        0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,
+        0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,
+        0xDE,0x00,0x00,0x00,0x0C,0x49,0x44,0x41,0x54,0x08,0xD7,0x63,0xF8,0xCF,0xC0,0x00,
+        0x00,0x00,0x03,0x00,0x01,0x5B,0x9B,0x36,0xD5,0x00,0x00,0x00,0x00,0x49,0x45,0x4E,
+        0x44,0xAE,0x42,0x60,0x82,
+    };
 }

@@ -1,8 +1,11 @@
 // Copyright (c) AeroCode
-// MessageAttachment — 用户消息附带的附件（R5.3 多类型 + 分块注入）。
+// MessageAttachment — 用户消息附带的附件（R5.3 多类型 + 分块注入 + vision 上送）。
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using System.Text.Json.Serialization;
+using AeroCode.AI.Models;
 
 namespace AeroAgent.Conversation.Models;
 
@@ -38,6 +41,10 @@ public sealed record MessageAttachment
 
     /// <summary>原始文件大小（字节）。</summary>
     public long SizeBytes { get; init; }
+
+    /// <summary>附件源文件绝对路径（文件型附件；剪贴板型可为 null）。vision 上送时据此读取图像字节。</summary>
+    [JsonIgnore]
+    public string? SourcePath { get; init; }
 
     /// <summary>可选缩略预览（图片字节占位，上限约 4KB）。</summary>
     [JsonIgnore]
@@ -149,4 +156,60 @@ public sealed record MessageAttachment
 
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// 从一组附件中构建 vision 图像内容（仅图片类、文件可达且在预算内）。
+    /// 逐张读取源文件并 base64 编码；超出张数/单张大小预算、非图片、文件缺失或读取失败的
+    /// 如实跳过（不伪造已上送）。供支持 vision 的 provider 以 content-parts 上送。
+    /// </summary>
+    public static IReadOnlyList<ImageContent> BuildVisionImages(
+        IReadOnlyList<MessageAttachment> attachments,
+        int maxImages = 8,
+        long maxBytesPerImage = 8L * 1024 * 1024)
+    {
+        var result = new List<ImageContent>();
+        if (attachments is null || attachments.Count == 0)
+        {
+            return result;
+        }
+
+        foreach (var a in attachments)
+        {
+            if (result.Count >= maxImages)
+            {
+                break;
+            }
+
+            if (string.IsNullOrEmpty(a.SourcePath) || !IsImageMime(a.MimeType))
+            {
+                continue;
+            }
+
+            try
+            {
+                var info = new FileInfo(a.SourcePath);
+                if (!info.Exists || info.Length == 0 || info.Length > maxBytesPerImage)
+                {
+                    continue;
+                }
+
+                var bytes = File.ReadAllBytes(a.SourcePath);
+                result.Add(new ImageContent
+                {
+                    Mime = a.MimeType,
+                    DataBase64 = Convert.ToBase64String(bytes),
+                });
+            }
+            catch
+            {
+                // 读取失败如实跳过该张，不阻塞其余图像与消息发送。
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>MIME 是否为图像类型。</summary>
+    public static bool IsImageMime(string? mime) =>
+        !string.IsNullOrEmpty(mime) && mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
 }

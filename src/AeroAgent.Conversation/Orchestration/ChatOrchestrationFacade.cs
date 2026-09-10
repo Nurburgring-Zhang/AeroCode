@@ -205,6 +205,8 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
             // SOUL + instructions 每轮新鲜装载（文件可在轮间修改）：作为独立 system
             // 消息前置，不持久化——长系统提示词（2 万字以上）不占用户消息体、无历史膨胀。
             SystemPrompt = ComposeSystemPrompt(),
+            // 本轮内存附件（含 SourcePath）：供 vision 策略上送图像；不支持则退回文本描述。
+            Attachments = attachments,
         };
 
         // ---- 手动枚举策略流：异常收容在 MoveNextAsync 周围，

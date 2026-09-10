@@ -84,10 +84,15 @@ public sealed class SingleStrategy : IOrchestrationStrategy
         };
 
         // ---- 真实调用（异常向上传播，门面收容）----
+        // vision：provider 支持且本轮有图片附件 → 读取图像字节以 content-parts 上送；
+        // 否则传 null，保持文本描述注入（现行为，零回归）。
+        var visionImages = provider.SupportsVision && context.Attachments is { Count: > 0 }
+            ? MessageAttachment.BuildVisionImages(context.Attachments)
+            : null;
         var request = new AiChatRequest
         {
             Model = model,
-            Messages = HistoryMapper.ToProviderMessages(context.History, context.SystemPrompt),
+            Messages = HistoryMapper.ToProviderMessages(context.History, context.SystemPrompt, visionImages),
             Stream = provider.SupportsStreaming,
         };
 

@@ -503,7 +503,10 @@ public partial class ChatViewModel : ObservableObject
             }
         }
 
-        return new MessageAttachment(info.Name, mime, info.Length, preview, textContent, truncated);
+        return new MessageAttachment(info.Name, mime, info.Length, preview, textContent, truncated)
+        {
+            SourcePath = info.FullName,
+        };
     }
 
     /// <summary>按扩展名推断 MIME（未知回落 application/octet-stream）。</summary>

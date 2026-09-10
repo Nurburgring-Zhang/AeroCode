@@ -19,7 +19,7 @@ public sealed class ChatMessage
     /// 多模态图像输入（vision）。非空且 provider 支持 vision 时，content 以
     /// OpenAI 兼容 content-parts（文本 + image_url/base64）上送；否则回退纯文本描述。
     /// </summary>
-    public IReadOnlyList<ImageContent>? Images { get; init; }
+    public IReadOnlyList<ImageContent>? Images { get; set; }
 }
 
 /// <summary>单张图像内容（base64 内联 data URL 形式上送）。</summary>

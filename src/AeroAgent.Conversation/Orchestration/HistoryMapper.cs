@@ -23,7 +23,8 @@ namespace AeroAgent.Conversation.Orchestration;
 public static class HistoryMapper
 {
     public static IReadOnlyList<AiChatMessage> ToProviderMessages(
-        IReadOnlyList<EntityChatMessage> history, string? systemPrompt = null)
+        IReadOnlyList<EntityChatMessage> history, string? systemPrompt = null,
+        IReadOnlyList<ImageContent>? visionImages = null)
     {
         var result = new List<AiChatMessage>(history.Count + 1);
 
@@ -35,6 +36,7 @@ public static class HistoryMapper
         }
 
         HashSet<string>? emittedToolCallIds = null;
+        AiChatMessage? lastUserMessage = null;
 
         foreach (var m in history)
         {
@@ -80,14 +82,19 @@ public static class HistoryMapper
                 _ => "user",
             };
 
-            result.Add(new AiChatMessage
+            var mapped = new AiChatMessage
             {
                 Role = role,
                 Content = m.Content,
                 ToolCalls = hasToolCalls ? toolCalls : null,
                 Name = m.Role == ChatRole.Tool ? m.Name : null,
                 ToolCallId = m.Role == ChatRole.Tool ? m.ToolCallId : null,
-            });
+            };
+            result.Add(mapped);
+            if (role == "user")
+            {
+                lastUserMessage = mapped;
+            }
 
             if (hasToolCalls)
             {
@@ -100,6 +107,12 @@ public static class HistoryMapper
                     }
                 }
             }
+        }
+
+        // vision：把本轮图像挂到最后一条用户消息（即本轮用户消息），供支持的 provider 上送。
+        if (lastUserMessage is not null && visionImages is { Count: > 0 })
+        {
+            lastUserMessage.Images = visionImages;
         }
 
         return result;

@@ -22,6 +22,12 @@ public sealed record OrchestrationContext
     /// 因此可承载长系统提示词（数万至数十万字符）而无历史膨胀。
     /// </summary>
     public string? SystemPrompt { get; init; }
+
+    /// <summary>
+    /// 本轮用户消息的内存附件（含 SourcePath，未持久化字节）。支持 vision 的策略
+    /// 据此把图像以 content-parts 上送；不支持时退回文本描述（现行为）。
+    /// </summary>
+    public IReadOnlyList<MessageAttachment>? Attachments { get; init; }
 }
 
 /// <summary>
