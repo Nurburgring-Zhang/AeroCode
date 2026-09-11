@@ -621,14 +621,35 @@ public sealed class ChatViewModelGatewayBadgeTests
     }
 
     [Fact]
-    public async Task Refresh_NoGatewayClient_FallsBackToConfigHint_NeverClaimsOnline()
+    public async Task Refresh_NoGatewayClient_ResetsToConfigHint_NeverClaimsOnline()
     {
         var vm = MakeViewModel(null);
+        // 先篡改状态：只有 null 客户端分支真实执行才会被覆写回配置态（防空实现骗过本测试）。
+        vm.ExpertsGatewayHint = "sentinel";
+        vm.GatewayReachable = true;
 
         await vm.RefreshGatewayStatusAsync();
 
         Assert.False(vm.GatewayReachable);
-        Assert.False(string.IsNullOrWhiteSpace(vm.ExpertsGatewayHint));
+        Assert.NotEqual("sentinel", vm.ExpertsGatewayHint); // null 分支确实覆写了提示
+        Assert.DoesNotContain("网关在线", vm.ExpertsGatewayHint);
+    }
+
+    [Fact]
+    public async Task Refresh_ClientThrows_ConvergesToUnreachable_NotOnline()
+    {
+        //  dispose 后的客户端：HealthAsync 抛 ObjectDisposedException（非 HttpRequestException，
+        // 不被 MoaGatewayClient 内部捕获）→ 落入 RefreshGatewayStatusAsync 的 catch(Exception)。
+        var client = new MoaGatewayClient(
+            new MoaGatewayClientOptions(),
+            new GatewayFakeHttpHandler((_, _) => GatewayTestData.JsonResponse(GatewayTestData.HealthJson)));
+        client.Dispose();
+        var vm = MakeViewModel(client);
+
+        await vm.RefreshGatewayStatusAsync();
+
+        Assert.False(vm.GatewayReachable);
+        Assert.Contains("探活异常", vm.ExpertsGatewayHint);
         Assert.DoesNotContain("网关在线", vm.ExpertsGatewayHint);
     }
 }

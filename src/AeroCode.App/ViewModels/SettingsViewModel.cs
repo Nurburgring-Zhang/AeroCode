@@ -829,7 +829,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         // 高级任务/MOA 四开关（γ-2，UI 暴露；改动需重启生效）
         BudgetEnabled = s.Budget.Enabled;
-        BudgetLimitTokens = Math.Max(0, s.Budget.LimitTokens);
+        BudgetLimitTokens = Math.Clamp(s.Budget.LimitTokens, 0, 10_000_000);
         BudgetWarningRatio = double.IsNaN(s.Budget.WarningRatio) ? 0.8 : Math.Clamp(s.Budget.WarningRatio, 0.0, 1.0);
         LoopGuardEnabled = s.LoopGuard.Enabled;
         LoopGuardMaxStrikes = Math.Clamp(s.LoopGuard.MaxStrikes, 1, 20);
@@ -1168,7 +1168,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             s.Acs.MaxThinkRatio = Math.Clamp(AcsMaxThinkRatio, 0.05, 1.0);
             // 高级任务/MOA 四开关落盘（γ-2；组合根启动时消费，改动需重启生效）
             s.Budget.Enabled = BudgetEnabled;
-            s.Budget.LimitTokens = Math.Max(0, BudgetLimitTokens);
+            s.Budget.LimitTokens = Math.Clamp(BudgetLimitTokens, 0, 10_000_000);
             s.Budget.WarningRatio = Math.Clamp(BudgetWarningRatio, 0.0, 1.0);
             s.LoopGuard.Enabled = LoopGuardEnabled;
             s.LoopGuard.MaxStrikes = Math.Clamp(LoopGuardMaxStrikes, 1, 20);

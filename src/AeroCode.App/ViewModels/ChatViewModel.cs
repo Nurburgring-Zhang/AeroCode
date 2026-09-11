@@ -617,12 +617,20 @@ public partial class ChatViewModel : ObservableObject
             : $"专家团经 moa-gateway-pro 网关：{config}（未设 KEY，仅健康探活可用）；网关不可达时该轮诚实失败";
     }
 
+    /// <summary>探活代号（review M1）：每次探活自增，await 返回后若已有更新的探活则丢弃本次过期结果。</summary>
+    private int _probeGeneration;
+
     /// <summary>
     /// 真实探活网关并刷新徽标（#68）。成功 → 展示版本/端点/mock 可见性；失败 → 明说不可达与原因。
     /// 未注入 _gateway（手动构造/测试）→ 回落环境变量配置态，绝不伪造连通。
+    /// 序列化（review M1）：视图加载与选中专家团都会即发即忘触发探活，慢速/超时的旧探活
+    /// 不得覆盖新探活写入的状态——以 <c>_probeGeneration</c> 代号判定，await 返回后若已有
+    /// 更新的探活则丢弃本次过期结果。
     /// </summary>
     public async Task RefreshGatewayStatusAsync()
     {
+        var generation = Interlocked.Increment(ref _probeGeneration);
+
         if (_gateway is null)
         {
             ExpertsGatewayHint = BuildExpertsGatewayHint();
@@ -630,29 +638,31 @@ public partial class ChatViewModel : ObservableObject
             return;
         }
 
+        GatewayResult<MoaGatewayHealth> health;
         try
         {
-            var health = await _gateway.HealthAsync();
-            if (health.IsSuccess && health.Value is { } h)
-            {
-                GatewayReachable = true;
-                ExpertsGatewayHint = $"网关在线 v{h.Version} · 端点 {h.EndpointsEnabled}/{h.EndpointsTotal}"
-                    + $" · mock {h.MockEndpointsCount}（mode={h.MockMode}）· 专家团经此网关";
-            }
-            else
-            {
-                GatewayReachable = false;
-                ExpertsGatewayHint = $"网关不可达（{_gateway.Options.BaseUrl}）：{health.Error} —— 专家团该轮将诚实失败";
-            }
+            health = await _gateway.HealthAsync();
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) // 未传调用方令牌，HealthAsync 不抛 OCE；其余异常一律收敛为不可达
         {
-            throw; // 调用方取消：如实向上抛。
-        }
-        catch (Exception ex)
-        {
+            if (generation != Volatile.Read(ref _probeGeneration)) return; // 已被更新的探活取代
             GatewayReachable = false;
             ExpertsGatewayHint = $"网关探活异常：{ex.Message} —— 专家团该轮将诚实失败";
+            return;
+        }
+
+        if (generation != Volatile.Read(ref _probeGeneration)) return; // 已被更新的探活取代，丢弃过期结果
+
+        if (health.IsSuccess && health.Value is { } h)
+        {
+            GatewayReachable = true;
+            ExpertsGatewayHint = $"网关在线 v{h.Version} · 端点 {h.EndpointsEnabled}/{h.EndpointsTotal}"
+                + $" · mock {h.MockEndpointsCount}（mode={h.MockMode}）· 专家团经此网关";
+        }
+        else
+        {
+            GatewayReachable = false;
+            ExpertsGatewayHint = $"网关不可达（{_gateway.Options.BaseUrl}）：{health.Error} —— 专家团该轮将诚实失败";
         }
     }
 
