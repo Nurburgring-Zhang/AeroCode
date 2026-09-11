@@ -1,8 +1,8 @@
 // Copyright (c) AeroCode
-// MiniMaxMultimodalClient — 真接 MiniMax 多模态端点（文生图 image-01 / 文生视频 video-01）。
-// 零假装：每次调用都是真实 HTTP 请求，返回真实媒体 URL。API key 从 MINIMAX_API_KEY 环境变量读取。
-// 探测实证（2026-09-09）：image_generation 同步返回 image_urls；video_generation 返回 task_id，
-// 需经 query/video_generation 轮询取结果。TTS(t2a_v2) 端点存在但参数格式未确认，暂未接入。
+// MiniMaxMultimodalClient — 真接 MiniMax 多模态端点（文生图 image-01 / 文生视频 video-01 / 语音合成 t2a_v2）。
+// 零假装：每次调用都是真实 HTTP 请求，返回真实媒体。API key 从 MINIMAX_API_KEY 环境变量读取。
+// 探测实证：image_generation 同步返回 image_urls；video_generation 返回 task_id 需轮询；
+// t2a_v2 语音合成（2026-09-11 实证）：model=speech-01-turbo + voice_id=female-shaonv 返回真实 MP3 音频。
 using System;
 using System.Linq;
 using System.Net.Http;
@@ -26,6 +26,9 @@ public sealed record VideoTaskStatus(string Status, string? VideoUrl, string Raw
     public bool IsCompleted => string.Equals(Status, "Success", StringComparison.OrdinalIgnoreCase) && VideoUrl is not null;
     public bool IsFailed => string.Equals(Status, "Fail", StringComparison.OrdinalIgnoreCase);
 }
+
+/// <summary>语音合成结果（解码后的真实音频字节 + 原始 JSON）。</summary>
+public sealed record SpeechResult(byte[] AudioBytes, string RawJson);
 
 /// <summary>
 /// MiniMax 多模态客户端。Base URL 默认 https://api.minimax.chat/v1。
@@ -117,6 +120,48 @@ public sealed class MiniMaxMultimodalClient
                 videoUrl = await RetrieveFileUrlAsync(fileId, key, ct).ConfigureAwait(false);
         }
         return new VideoTaskStatus(status, videoUrl, body);
+    }
+
+    /// <summary>
+    /// 语音合成（t2a_v2，同步）。返回解码后的真实音频字节。
+    /// 探测实证（2026-09-11，真实 key）：model=speech-01-turbo + voice_id=female-shaonv
+    /// 返回 base_resp.status_code=0 且 data.audio 为 base64 音频（约 95KB MP3）。
+    /// voice_id 须为该账号可用音色（female-shaonv 已验证；male-1 等报 2054 voice id not exist）。
+    /// </summary>
+    public async Task<SpeechResult> GenerateSpeechAsync(
+        string text, string voiceId = "female-shaonv", string model = "speech-01-turbo", CancellationToken ct = default)
+    {
+        var key = RequireKey();
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/t2a_v2");
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
+        req.Content = JsonContent.Create(new
+        {
+            model,
+            text,
+            stream = false,
+            voice_setting = new { voice_id = voiceId, speed = 1, vol = 1, pitch = 0 },
+            audio_setting = new { sample_rate = 32000, bitrate = 128000, format = "mp3", channel = 1 },
+        });
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException($"语音合成失败 HTTP {(int)resp.StatusCode}: {Truncate(body, 300)}");
+
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("base_resp", out var br)
+            && br.TryGetProperty("status_code", out var sc)
+            && sc.TryGetInt32(out var code) && code != 0)
+        {
+            var msg = br.TryGetProperty("status_msg", out var sm) ? sm.GetString() : "";
+            throw new InvalidOperationException($"语音合成失败 code={code}: {msg}");
+        }
+
+        var audioB64 = root.TryGetProperty("data", out var data)
+                       && data.TryGetProperty("audio", out var a) ? a.GetString() : null;
+        if (string.IsNullOrWhiteSpace(audioB64))
+            throw new InvalidOperationException($"语音合成未返回音频: {Truncate(body, 300)}");
+        return new SpeechResult(Convert.FromBase64String(audioB64), body);
     }
 
     /// <summary>经 file/retrieve 取 file_id 对应的真实下载 URL。</summary>

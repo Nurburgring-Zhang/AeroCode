@@ -149,14 +149,16 @@
                     <Button Grid.Column="6" Content="表格化" Command="{Binding TabularizeTextCommand}" Margin="6,0,0,0"
                             ToolTip.Tip="整理成 Markdown 表格" />
                 </Grid>
-                <!-- 多模态生成（AIF-4）：文生图 / 文生视频（真接 MiniMax image-01 / video-01） -->
-                <Grid Grid.Row="5" ColumnDefinitions="*,Auto,Auto" Margin="0,6,0,0">
-                    <TextBox Grid.Column="0" Watermark="多模态生成：输入画面描述（生图 / 生视频）…"
+                <!-- 多模态生成（AIF-4）：文生图 / 文生视频 / 语音合成（真接 MiniMax image-01 / video-01 / t2a_v2） -->
+                <Grid Grid.Row="5" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,6,0,0">
+                    <TextBox Grid.Column="0" Watermark="多模态生成：输入画面描述（生图/生视频）或合成文本（语音）…"
                              Text="{Binding MediaPrompt, Mode=TwoWay}" Margin="0,0,6,0" />
                     <Button Grid.Column="1" Content="🖼 生图" Command="{Binding GenerateImageCommand}"
                             ToolTip.Tip="真实调用 MiniMax image-01 生成图片，保存到本地" Background="{DynamicResource Accent}" />
                     <Button Grid.Column="2" Content="🎬 生视频" Command="{Binding GenerateVideoCommand}" Margin="6,0,0,0"
                             ToolTip.Tip="真实调用 MiniMax video-01 生成视频（异步任务，需等待）" Background="{DynamicResource Accent}" />
+                    <Button Grid.Column="3" Content="🔊 语音" Command="{Binding GenerateSpeechCommand}" Margin="6,0,0,0"
+                            ToolTip.Tip="真实调用 MiniMax t2a_v2 语音合成（speech-01-turbo），保存 MP3 到本地" Background="{DynamicResource Accent}" />
                 </Grid>
             </Grid>
         </Border>

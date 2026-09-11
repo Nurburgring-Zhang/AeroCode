@@ -625,6 +625,46 @@ public partial class AIAssistantViewModel : ObservableObject
         }
     }
 
+    /// <summary>语音合成：真实调用 MiniMax t2a_v2（speech-01-turbo），把音频保存到 AppData/media，报告路径。</summary>
+    [RelayCommand]
+    private async Task GenerateSpeechAsync()
+    {
+        if (string.IsNullOrWhiteSpace(MediaPrompt)) { StatusText = "请输入要合成的文本"; return; }
+        if (IsStreaming) return;
+        IsStreaming = true;
+        StatusText = "语音合成中（真实调用 MiniMax t2a_v2）…";
+        try
+        {
+            _multimodal ??= new AeroCode.AI.Multimodal.MiniMaxMultimodalClient();
+            var result = await _multimodal.GenerateSpeechAsync(MediaPrompt);
+            var path = await SaveBytesToMediaDirAsync(result.AudioBytes, ".mp3");
+            History.Add(new ChatMessage { Role = "user", Content = $"[语音] {Truncate(MediaPrompt, 80)}" });
+            History.Add(new ChatMessage { Role = "assistant", Content = $"🔊 已合成语音并保存（{result.AudioBytes.Length / 1024}KB）：\n{path}" });
+            MediaPrompt = string.Empty;
+            StatusText = $"✓ 语音已保存：{path}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"✗ 语音合成失败：{ex.Message}";
+        }
+        finally
+        {
+            IsStreaming = false;
+        }
+    }
+
+    /// <summary>把媒体字节写入 AppData/AeroCode/media/，返回本地文件路径。</summary>
+    private static Task<string> SaveBytesToMediaDirAsync(byte[] bytes, string ext)
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AeroCode", "media");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, $"gen_{DateTime.Now:yyyyMMdd_HHmmss}{ext}");
+        File.WriteAllBytes(path, bytes);
+        return Task.FromResult(path);
+    }
+
     /// <summary>下载媒体到 AppData/AeroCode/media/，返回本地文件路径。</summary>
     private static async Task<string> DownloadToMediaDirAsync(string url, string ext)
     {
