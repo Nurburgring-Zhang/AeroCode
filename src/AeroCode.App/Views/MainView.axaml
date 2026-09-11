@@ -132,13 +132,17 @@
 
                         <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*,Auto">
                             <Border Grid.Row="0" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="16,10">
-                                <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
                                     <TextBox Grid.Column="0" Watermark="笔记标题…" FontSize="18" FontWeight="SemiBold" Background="Transparent" BorderThickness="0"
                                              AutomationProperties.AutomationId="NoteTitleEditor"
                                              Text="{Binding SelectedNote.Title, Mode=TwoWay}" />
                                     <Button Grid.Column="1" Margin="6,0,0,0" Content="置顶" Command="{Binding TogglePinCommand}" />
                                     <Button Grid.Column="2" Margin="6,0,0,0" Content="保存" Classes="Primary" Command="{Binding SaveNoteCommand}" />
                                     <Button Grid.Column="3" Margin="6,0,0,0" Content="删除" Command="{Binding DeleteNoteCommand}" />
+                                    <Button Grid.Column="4" Margin="6,0,0,0" Content="导出MD" Command="{Binding ExportNotesMarkdownCommand}"
+                                            ToolTip.Tip="把全部笔记各导出为一个 Markdown 文件到选定文件夹" />
+                                    <Button Grid.Column="5" Margin="6,0,0,0" Content="导出JSON" Command="{Binding ExportNotesJsonCommand}"
+                                            ToolTip.Tip="把全部笔记导出为单个 JSON 文件" />
                                 </Grid>
                             </Border>
                             <!-- 笔记内 AI（AIF-1）：对当前笔记的真实 LLM 操作 -->

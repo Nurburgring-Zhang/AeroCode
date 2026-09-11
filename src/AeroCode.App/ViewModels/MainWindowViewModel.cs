@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -198,6 +199,70 @@ public partial class MainWindowViewModel : ObservableObject
             null);
         StatusText = r.IsSuccess ? "已保存" : $"保存失败: {r.Error}";
         if (r.IsSuccess) await LoadAllNotesAsync();
+    }
+
+    /// <summary>导出全部笔记为 Markdown 文件（每篇一个 .md）到用户选定文件夹。</summary>
+    [RelayCommand]
+    private async Task ExportNotesMarkdownAsync()
+    {
+        var lifetime = Avalonia.Application.Current?.ApplicationLifetime
+            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
+        if (lifetime?.MainWindow is null) { StatusText = "无主窗口，无法导出"; return; }
+
+        var folders = await lifetime.MainWindow.StorageProvider.OpenFolderPickerAsync(
+            new Avalonia.Platform.Storage.FolderPickerOpenOptions { Title = "选择导出目录", AllowMultiple = false });
+        if (folders.Count == 0) return;
+        var dir = folders[0].Path.LocalPath;
+
+        var r = await _notes.GetAllAsync();
+        if (!r.IsSuccess || r.Value is null) { StatusText = $"导出失败：{r.Error}"; return; }
+        if (r.Value.Count == 0) { StatusText = "没有可导出的笔记"; return; }
+
+        var count = 0;
+        foreach (var n in r.Value)
+        {
+            var title = string.IsNullOrWhiteSpace(n.Title) ? $"note_{n.Id}" : n.Title!;
+            var path = Path.Combine(dir, $"{SanitizeFileName(title)}_{n.Id}.md");
+            await File.WriteAllTextAsync(path, $"# {n.Title}\n\n{n.Content}");
+            count++;
+        }
+        StatusText = $"✓ 已导出 {count} 篇笔记到 {dir}";
+    }
+
+    /// <summary>导出全部笔记为单个 JSON 文件（含标题/正文/元数据）。</summary>
+    [RelayCommand]
+    private async Task ExportNotesJsonAsync()
+    {
+        var lifetime = Avalonia.Application.Current?.ApplicationLifetime
+            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
+        if (lifetime?.MainWindow is null) { StatusText = "无主窗口，无法导出"; return; }
+
+        var file = await lifetime.MainWindow.StorageProvider.SaveFilePickerAsync(
+            new Avalonia.Platform.Storage.FilePickerSaveOptions
+            {
+                Title = "导出笔记为 JSON",
+                SuggestedFileName = "aerocode_notes.json",
+                FileTypeChoices = new[] { new Avalonia.Platform.Storage.FilePickerFileType("JSON") { Patterns = new[] { "*.json" } } },
+            });
+        if (file is null) return;
+        var path = file.Path.LocalPath;
+
+        var r = await _notes.GetAllAsync();
+        if (!r.IsSuccess || r.Value is null) { StatusText = $"导出失败：{r.Error}"; return; }
+
+        var payload = r.Value.Select(n => new { n.Id, n.Title, n.Content, n.IsPinned, n.CreatedAt, n.UpdatedAt });
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        await File.WriteAllTextAsync(path, json);
+        StatusText = $"✓ 已导出 {r.Value.Count} 篇笔记到 {path}";
+    }
+
+    /// <summary>把文件名中的非法字符替换为下划线。</summary>
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (var ch in name) sb.Append(invalid.Contains(ch) ? '_' : ch);
+        return sb.ToString();
     }
 
     partial void OnSearchQueryChanged(string value) => _ = ObserveAsync(RunSearchAsync());
