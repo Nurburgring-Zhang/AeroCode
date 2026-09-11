@@ -354,3 +354,31 @@ zip 56,053,840 B（SHA256 e34c87cb…9c58，328 条目零增零删）；APK 126,
 - 桌面 win-x64 + aerocode-mcp 自包含 publish 入 deliverables/r5/win-x64（330 文件，剔 pdb）。
 - APK（Release + EmbedAssembliesIntoApk + SignAndroidPackage）重建入 deliverables/r5/。
 - 部署要点：应用需在环境变量 MINIMAX_API_KEY 存在时才能调用 AI/多模态。
+
+## 2026-09-11 · 合并 backlog 逐项执行：TTS 接入 + 笔记导出 + 消息操作五面板 + vision 真实验证（结论）
+
+### 范围（合并历史未完成项 + spec 后逐项执行）
+
+- **TTS 语音合成接入（关闭 DEV_LOG:350 的 [DEGRADED] 缺口）**：MiniMaxMultimodalClient.GenerateSpeechAsync（t2a_v2）。
+  真实 key 探测实证：model=speech-01-turbo + voice_id=female-shaonv 返回 base_resp.code=0 + data.audio base64（约 95KB MP3）；
+  male-1 等报 2054 voice-id-not-exist（该账号不可用音色）。AI 助手面板加「语音」按钮，保存 MP3 到 AppData/media。
+- **笔记导出（关闭 V1_DELIVERY 导出 backlog）**：ExportNotesMarkdown（每篇一个 .md 到选定文件夹）+ ExportNotesJson（单文件 JSON），文件名净化，真实落盘。
+- **消息操作五面板（复制/编辑/重跑/分叉 + 悬停提示）**：对话每条消息悬停工具栏（复制/编辑/重跑/分叉运行，SelectableTextBlock 可选择性复制）+ 复制全部对话；AI 助手逐条复制；代码评审复制报告 + 可选报告；Mission 复制轨迹。均带 tooltip。
+- **vision 图片上送真实验证**：MiniMaxProvider（SupportsVision）经 OpenAI 兼容 content-parts 上送图像，真实 key 验证 MiniMax-M3 正确描述图像（红圆）。
+
+### 验证（真实执行）
+
+- 全量回归 **1991 通过 / 0 失败 / 26 跳过**（跳过=需外部真实服务的诚实跳过，含 vision/TTS live 门控测试）。
+- TTS 真实 E2E（MiniMaxTtsLiveTests，带 key）：>1KB 真实音频。vision 真实 E2E（MiniMaxVisionLiveTests，带 key）：模型正确描述图像。
+- 桌面启动冒烟：app 与交付包均 ALIVE 无启动崩溃；五面板导航 + 消息操作按钮 + 导出按钮 UIA 实测在场。
+
+### 交付物
+
+- deliverables/r5/win-x64（330 文件/133MB，剔 pdb，含 aerocode-mcp sidecar）已重建并冒烟通过。
+
+### 遗留（如实）
+
+- **推送**：本地领先 origin/main 14 提交；后台无非交互凭据路径（git push 与 git credential fill 均挂起），须用户终端 `git push origin main`。
+- **#64 γ-2 热重载其余四开关**：暂缓（启动烧进 DI 单例、UI 不暴露、默认全关、无真实 mission 无法验证，无安全有价值子集）。
+- **#68 网关 UI 徽标/X-MOA-Mock 展示面（P8-1）**：数据面（StateChanged 事件 + [Mock] 标签随消息）已就绪；ExpertsGatewayHint 已在 Experts 策略选中时诚实展示网关配置态。持久徽标/健康探活展示面待 GatewaySidecar 组合根接线后做。
+- **Android 真机冒烟 / release keystore 重签**：本机无设备/未生成 keystore（既有环境限制）。
