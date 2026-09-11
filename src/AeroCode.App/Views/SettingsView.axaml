@@ -460,6 +460,45 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ====================== 高级任务/MOA 开关（γ-2 四开关） ====================== -->
+                <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="高级任务 / MOA 开关" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                        <Grid ColumnDefinitions="Auto,Auto">
+                            <CheckBox Grid.Column="0" Content="启用 mission 级 token 预算闸门（Budget）"
+                                      IsChecked="{Binding BudgetEnabled, Mode=TwoWay}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="160,*,160,*">
+                            <TextBlock Grid.Column="0" Text="预算上限（token）" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
+                            <NumericUpDown Grid.Column="1" Value="{Binding BudgetLimitTokens, Mode=TwoWay}" Minimum="0" Maximum="10000000" Increment="10000" FontSize="12" />
+                            <TextBlock Grid.Column="2" Text="预警比例（0-1）" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                            <NumericUpDown Grid.Column="3" Value="{Binding BudgetWarningRatio, Mode=TwoWay}" Minimum="0" Maximum="1" Increment="0.05" FontSize="12" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,Auto">
+                            <CheckBox Grid.Column="0" Content="启用 LoopGuard 目标锚定/偏离升级"
+                                      IsChecked="{Binding LoopGuardEnabled, Mode=TwoWay}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="160,*">
+                            <TextBlock Grid.Column="0" Text="偏离 strike 上限" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
+                            <NumericUpDown Grid.Column="1" Value="{Binding LoopGuardMaxStrikes, Mode=TwoWay}" Minimum="1" Maximum="20" Increment="1" FontSize="12" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,Auto">
+                            <CheckBox Grid.Column="0" Content="启用上下文策展（Curation）"
+                                      IsChecked="{Binding CurationEnabled, Mode=TwoWay}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,Auto">
+                            <CheckBox Grid.Column="0" Content="启用弃用监控（Deprecation，须与下方 Monitor 双真才外呼）"
+                                      IsChecked="{Binding DeprecationEnabled, Mode=TwoWay}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,Auto">
+                            <CheckBox Grid.Column="0" Content="弃用监控网关路径消费（Monitor）"
+                                      IsChecked="{Binding DeprecationMonitor, Mode=TwoWay}" />
+                        </Grid>
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource FgMuted}" FontSize="11"
+                                   Text="高级任务/MOA 四开关：Budget（mission token 预算闸门）、LoopGuard（目标锚定与偏离升级）、Curation（上下文策展）、Deprecation（弃用监控，双真才外呼）。这些开关在应用启动时由组合根消费，改动随 Save 落盘、需重启生效（热重载暂未接入）。默认全关 = 现行为不变。" />
+                    </StackPanel>
+                </Border>
+
                 <!-- ====================== SOUL / 长系统提示词 ====================== -->
                 <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="16">
                     <StackPanel Spacing="10">

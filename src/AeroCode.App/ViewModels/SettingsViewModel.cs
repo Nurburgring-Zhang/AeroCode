@@ -416,6 +416,40 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private double _acsMaxThinkRatio = 0.40;
 
+    // ==================== 高级任务/MOA 开关段（γ-2 四开关，UI 暴露；改动需重启生效） ====================
+
+    /// <summary>mission 级 token 预算闸门总开关。</summary>
+    [ObservableProperty]
+    private bool _budgetEnabled;
+
+    /// <summary>预算上限（token）。</summary>
+    [ObservableProperty]
+    private long _budgetLimitTokens = 200000;
+
+    /// <summary>预算预警比例（0-1）。</summary>
+    [ObservableProperty]
+    private double _budgetWarningRatio = 0.8;
+
+    /// <summary>LoopGuard 目标锚定/偏离升级总开关。</summary>
+    [ObservableProperty]
+    private bool _loopGuardEnabled;
+
+    /// <summary>LoopGuard 连续偏离 strike 上限。</summary>
+    [ObservableProperty]
+    private int _loopGuardMaxStrikes = 3;
+
+    /// <summary>上下文策展（curation）总开关。</summary>
+    [ObservableProperty]
+    private bool _curationEnabled;
+
+    /// <summary>弃用监控（deprecation）总开关（须与 Monitor 双真才外呼）。</summary>
+    [ObservableProperty]
+    private bool _deprecationEnabled;
+
+    /// <summary>弃用监控网关路径消费开关（与 Enabled 双真才外呼）。</summary>
+    [ObservableProperty]
+    private bool _deprecationMonitor;
+
     /// <summary>模型画像编辑段（Save 时 Upsert/合并删除并落盘 moa-profiles.json）。</summary>
     public ObservableCollection<ProfileEditorItem> ProfileEditors { get; } = new();
 
@@ -792,6 +826,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         AcsSpinStrikes = Math.Clamp(s.Acs.SpinStrikes, 1, 10);
         AcsMaxRetries = Math.Clamp(s.Acs.MaxRetries, 0, 10);
         AcsMaxThinkRatio = Math.Clamp(s.Acs.MaxThinkRatio, 0.05, 1.0);
+
+        // 高级任务/MOA 四开关（γ-2，UI 暴露；改动需重启生效）
+        BudgetEnabled = s.Budget.Enabled;
+        BudgetLimitTokens = Math.Max(0, s.Budget.LimitTokens);
+        BudgetWarningRatio = double.IsNaN(s.Budget.WarningRatio) ? 0.8 : Math.Clamp(s.Budget.WarningRatio, 0.0, 1.0);
+        LoopGuardEnabled = s.LoopGuard.Enabled;
+        LoopGuardMaxStrikes = Math.Clamp(s.LoopGuard.MaxStrikes, 1, 20);
+        CurationEnabled = s.Curation.Enabled;
+        DeprecationEnabled = s.Deprecation.Enabled;
+        DeprecationMonitor = s.Deprecation.Monitor;
     }
 
     /// <summary>切走 provider 前把在编辑的 Extra* 文本提交回旧 config（合法写字，非法暂存原文）。</summary>
@@ -1122,6 +1166,15 @@ public sealed partial class SettingsViewModel : ObservableObject
             s.Acs.SpinStrikes = Math.Clamp(AcsSpinStrikes, 1, 10);
             s.Acs.MaxRetries = Math.Clamp(AcsMaxRetries, 0, 10);
             s.Acs.MaxThinkRatio = Math.Clamp(AcsMaxThinkRatio, 0.05, 1.0);
+            // 高级任务/MOA 四开关落盘（γ-2；组合根启动时消费，改动需重启生效）
+            s.Budget.Enabled = BudgetEnabled;
+            s.Budget.LimitTokens = Math.Max(0, BudgetLimitTokens);
+            s.Budget.WarningRatio = Math.Clamp(BudgetWarningRatio, 0.0, 1.0);
+            s.LoopGuard.Enabled = LoopGuardEnabled;
+            s.LoopGuard.MaxStrikes = Math.Clamp(LoopGuardMaxStrikes, 1, 20);
+            s.Curation.Enabled = CurationEnabled;
+            s.Deprecation.Enabled = DeprecationEnabled;
+            s.Deprecation.Monitor = DeprecationMonitor;
             await _settings.SaveAsync();
             _theme.Apply(SelectedTheme);
 
