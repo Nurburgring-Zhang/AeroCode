@@ -653,3 +653,34 @@ public sealed class ChatViewModelGatewayBadgeTests
         Assert.DoesNotContain("网关在线", vm.ExpertsGatewayHint);
     }
 }
+
+/// <summary>
+/// #62 附件上限回归（独立评审 M5）：剪贴板粘贴与文件选择器同口径受 100 个上限约束，
+/// 杜绝"粘贴绕过上限"导致单条消息附件超限。
+/// </summary>
+public sealed class ChatViewModelAttachmentCapTests
+{
+    private static ChatViewModel MakeViewModel() =>
+        new(
+            new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), new MoaOptions(),
+            ChatViewModelWiring.NewPermission());
+
+    [Fact]
+    public void AttachFromClipboard_Respects_Count_Cap()
+    {
+        var vm = MakeViewModel();
+        var payload = new byte[] { 1, 2, 3 };
+
+        for (var i = 0; i < 100; i++)
+        {
+            vm.AttachFromClipboard(payload, $"img{i}.png", "image/png");
+        }
+
+        Assert.Equal(100, vm.PendingAttachments.Count);
+
+        // 第 101 个被拒，数量不变，且如实上报。
+        vm.AttachFromClipboard(payload, "overflow.png", "image/png");
+        Assert.Equal(100, vm.PendingAttachments.Count);
+        Assert.Contains("数量上限", vm.StatusText);
+    }
+}

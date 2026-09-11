@@ -564,6 +564,21 @@ public partial class ChatViewModel : ObservableObject
             return;
         }
 
+        // review M5：剪贴板粘贴与文件选择器同口径受 100 个 / 10GB 上限约束，
+        // 否则"单条消息附件永不超限"的不变量可被粘贴绕过。
+        if (PendingAttachments.Count >= MaxAttachmentCount)
+        {
+            StatusText = $"已达附件数量上限（{MaxAttachmentCount} 个），粘贴未添加";
+            return;
+        }
+
+        var currentTotal = PendingAttachments.Sum(a => a.SizeBytes);
+        if (currentTotal + data.Length > MaxAttachmentTotalBytes)
+        {
+            StatusText = "附件总大小将超 10GB，粘贴未添加";
+            return;
+        }
+
         var preview = data.Length > 4096 ? data.AsSpan(0, 4096).ToArray() : data;
         PendingAttachments.Add(new MessageAttachment(fileName, mimeType, data.Length, preview));
     }

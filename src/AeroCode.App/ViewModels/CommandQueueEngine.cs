@@ -31,6 +31,13 @@ public partial class CommandQueueEngine : ObservableObject
     private readonly Func<bool>? _isHostIdle;
     private CancellationTokenSource? _cts;
 
+    /// <summary>
+    /// 停止请求标志（review H1）。StopQueue 只置本标志 + 取消当前条，<c>IsRunning</c> 一律由
+    /// 运行循环自身的 finally 置回 false——收敛中的旧循环未真正退出前 <c>IsRunning</c> 恒为 true，
+    /// 任何新循环（运行按钮 / Enqueue 自动开始）都会被单飞守卫挡住，杜绝双循环并发。
+    /// </summary>
+    private bool _stopRequested;
+
     /// <summary>待执行指令队列（按顺序自动执行）。</summary>
     public ObservableCollection<QueuedCommandViewModel> Queue { get; } = new();
 
@@ -88,9 +95,10 @@ public partial class CommandQueueEngine : ObservableObject
 
         IsRunning = true;
         IsCollapsed = false;
+        _stopRequested = false;
         try
         {
-            while (IsRunning && Queue.Count > 0)
+            while (!_stopRequested && Queue.Count > 0)
             {
                 var cmd = Queue[0];
                 _cts = new CancellationTokenSource();
@@ -112,10 +120,13 @@ public partial class CommandQueueEngine : ObservableObject
                     _cts = null;
                 }
 
-                // 无论完成还是中断，都移除已处理的首条并继续下一条（除非已停止）。
-                if (Queue.Count > 0 && ReferenceEquals(Queue[0], cmd))
+                // review H2：按引用移除已执行的条——无论它是否在执行期间被插队/上移挪走。
+                // 旧实现只在 cmd 仍是 Queue[0] 时才移除，一旦用户在执行中插队，cmd 被挪到后面
+                // 就会残留并在之后被二次执行（静默重复发送）。IndexOf 命中即删；已被用户删除则 -1 跳过。
+                var doneIndex = Queue.IndexOf(cmd);
+                if (doneIndex >= 0)
                 {
-                    Queue.RemoveAt(0);
+                    Queue.RemoveAt(doneIndex);
                 }
             }
 
@@ -125,7 +136,9 @@ public partial class CommandQueueEngine : ObservableObject
         }
         finally
         {
+            // review H1：IsRunning 仅由本循环置回 false（StopQueue 不清），保证单飞。
             IsRunning = false;
+            _stopRequested = false;
         }
     }
 
@@ -139,7 +152,9 @@ public partial class CommandQueueEngine : ObservableObject
             return;
         }
 
-        IsRunning = false;
+        // review H1：只置停止标志 + 取消当前条，不清 IsRunning——
+        // IsRunning 由运行循环的 finally 独占置回，收敛期间挡住第二个循环。
+        _stopRequested = true;
         _cts?.Cancel();
         StatusText = "正在停止队列…";
     }
