@@ -1,14 +1,18 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using System.Threading;
+using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
+using AeroAgent.Moa.Gateway;
 using AeroAgent.Moa.Strategies;
 using AeroCode.App.ViewModels;
 using AeroCode.Harness.EventBus;
 using AeroCode.Harness.Permission;
 using AeroCode.Tests.ConversationTests;
+using AeroCode.Tests.MoaTests;
 using Xunit;
 
 namespace AeroCode.Tests.AppTests;
@@ -572,5 +576,59 @@ public sealed class ChatViewModelDefaultStrategyTests
         Assert.Throws<ArgumentNullException>(() => new ChatViewModel(
             new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), null!,
             ChatViewModelWiring.NewPermission(), null, null));
+    }
+}
+
+/// <summary>
+/// #68 网关状态徽标：RefreshGatewayStatusAsync 真实探活行为回归。
+/// 用 GatewayFakeHttpHandler 脚本化网关 /health 响应（不访问真实网络）：
+/// 在线 → 可达 + 版本可见；不可达 → 诚实展示不可达；未注入客户端 → 回落配置态、绝不伪造连通。
+/// </summary>
+public sealed class ChatViewModelGatewayBadgeTests
+{
+    private static ChatViewModel MakeViewModel(MoaGatewayClient? gateway) =>
+        new(
+            new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), new MoaOptions(),
+            ChatViewModelWiring.NewPermission(), gateway: gateway);
+
+    [Fact]
+    public async Task Refresh_GatewayHealthy_ReachableAndVersionShown()
+    {
+        var client = new MoaGatewayClient(
+            new MoaGatewayClientOptions(),
+            new GatewayFakeHttpHandler((_, _) => GatewayTestData.JsonResponse(GatewayTestData.HealthJson)));
+        var vm = MakeViewModel(client);
+
+        await vm.RefreshGatewayStatusAsync();
+
+        Assert.True(vm.GatewayReachable);
+        Assert.Contains("网关在线", vm.ExpertsGatewayHint);
+        Assert.Contains("3.1.1", vm.ExpertsGatewayHint);
+    }
+
+    [Fact]
+    public async Task Refresh_GatewayUnreachable_NotReachableAndHonestHint()
+    {
+        var client = new MoaGatewayClient(
+            new MoaGatewayClientOptions(),
+            new GatewayFakeHttpHandler((_, _) => throw new HttpRequestException("connection refused")));
+        var vm = MakeViewModel(client);
+
+        await vm.RefreshGatewayStatusAsync();
+
+        Assert.False(vm.GatewayReachable);
+        Assert.Contains("不可达", vm.ExpertsGatewayHint);
+    }
+
+    [Fact]
+    public async Task Refresh_NoGatewayClient_FallsBackToConfigHint_NeverClaimsOnline()
+    {
+        var vm = MakeViewModel(null);
+
+        await vm.RefreshGatewayStatusAsync();
+
+        Assert.False(vm.GatewayReachable);
+        Assert.False(string.IsNullOrWhiteSpace(vm.ExpertsGatewayHint));
+        Assert.DoesNotContain("网关在线", vm.ExpertsGatewayHint);
     }
 }

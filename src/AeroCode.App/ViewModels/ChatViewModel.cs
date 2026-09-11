@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AeroAgent.Conversation.Models;
 using AeroAgent.Conversation.Orchestration;
 using AeroAgent.Conversation.Services;
+using AeroAgent.Moa.Gateway;
 using AeroAgent.Moa.Safety;
 using AeroAgent.Moa.Strategies;
 using AeroAgent.Moa.Tools.Workspace;
@@ -223,6 +224,7 @@ public partial class ChatViewModel : ObservableObject
     private readonly ITodoStore? _todos;
     private readonly SessionMemoryService? _memory;
     private readonly ApprovalCircuitBreaker? _approvalBreaker;
+    private readonly MoaGatewayClient? _gateway;
 
     private CancellationTokenSource? _streamCts;
     private bool _suppressStrategySync;
@@ -244,7 +246,8 @@ public partial class ChatViewModel : ObservableObject
         ISessionFork? sessionFork = null,
         ITodoStore? todoStore = null,
         SessionMemoryService? memory = null,
-        ApprovalCircuitBreaker? approvalBreaker = null)
+        ApprovalCircuitBreaker? approvalBreaker = null,
+        MoaGatewayClient? gateway = null)
     {
         _sessions = sessions;
         _facade = facade;
@@ -259,6 +262,7 @@ public partial class ChatViewModel : ObservableObject
         _todos = todoStore;
         _memory = memory;
         _approvalBreaker = approvalBreaker;
+        _gateway = gateway;
 
         ProviderIds = new ObservableCollection<string>(providers.ListConfiguredIds());
         _selectedProviderId = ProviderIds.FirstOrDefault() ?? string.Empty;
@@ -268,9 +272,8 @@ public partial class ChatViewModel : ObservableObject
         _selectedStrategy = moaOptions.DefaultStrategy;
         // 档位下拉与裁决源同步初始值（直接写字段：构造期不走 ApplyPermissionMode）。
         _selectedMode = permission.CurrentMode;
-        // 专家团网关提示（G5）：按 moa-gateway-pro 客户端同一环境变量约定（MOA_GATEWAY_URL/
-        // MOA_GATEWAY_KEY）如实反映"是否已配置"，不探测网络、不伪造连通。
-        ExpertsGatewayHint = BuildExpertsGatewayHint();
+        // 专家团网关徽标（G5/#68）：初始为环境变量配置态（字段初始化器），
+        // 视图加载/选中专家团时经 RefreshGatewayStatusAsync 真实探活刷新。
 
         // 热重载链：设置保存 → ProviderFactory.Reload → ProvidersChanged → 下拉就地刷新。
         // 本 VM 与应用同生命周期（DI 单例），订阅无需退订。
@@ -585,10 +588,16 @@ public partial class ChatViewModel : ObservableObject
     public bool IsExpertsSelected => SelectedStrategy == OrchestrationStrategy.Experts;
 
     /// <summary>
-    /// 专家团网关配置提示（G5，诚实展示）：按 MoaGatewayClientOptions.FromEnvironment
-    /// 的同一约定读取环境变量状态——未配置时明说"未检测到"，绝不声称网关可用。
+    /// 专家团网关状态徽标文本（G5/#68，诚实展示）。初始为环境变量配置态
+    /// （<see cref="BuildExpertsGatewayHint"/>），视图加载/选中专家团后经
+    /// <see cref="RefreshGatewayStatusAsync"/> 真实探活刷新为在线/不可达。
     /// </summary>
-    public string ExpertsGatewayHint { get; }
+    [ObservableProperty]
+    private string _expertsGatewayHint = BuildExpertsGatewayHint();
+
+    /// <summary>网关是否可达（真实探活结果，驱动徽标点着色；初始 false = 未证实连通）。</summary>
+    [ObservableProperty]
+    private bool _gatewayReachable;
 
     private static string BuildExpertsGatewayHint()
     {
@@ -608,12 +617,53 @@ public partial class ChatViewModel : ObservableObject
             : $"专家团经 moa-gateway-pro 网关：{config}（未设 KEY，仅健康探活可用）；网关不可达时该轮诚实失败";
     }
 
+    /// <summary>
+    /// 真实探活网关并刷新徽标（#68）。成功 → 展示版本/端点/mock 可见性；失败 → 明说不可达与原因。
+    /// 未注入 _gateway（手动构造/测试）→ 回落环境变量配置态，绝不伪造连通。
+    /// </summary>
+    public async Task RefreshGatewayStatusAsync()
+    {
+        if (_gateway is null)
+        {
+            ExpertsGatewayHint = BuildExpertsGatewayHint();
+            GatewayReachable = false;
+            return;
+        }
+
+        try
+        {
+            var health = await _gateway.HealthAsync();
+            if (health.IsSuccess && health.Value is { } h)
+            {
+                GatewayReachable = true;
+                ExpertsGatewayHint = $"网关在线 v{h.Version} · 端点 {h.EndpointsEnabled}/{h.EndpointsTotal}"
+                    + $" · mock {h.MockEndpointsCount}（mode={h.MockMode}）· 专家团经此网关";
+            }
+            else
+            {
+                GatewayReachable = false;
+                ExpertsGatewayHint = $"网关不可达（{_gateway.Options.BaseUrl}）：{health.Error} —— 专家团该轮将诚实失败";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 调用方取消：如实向上抛。
+        }
+        catch (Exception ex)
+        {
+            GatewayReachable = false;
+            ExpertsGatewayHint = $"网关探活异常：{ex.Message} —— 专家团该轮将诚实失败";
+        }
+    }
+
     partial void OnSelectedModeChanged(PermissionMode value) => ApplyPermissionMode(value);
 
-    /// <summary>视图加载时调用：拉取会话列表。</summary>
+    /// <summary>视图加载时调用：拉取会话列表，并顺带探活网关徽标（#68，不阻塞加载）。</summary>
     public async Task InitializeAsync()
     {
         await ReloadSessionsAsync();
+        // 探活失败会自行收敛为"不可达"文案，不抛异常，可安全即发即忘。
+        _ = RefreshGatewayStatusAsync();
     }
 
     private async Task ReloadSessionsAsync()
@@ -1005,6 +1055,12 @@ public partial class ChatViewModel : ObservableObject
     partial void OnSelectedStrategyChanged(OrchestrationStrategy value)
     {
         OnPropertyChanged(nameof(IsExpertsSelected));
+        // 选中专家团即刷新一次网关徽标（#68）：用前即见真实可达性，失败自行收敛为不可达。
+        if (value == OrchestrationStrategy.Experts)
+        {
+            _ = RefreshGatewayStatusAsync();
+        }
+
         if (_suppressStrategySync || IsStreaming)
         {
             return;

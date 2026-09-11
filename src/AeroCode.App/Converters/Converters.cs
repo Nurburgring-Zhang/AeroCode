@@ -43,6 +43,17 @@ public class BoolToBrushConverter : IValueConverter
         => throw new NotSupportedException();
 }
 
+/// <summary>网关可达性 → 状态色：true=在线（绿），false=不可达/未证实（琥珀）。用于工具条网关徽标点。</summary>
+public class GatewayStatusBrushConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is true
+            ? new SolidColorBrush(Color.Parse("#2EA86E"))
+            : new SolidColorBrush(Color.Parse("#D98A2B"));
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
 public class StringNotEmptyToBoolConverter : IValueConverter
 {
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)

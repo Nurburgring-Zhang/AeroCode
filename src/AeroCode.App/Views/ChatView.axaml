@@ -10,6 +10,7 @@
     <UserControl.Resources>
         <conv:MarkdownToControlConverter x:Key="MdToControl" />
         <conv:BoolToOpacityConverter x:Key="StreamingOpacity" />
+        <conv:GatewayStatusBrushConverter x:Key="GatewayStatus" />
     </UserControl.Resources>
 
     <UserControl.Styles>
@@ -252,11 +253,17 @@
                                       SelectedItem="{Binding SelectedStrategy, Mode=TwoWay}"
                                       ToolTip.Tip="本会话编排策略：Single 单模型 / Router 路由分流 / Decompose 拆解分工 / Ensemble 多模型集成 / Pipeline 起草-评审-修订 / Experts 专家团（经 moa-gateway-pro 网关多专家编排，网关不可达时该轮诚实失败）"
                                       MinWidth="110" FontSize="12" />
-                            <TextBlock Text="{Binding ExpertsGatewayHint}"
-                                       IsVisible="{Binding IsExpertsSelected}"
-                                       Foreground="{DynamicResource ChatMuted}" FontSize="10"
-                                       MaxWidth="320" TextWrapping="Wrap"
-                                       VerticalAlignment="Center" Margin="4,0,0,0" />
+                            <StackPanel Orientation="Horizontal" Spacing="5"
+                                        IsVisible="{Binding IsExpertsSelected}"
+                                        VerticalAlignment="Center" Margin="4,0,0,0"
+                                        ToolTip.Tip="专家团网关实时状态：绿点=探活在线，琥珀点=不可达/未证实。视图加载与选中专家团时自动真实探活刷新；mock 响应会在消息上标 [Mock]。">
+                                <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                                         Fill="{Binding GatewayReachable, Converter={StaticResource GatewayStatus}}" />
+                                <TextBlock Text="{Binding ExpertsGatewayHint}"
+                                           Foreground="{DynamicResource ChatMuted}" FontSize="10"
+                                           MaxWidth="320" TextWrapping="Wrap"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0">
                             <TextBlock Text="档位" Foreground="{DynamicResource ChatMuted}"
