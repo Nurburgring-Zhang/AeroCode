@@ -3,16 +3,23 @@
 // 真实 E2E 仅当本机 Ollama 服务可达时运行（否则跳过，不拖累常规套件）——拒绝伪造通过。
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using AeroAgent.Conversation.Data;
+using AeroAgent.Conversation.Orchestration;
+using AeroAgent.Conversation.Services;
 using AeroCode.AI.Configuration;
 using AeroCode.AI.LocalModels;
 using AeroCode.AI.Models;
 using AeroCode.AI.Providers;
+using AeroCode.Tests.ConversationTests;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -289,5 +296,102 @@ public sealed class OllamaClientTests
 
         // 真实本地模型产出非空输出即证明"加载本地大模型运行"端到端成立。
         Assert.True(sb.Length > 0, $"本地模型 {model} 未产出任何内容");
+    }
+}
+
+/// <summary>
+/// 生产级端到端：完整本地模型聊天链路 ChatOrchestrationFacade → SingleStrategy →
+/// OllamaProvider → 真实本地 Ollama 模型 → 助手回复落库。闭合"provider 单测"与
+/// "完整聊天管线"之间的缺口。仅当本机 Ollama 可达且有已装模型时运行，否则诚实跳过。
+/// </summary>
+public sealed class LocalModelEndToEndTests : IDisposable
+{
+    private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"localmodel_e2e_{Guid.NewGuid():N}.db");
+    private readonly SqliteConnection _keepAlive;
+    private readonly ConversationDbContext _db;
+    private readonly SessionService _sessions;
+
+    public LocalModelEndToEndTests()
+    {
+        var connStr = new SqliteConnectionStringBuilder { DataSource = _dbPath }.ToString();
+        _keepAlive = new SqliteConnection(connStr);
+        _keepAlive.Open();
+        var options = new DbContextOptionsBuilder<ConversationDbContext>().UseSqlite(connStr).Options;
+        _db = new ConversationDbContext(options);
+        _db.Database.EnsureCreated();
+        _sessions = new SessionService(_db);
+    }
+
+    public void Dispose()
+    {
+        _db.Dispose();
+        _keepAlive.Dispose();
+        SqliteConnection.ClearPool(_keepAlive);
+        try { if (File.Exists(_dbPath)) File.Delete(_dbPath); } catch { /* best effort */ }
+    }
+
+    private static async Task<bool> OllamaReachableAsync()
+    {
+        try
+        {
+            using var client = new OllamaClient();
+            return await client.IsReachableAsync();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    [SkippableFact]
+    public async Task Facade_To_OllamaProvider_RealLocalModel_ProducesAssistantReply()
+    {
+        Skip.IfNot(await OllamaReachableAsync(), "本机 Ollama 不可达——跳过本地模型全链路 E2E（非失败）");
+
+        using var listClient = new OllamaClient();
+        var list = await listClient.ListModelsAsync();
+        Skip.IfNot(list.IsSuccess && list.Value is { Count: > 0 }, "本机无已装模型——跳过全链路 E2E（非失败）");
+        var model = list.Value!.Select(m => m.Name)
+            .FirstOrDefault(n => n.StartsWith("qwen2.5", StringComparison.OrdinalIgnoreCase))
+            ?? list.Value![0].Name;
+
+        // 真实 OllamaProvider（免 key，指向本机 Ollama /v1）。
+        var config = new ProviderConfig
+        {
+            Id = "ollama",
+            DisplayName = "Ollama (local)",
+            Kind = "OpenAICompatible",
+            BaseUrl = "http://localhost:11434/v1",
+            DefaultModel = model,
+            RequiresApiKey = false,
+            SupportsStreaming = true,
+        };
+        var http = new HttpClient { BaseAddress = new Uri("http://localhost:11434/v1") };
+        var provider = new OllamaProvider(http, config, NullLogger<OllamaProvider>.Instance);
+
+        var registry = new TestProviderRegistry { DefaultProviderId = "ollama" };
+        registry.Add(provider);
+
+        var facade = new ChatOrchestrationFacade(
+            _sessions, registry, new IOrchestrationStrategy[] { new SingleStrategy(_sessions) });
+
+        // 会话显式指定 ollama provider 与已装模型。
+        var session = (await _sessions.CreateSessionAsync(
+            AeroAgent.Conversation.Models.OrchestrationStrategy.Single,
+            preferredProviderId: "ollama", preferredModel: model)).Value!;
+
+        var events = new List<ChatEvent>();
+        await foreach (var e in facade.SendAsync(session.Id, "用一句简短的话介绍快速排序。"))
+        {
+            events.Add(e);
+        }
+
+        // 轮次完成，且助手回复非空（真实来自本地模型）。
+        Assert.Contains(events, e => e is TurnCompletedEvent);
+        var messages = (await _sessions.GetMessagesAsync(session.Id)).Value!;
+        var assistant = messages.FirstOrDefault(m => m.Role == AeroAgent.Conversation.Models.ChatRole.Assistant);
+        Assert.NotNull(assistant);
+        Assert.False(string.IsNullOrWhiteSpace(assistant!.Content), "本地模型助手回复为空");
+        Assert.Equal("ollama", assistant.ProviderId);
     }
 }
