@@ -1,0 +1,83 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AeroCode.App.ViewModels"
+             xmlns:conv="using:AeroCode.App.Converters"
+             x:Class="AeroCode.App.Views.LocalModelsView"
+             x:DataType="vm:LocalModelsViewModel">
+
+    <UserControl.Resources>
+        <conv:GatewayStatusBrushConverter x:Key="ReachableBrush" />
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" Margin="4">
+
+            <!-- 运行时状态 + 检测/更新 -->
+            <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}"
+                    BorderThickness="1" CornerRadius="6" Padding="16">
+                <StackPanel Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto,Auto">
+                        <TextBlock Grid.Column="0" Text="本地模型运行时（Ollama）" FontSize="15"
+                                   FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                        <Button Grid.Column="1" Content="检测" Command="{Binding RefreshCommand}"
+                                Margin="0,0,8,0" ToolTip.Tip="探测 Ollama 是否运行、版本与已装模型" />
+                        <Button Grid.Column="2" Content="检查更新" Command="{Binding CheckForUpdatesCommand}"
+                                ToolTip.Tip="报告当前版本与更新方式（不做静默自动升级）" />
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Ellipse Width="10" Height="10" VerticalAlignment="Center"
+                                 Fill="{Binding IsReachable, Converter={StaticResource ReachableBrush}}" />
+                        <TextBlock Text="{Binding Version, StringFormat='版本：{0}'}" FontSize="12"
+                                   Foreground="{DynamicResource FgPrimary}" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{DynamicResource FgPrimary}" />
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource FgMuted}"
+                               Text="本机无 NVIDIA GPU 时走 CPU 推理（GGUF）。CUDA/FlashAttention/vLLM 等 GPU 加速需相应硬件，未检测到时不启用。在聊天页选择 Ollama provider 与对应模型即可使用本地模型。" />
+                </StackPanel>
+            </Border>
+
+            <!-- 已安装模型列表 -->
+            <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}"
+                    BorderThickness="1" CornerRadius="6" Padding="16">
+                <StackPanel Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="已安装模型" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Accent}" />
+                        <Button Grid.Column="1" Content="删除选中" Command="{Binding DeleteSelectedModelCommand}"
+                                ToolTip.Tip="删除上方列表选中的本地模型" />
+                    </Grid>
+                    <ListBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel, Mode=TwoWay}"
+                             MinHeight="80" MaxHeight="220">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="vm:LocalModelItemViewModel">
+                                <TextBlock Text="{Binding Summary}" FontSize="12"
+                                           Foreground="{DynamicResource FgPrimary}" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </StackPanel>
+            </Border>
+
+            <!-- 拉取模型 -->
+            <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}"
+                    BorderThickness="1" CornerRadius="6" Padding="16">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="拉取新模型" FontSize="14" FontWeight="SemiBold"
+                               Foreground="{DynamicResource Accent}" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBox Grid.Column="0" Watermark="模型名，如 qwen2.5:1.5b" FontSize="12"
+                                 Text="{Binding PullModelName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="拉取" Margin="8,0,0,0"
+                                Command="{Binding PullModelCommand}"
+                                ToolTip.Tip="从 Ollama 仓库下载该模型（GGUF），进度见下" />
+                    </Grid>
+                    <TextBlock Text="{Binding PullProgress}" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{DynamicResource FgPrimary}" />
+                    <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="4" />
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

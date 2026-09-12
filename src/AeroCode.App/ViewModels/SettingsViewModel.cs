@@ -575,7 +575,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         IHookEngine? hookEngine = null,
         SchedulerService? scheduler = null,
         AppDataPaths? paths = null,
-        InstructionLoader? instructions = null)
+        InstructionLoader? instructions = null,
+        LocalModelsViewModel? localModels = null)
     {
         _settings = settings;
         _theme = theme;
@@ -590,12 +591,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         _scheduler = scheduler;
         _hooksJsonPath = paths is null ? null : Path.Combine(paths.RootDirectory, "hooks.json");
         _instructions = instructions;
+        LocalModels = localModels;
         HydrateFromSettings();
         HydratePermissionRules();
         HydrateProfiles();
         HydrateMoaSection();
         RefreshSoulStatus();
     }
+
+    /// <summary>本地模型管理子面板 VM（LOCAL_LLM_SPEC P3/P4；DI 注入，可为 null）。</summary>
+    public LocalModelsViewModel? LocalModels { get; }
 
     /// <summary>从当前策略快照重建规则行（构造时 + Reload + 授权对话框改动后再打开设置页）。</summary>
     public void HydratePermissionRules()

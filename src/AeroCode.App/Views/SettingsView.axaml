@@ -529,6 +529,10 @@
             <views:MemoryView />
         </TabItem>
 
+        <TabItem Header="本地模型">
+            <views:LocalModelsView DataContext="{Binding LocalModels}" />
+        </TabItem>
+
         <TabItem Header="诊断">
             <views:DiagnosticsView />
         </TabItem>

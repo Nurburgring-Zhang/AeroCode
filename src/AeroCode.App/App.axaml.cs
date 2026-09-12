@@ -886,6 +886,8 @@ public partial class App : Application
         sc.AddSingleton<MemoryViewModel>();
         sc.AddSingleton<CodeReviewViewModel>();
         sc.AddSingleton<DiagnosticsViewModel>();
+        sc.AddSingleton<AeroCode.AI.LocalModels.OllamaClient>();
+        sc.AddSingleton<LocalModelsViewModel>();
         sc.AddSingleton<SettingsViewModel>();
         sc.AddSingleton<MainWindow>();
 
