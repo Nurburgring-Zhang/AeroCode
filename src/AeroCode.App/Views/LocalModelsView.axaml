@@ -78,6 +78,45 @@
                 </StackPanel>
             </Border>
 
+            <!-- 参数调节（Ollama options，应用到 ollama provider，保存后热重载免重启） -->
+            <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}"
+                    BorderThickness="1" CornerRadius="6" Padding="16">
+                <StackPanel Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="参数调节（GGUF / Ollama options）" FontSize="14"
+                                   FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                        <Button Grid.Column="1" Content="应用参数" Command="{Binding ApplyOptionsCommand}"
+                                ToolTip.Tip="把调参写入 ollama provider 并热重载，无需重启即生效" />
+                    </Grid>
+                    <Grid ColumnDefinitions="160,*,160,*">
+                        <TextBlock Grid.Column="0" Text="上下文 num_ctx" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
+                        <NumericUpDown Grid.Column="1" Value="{Binding NumCtx, Mode=TwoWay}" Minimum="0" Maximum="131072" Increment="512" FontSize="12" />
+                        <TextBlock Grid.Column="2" Text="GPU 层 num_gpu" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                        <NumericUpDown Grid.Column="3" Value="{Binding NumGpu, Mode=TwoWay}" Minimum="0" Maximum="999" Increment="1" FontSize="12" />
+                    </Grid>
+                    <Grid ColumnDefinitions="160,*,160,*">
+                        <TextBlock Grid.Column="0" Text="线程 num_thread" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
+                        <NumericUpDown Grid.Column="1" Value="{Binding NumThread, Mode=TwoWay}" Minimum="0" Maximum="128" Increment="1" FontSize="12" />
+                        <TextBlock Grid.Column="2" Text="温度 temperature" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                        <NumericUpDown Grid.Column="3" Value="{Binding Temperature, Mode=TwoWay}" Minimum="0" Maximum="2" Increment="0.1" FontSize="12" />
+                    </Grid>
+                    <Grid ColumnDefinitions="160,*,160,*">
+                        <TextBlock Grid.Column="0" Text="top_p" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
+                        <NumericUpDown Grid.Column="1" Value="{Binding TopP, Mode=TwoWay}" Minimum="0" Maximum="1" Increment="0.05" FontSize="12" />
+                        <TextBlock Grid.Column="2" Text="top_k" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                        <NumericUpDown Grid.Column="3" Value="{Binding TopK, Mode=TwoWay}" Minimum="0" Maximum="500" Increment="5" FontSize="12" />
+                    </Grid>
+                    <Grid ColumnDefinitions="160,*,160,*">
+                        <TextBlock Grid.Column="0" Text="重复惩罚 repeat_penalty" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" />
+                        <NumericUpDown Grid.Column="1" Value="{Binding RepeatPenalty, Mode=TwoWay}" Minimum="0" Maximum="3" Increment="0.05" FontSize="12" />
+                        <TextBlock Grid.Column="2" Text="最大输出 num_predict" VerticalAlignment="Center" Foreground="{DynamicResource FgMuted}" FontSize="12" Margin="12,0,0,0" />
+                        <NumericUpDown Grid.Column="3" Value="{Binding NumPredict, Mode=TwoWay}" Minimum="-1" Maximum="32768" Increment="128" FontSize="12" />
+                    </Grid>
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource FgMuted}"
+                               Text="调参写入 ollama provider 的请求体（ExtraBody），点「应用参数」保存并热重载，无需重启。num_gpu=0 为纯 CPU（本机无 NVIDIA GPU，集显卸载收益有限）；num_thread=0 / num_ctx=0 表示用 Ollama 默认。" />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

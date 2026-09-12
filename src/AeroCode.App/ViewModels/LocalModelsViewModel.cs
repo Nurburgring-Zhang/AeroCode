@@ -3,9 +3,13 @@
 // 基于 OllamaClient：运行时检测（可达/版本）、已装模型列表、拉取（进度）、删除、更新检查。
 // 诚实语义：Ollama 不可达/无模型如实显示，绝不伪造"已连接/已加载"；更新只做"检查+报告"，不静默升级。
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 using AeroCode.AI.LocalModels;
+using AeroCode.AI.Providers;
+using AeroCode.App.Configuration;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -39,15 +43,27 @@ public sealed class LocalModelItemViewModel
 }
 
 /// <summary>
-/// 本地模型管理 VM。构造注入 <see cref="OllamaClient"/>（DI 单例）。
+/// 本地模型管理 VM。构造注入 <see cref="OllamaClient"/>（DI 单例）；
+/// 参数调节另注入 <see cref="SettingsService"/>/<see cref="ProviderFactory"/>（可空，便于单测仅传 client）。
 /// </summary>
 public sealed partial class LocalModelsViewModel : ObservableObject
 {
-    private readonly OllamaClient _client;
+    /// <summary>承载 Ollama 调参的 provider Id（与 SettingsService 默认种子一致）。</summary>
+    public const string OllamaProviderId = "ollama";
 
-    public LocalModelsViewModel(OllamaClient client)
+    private readonly OllamaClient _client;
+    private readonly SettingsService? _settings;
+    private readonly ProviderFactory? _providerFactory;
+
+    public LocalModelsViewModel(
+        OllamaClient client,
+        SettingsService? settings = null,
+        ProviderFactory? providerFactory = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
+        _settings = settings;
+        _providerFactory = providerFactory;
+        HydrateOptions();
     }
 
     /// <summary>Ollama 是否可达（服务在跑）。</summary>
@@ -80,6 +96,40 @@ public sealed partial class LocalModelsViewModel : ObservableObject
     /// <summary>拉取进度文本。</summary>
     [ObservableProperty]
     private string _pullProgress = string.Empty;
+
+    // ---------------- Ollama 调参（LOCAL_LLM_SPEC §4，持久化到 ollama provider 的 ExtraBody） ----------------
+
+    /// <summary>上下文长度 num_ctx（0 = 用模型默认）。</summary>
+    [ObservableProperty]
+    private int _numCtx = 4096;
+
+    /// <summary>GPU 卸载层数 num_gpu（0 = 纯 CPU；本机集显收益有限）。</summary>
+    [ObservableProperty]
+    private int _numGpu = 0;
+
+    /// <summary>CPU 线程数 num_thread（0 = Ollama 默认）。</summary>
+    [ObservableProperty]
+    private int _numThread = 0;
+
+    /// <summary>采样温度 temperature。</summary>
+    [ObservableProperty]
+    private double _temperature = 0.7;
+
+    /// <summary>核采样 top_p。</summary>
+    [ObservableProperty]
+    private double _topP = 0.9;
+
+    /// <summary>top_k（0 = 默认）。</summary>
+    [ObservableProperty]
+    private int _topK = 40;
+
+    /// <summary>重复惩罚 repeat_penalty。</summary>
+    [ObservableProperty]
+    private double _repeatPenalty = 1.1;
+
+    /// <summary>单次最大生成 token 数 num_predict（-1 = 不限）。</summary>
+    [ObservableProperty]
+    private int _numPredict = 512;
 
     /// <summary>检测 Ollama 并刷新模型列表。</summary>
     [RelayCommand]
@@ -257,6 +307,112 @@ public sealed partial class LocalModelsViewModel : ObservableObject
         {
             await SetBusyAsync(false);
         }
+    }
+
+    // ---------------- Ollama 调参：水合 / 应用 ----------------
+
+    /// <summary>从 ollama provider 的 ExtraBody 水合调参项（构造时 + 检测时）。</summary>
+    public void HydrateOptions()
+    {
+        var extra = GetOllamaExtraBody();
+        if (extra is null)
+        {
+            return; // 无 ollama provider / 无 ExtraBody：保持默认值。
+        }
+
+        NumCtx = ReadInt(extra, "num_ctx", NumCtx);
+        NumGpu = ReadInt(extra, "num_gpu", NumGpu);
+        NumThread = ReadInt(extra, "num_thread", NumThread);
+        Temperature = ReadDouble(extra, "temperature", Temperature);
+        TopP = ReadDouble(extra, "top_p", TopP);
+        TopK = ReadInt(extra, "top_k", TopK);
+        RepeatPenalty = ReadDouble(extra, "repeat_penalty", RepeatPenalty);
+        NumPredict = ReadInt(extra, "num_predict", NumPredict);
+    }
+
+    /// <summary>
+    /// 应用调参：把当前调参写入 ollama provider 的 ExtraBody，落盘并热重载 ProviderFactory
+    /// （清空缓存 + ProvidersChanged），使运行中的 provider 无需重启即按新参数请求。
+    /// </summary>
+    [RelayCommand]
+    public async Task ApplyOptionsAsync()
+    {
+        if (_settings is null)
+        {
+            await OnUiAsync(() => StatusText = "设置服务不可用，无法保存调参");
+            return;
+        }
+
+        try
+        {
+            var providers = _settings.Current.Ai.Providers;
+            var ollama = providers.FirstOrDefault(p =>
+                string.Equals(p.Id, OllamaProviderId, StringComparison.OrdinalIgnoreCase));
+            if (ollama is null)
+            {
+                await OnUiAsync(() => StatusText = "未找到 ollama provider 配置，无法保存调参");
+                return;
+            }
+
+            ollama.ExtraBody = BuildExtraBody();
+            await _settings.SaveAsync();
+
+            // 热重载：provider 缓存按新配置重建（含新 ExtraBody），无需重启。
+            _providerFactory?.Reload(_settings.ToAiOptions());
+
+            await OnUiAsync(() => StatusText = "调参已保存并生效（ollama provider 已热重载）。");
+        }
+        catch (Exception ex)
+        {
+            await OnUiAsync(() => StatusText = $"保存调参失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>把当前调参构建为 ExtraBody 字典（Ollama 选项键）。</summary>
+    public Dictionary<string, object> BuildExtraBody() => new()
+    {
+        ["num_ctx"] = NumCtx,
+        ["num_gpu"] = NumGpu,
+        ["num_thread"] = NumThread,
+        ["temperature"] = Temperature,
+        ["top_p"] = TopP,
+        ["top_k"] = TopK,
+        ["repeat_penalty"] = RepeatPenalty,
+        ["num_predict"] = NumPredict,
+    };
+
+    private Dictionary<string, object>? GetOllamaExtraBody()
+    {
+        var ollama = _settings?.Current.Ai.Providers.FirstOrDefault(p =>
+            string.Equals(p.Id, OllamaProviderId, StringComparison.OrdinalIgnoreCase));
+        return ollama?.ExtraBody;
+    }
+
+    private static int ReadInt(Dictionary<string, object> extra, string key, int fallback)
+    {
+        if (!extra.TryGetValue(key, out var value) || value is null) return fallback;
+        return value switch
+        {
+            int i => i,
+            long l => (int)l,
+            double d => (int)d,
+            System.Text.Json.JsonElement je when je.ValueKind == System.Text.Json.JsonValueKind.Number => je.GetInt32(),
+            _ => fallback,
+        };
+    }
+
+    private static double ReadDouble(Dictionary<string, object> extra, string key, double fallback)
+    {
+        if (!extra.TryGetValue(key, out var value) || value is null) return fallback;
+        return value switch
+        {
+            double d => d,
+            int i => i,
+            long l => l,
+            float f => f,
+            System.Text.Json.JsonElement je when je.ValueKind == System.Text.Json.JsonValueKind.Number => je.GetDouble(),
+            _ => fallback,
+        };
     }
 
     // ---------------- 内部 ----------------
