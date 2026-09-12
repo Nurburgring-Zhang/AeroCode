@@ -283,13 +283,10 @@ public partial class ChatViewModel : ObservableObject
 
         // UIR-5：对话指令队列 —— 执行体为本页 SendAsync。review M3：直接把队列条目令牌传入
         // SendAsync（其内部 _streamCts 联动该令牌，停止在前导/流式各阶段均生效）；
-        // review M1：返回 executed/refused 供引擎区分"执行"与"拒绝"。
+        // review M1：返回 executed/refused 供引擎区分"执行"与"拒绝"；
+        // review L2：text 经 textOverride 直传，不再覆写用户正在编辑的输入框草稿。
         Queue = new CommandQueueEngine(
-            async (text, ct) =>
-            {
-                InputText = text;
-                return await SendAsync(ct);
-            },
+            async (text, ct) => await SendAsync(ct, text),
             () => !IsStreaming);
     }
 
@@ -1237,9 +1234,10 @@ public partial class ChatViewModel : ObservableObject
     [RelayCommand]
     private Task Send() => SendAsync();
 
-    private async Task<bool> SendAsync(CancellationToken externalCt = default)
+    private async Task<bool> SendAsync(CancellationToken externalCt = default, string? textOverride = null)
     {
-        var text = InputText.Trim();
+        // review L2：队列执行体直接传 textOverride，不读/不覆写用户正在编辑的输入框草稿。
+        var text = (textOverride ?? InputText).Trim();
         if (text.Length == 0 || IsStreaming)
         {
             return false; // review M1：拒绝执行（空输入或正在流式中）。
@@ -1318,7 +1316,13 @@ public partial class ChatViewModel : ObservableObject
                     attachments.Select(a => $"📎 {a.FileName} ({a.DisplaySize})"));
             }
 
-            InputText = string.Empty;
+            // review L2：仅当本次发送确实消费了输入框（非队列 textOverride）才清空，
+            // 队列执行时保留用户正在编辑的草稿。
+            if (textOverride is null)
+            {
+                InputText = string.Empty;
+            }
+
             IsStreaming = true;
             StatusText = "思考中…";
 
