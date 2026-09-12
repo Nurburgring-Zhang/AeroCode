@@ -683,4 +683,19 @@ public sealed class ChatViewModelAttachmentCapTests
         Assert.Equal(100, vm.PendingAttachments.Count);
         Assert.Contains("数量上限", vm.StatusText);
     }
+
+    [Fact]
+    public void AttachFromClipboard_Respects_Size_Cap()
+    {
+        var vm = MakeViewModel();
+        const long tenGb = 10L * 1024 * 1024 * 1024;
+        // 预填恰好 10GB（仅元信息，无真实字节）。
+        vm.PendingAttachments.Add(new MessageAttachment("big.bin", "application/octet-stream", tenGb));
+        Assert.Single(vm.PendingAttachments);
+
+        // 再粘贴任意大小都会超 10GB → 被拒。
+        vm.AttachFromClipboard(new byte[] { 1 }, "extra.png", "image/png");
+        Assert.Single(vm.PendingAttachments);
+        Assert.Contains("10GB", vm.StatusText);
+    }
 }

@@ -431,6 +431,11 @@ public partial class ChatViewModel : ObservableObject
                 // 不限定类型：接受任意文件，MIME 按扩展名推断。
             });
 
+        // review I-1：先用文件元信息做上限筛选（不读内容、无 await），再一次性后台构建，
+        // 最后同步添加——避免逐文件 await 期间 Send/粘贴插入导致上限超限或附件集被拆分。
+        var existingBytes = PendingAttachments.Sum(a => a.SizeBytes);
+        var accepted = new List<FileInfo>();
+        var batchBytes = 0L;
         foreach (var file in files)
         {
             var path = file.Path.LocalPath;
@@ -439,33 +444,60 @@ public partial class ChatViewModel : ObservableObject
                 continue;
             }
 
-            // 上限：数量。
-            if (PendingAttachments.Count >= MaxAttachmentCount)
+            // 上限：数量（已有 + 本批已接受）。
+            if (PendingAttachments.Count + accepted.Count >= MaxAttachmentCount)
             {
                 StatusText = $"已达附件数量上限（{MaxAttachmentCount} 个），其余未添加";
                 break;
             }
 
-            try
-            {
-                var info = new FileInfo(path);
+            var info = new FileInfo(path);
 
-                // 上限：总大小。
-                var currentTotal = PendingAttachments.Sum(a => a.SizeBytes);
-                if (currentTotal + info.Length > MaxAttachmentTotalBytes)
+            // 上限：总大小（已有 + 本批已接受 + 当前文件）。
+            if (existingBytes + batchBytes + info.Length > MaxAttachmentTotalBytes)
+            {
+                StatusText = $"附件总大小将超 10GB，{info.Name} 未添加";
+                continue;
+            }
+
+            accepted.Add(info);
+            batchBytes += info.Length;
+        }
+
+        if (accepted.Count > 0)
+        {
+            // review M6：文件读取/文本解码挪到后台线程（一次性批量构建，单文件失败相互隔离）。
+            var built = await Task.Run(() =>
+            {
+                var results = new List<(MessageAttachment? Attachment, string? Error)>(accepted.Count);
+                foreach (var info in accepted)
                 {
-                    StatusText = $"附件总大小将超 10GB，{info.Name} 未添加";
-                    continue;
+                    try
+                    {
+                        results.Add((BuildAttachment(info), null));
+                    }
+                    catch (Exception ex)
+                    {
+                        results.Add((null, $"附件 {info.Name} 读取失败：{ex.Message}"));
+                    }
                 }
 
-                // review M6：文件读取/文本解码挪到后台线程，避免选大量文件时卡住 UI 线程。
-                PendingAttachments.Add(await Task.Run(() => BuildAttachment(info)));
-                StatusText = $"已添加附件 {info.Name}（共 {PendingAttachments.Count} 个）";
-            }
-            catch (Exception ex)
+                return results;
+            });
+
+            // 同步添加：上限判定与添加之间无 await，杜绝超限窗口。
+            foreach (var item in built)
             {
-                // 单文件失败不影响其他：如实报告。
-                StatusText = $"附件 {Path.GetFileName(path)} 读取失败：{ex.Message}";
+                if (item.Attachment is not null)
+                {
+                    PendingAttachments.Add(item.Attachment);
+                    StatusText = $"已添加附件 {item.Attachment.FileName}（共 {PendingAttachments.Count} 个）";
+                }
+                else if (item.Error is not null)
+                {
+                    // 单文件失败不影响其他：如实报告。
+                    StatusText = item.Error;
+                }
             }
         }
     }
