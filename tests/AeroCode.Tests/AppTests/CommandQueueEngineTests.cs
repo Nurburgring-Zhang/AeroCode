@@ -33,7 +33,7 @@ public sealed class CommandQueueEngineTests
         var engine = new CommandQueueEngine((text, _) =>
         {
             lock (executed) executed.Add(text);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         });
 
         engine.Enqueue("A"); // 空闲 → 自动开始
@@ -53,6 +53,7 @@ public sealed class CommandQueueEngineTests
         {
             lock (executed) executed.Add(text);
             if (text == "A") await gate.Task; // A 阻塞，留给测试操纵队列
+            return true;
         });
 
         engine.Enqueue("A"); // 自动开始，A 阻塞在 gate
@@ -80,6 +81,7 @@ public sealed class CommandQueueEngineTests
         {
             Interlocked.Increment(ref started);
             await gate.Task; // 不观察 ct：停止后仍阻塞，直到放行
+            return true;
         });
 
         engine.Enqueue("A"); // 自动开始，阻塞在 gate
@@ -100,5 +102,20 @@ public sealed class CommandQueueEngineTests
         Assert.Equal(1, Volatile.Read(ref started)); // 只有 A 执行过
         Assert.Single(engine.Queue); // B 因停止而保留
         Assert.Equal("B", engine.Queue[0].Text);
+    }
+
+    [Fact]
+    public async Task Refused_Item_Is_Kept_And_Queue_Stops()
+    {
+        // M1 回归：宿主拒绝执行（返回 false）→ 该条保留在队首、队列停止、诚实上报，绝不静默吞掉。
+        var engine = new CommandQueueEngine((_, _) => Task.FromResult(false)); // 恒拒绝
+
+        engine.Enqueue("A"); // 空闲 → 自动开始；执行 A 被拒
+        await WaitAsync(() => engine.StatusText.Contains("无法执行") || engine.StatusText.Contains("执行完毕"));
+
+        Assert.Contains("无法执行", engine.StatusText); // 诚实的暂停提示
+        Assert.False(engine.IsRunning);
+        Assert.Single(engine.Queue); // A 被保留，未被吞掉
+        Assert.Equal("A", engine.Queue[0].Text);
     }
 }

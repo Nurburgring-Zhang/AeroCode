@@ -360,21 +360,30 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>AI 分析：提炼要点、结构、潜在问题。</summary>
     [RelayCommand]
-    private Task NoteAiAnalyzeAsync() => RunNoteAiAsync(
-        "你是资深分析助手。对笔记内容做结构化分析：核心要点、逻辑结构、论据充分性、潜在问题或矛盾，分条输出。",
-        "[任务] 分析这篇笔记");
+    private async Task NoteAiAnalyzeAsync()
+    {
+        await RunNoteAiAsync(
+            "你是资深分析助手。对笔记内容做结构化分析：核心要点、逻辑结构、论据充分性、潜在问题或矛盾，分条输出。",
+            "[任务] 分析这篇笔记");
+    }
 
     /// <summary>AI 整理：重排为清晰的 Markdown（结果可一键应用到笔记）。</summary>
     [RelayCommand]
-    private Task NoteAiOrganizeAsync() => RunNoteAiAsync(
-        "你是编辑助手。把笔记重新整理为结构清晰的 Markdown：合理标题层级、列表、必要的分段；保留原意与事实，不新增虚构内容。只输出整理后的 Markdown 正文。",
-        "[任务] 整理这篇笔记");
+    private async Task NoteAiOrganizeAsync()
+    {
+        await RunNoteAiAsync(
+            "你是编辑助手。把笔记重新整理为结构清晰的 Markdown：合理标题层级、列表、必要的分段；保留原意与事实，不新增虚构内容。只输出整理后的 Markdown 正文。",
+            "[任务] 整理这篇笔记");
+    }
 
     /// <summary>AI 摘要：压缩为简洁摘要。</summary>
     [RelayCommand]
-    private Task NoteAiSummarizeAsync() => RunNoteAiAsync(
-        "你是摘要助手。把笔记压缩为 3-5 句的简洁摘要，保留核心信息。",
-        "[任务] 摘要这篇笔记");
+    private async Task NoteAiSummarizeAsync()
+    {
+        await RunNoteAiAsync(
+            "你是摘要助手。把笔记压缩为 3-5 句的简洁摘要，保留核心信息。",
+            "[任务] 摘要这篇笔记");
+    }
 
     /// <summary>把 AI 结果应用为笔记正文（用于"整理"后一键采纳）。</summary>
     [RelayCommand]
@@ -397,18 +406,18 @@ public partial class MainWindowViewModel : ObservableObject
     /// 逐块写入 NoteAiResult。无 provider/无笔记时如实提示，不伪造结果。
     /// ct 供队列引擎中断当前条（默认 None，按钮直接调用不受影响）。
     /// </summary>
-    private async Task RunNoteAiAsync(string systemPrompt, string taskLine, CancellationToken ct = default)
+    private async Task<bool> RunNoteAiAsync(string systemPrompt, string taskLine, CancellationToken ct = default)
     {
         if (_providers is null)
         {
             StatusText = "AI 未装配（无 provider 工厂）";
-            return;
+            return false; // review M1：拒绝执行。
         }
 
         if (SelectedNote is null || string.IsNullOrWhiteSpace(SelectedNote.Content))
         {
             StatusText = "请先选中一篇有内容的笔记";
-            return;
+            return false; // review M1：拒绝执行。
         }
 
         IAiProvider provider;
@@ -419,7 +428,7 @@ public partial class MainWindowViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusText = $"无可用 provider：{ex.Message}";
-            return;
+            return false; // review M1：拒绝执行。
         }
 
         IsNoteAiBusy = true;
@@ -478,5 +487,7 @@ public partial class MainWindowViewModel : ObservableObject
         {
             IsNoteAiBusy = false;
         }
+
+        return true; // review M1：已处理（含完成与 catch 已收敛的错误；OCE 已在上面 rethrow）。
     }
 }

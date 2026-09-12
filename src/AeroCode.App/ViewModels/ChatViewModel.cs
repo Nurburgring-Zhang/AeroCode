@@ -281,13 +281,14 @@ public partial class ChatViewModel : ObservableObject
         // MOA 选项保存 → OptionsChanged → 无选中会话时刷新"新会话将使用的策略"。
         _moaOptions.OptionsChanged += OnMoaOptionsChanged;
 
-        // UIR-5：对话指令队列 —— 执行体为本页 SendAsync；队列停止经 ct 联动 _streamCts 中断当前流。
+        // UIR-5：对话指令队列 —— 执行体为本页 SendAsync。review M3：直接把队列条目令牌传入
+        // SendAsync（其内部 _streamCts 联动该令牌，停止在前导/流式各阶段均生效）；
+        // review M1：返回 executed/refused 供引擎区分"执行"与"拒绝"。
         Queue = new CommandQueueEngine(
             async (text, ct) =>
             {
                 InputText = text;
-                using var reg = ct.Register(() => _streamCts?.Cancel());
-                await SendAsync();
+                return await SendAsync(ct);
             },
             () => !IsStreaming);
     }
@@ -1196,13 +1197,16 @@ public partial class ChatViewModel : ObservableObject
         Queue.Enqueue(text);
     }
 
+    /// <summary>"发送"按钮命令：转发到 <see cref="SendAsync"/>（默认令牌，非队列入口）。</summary>
     [RelayCommand]
-    private async Task SendAsync()
+    private Task Send() => SendAsync();
+
+    private async Task<bool> SendAsync(CancellationToken externalCt = default)
     {
         var text = InputText.Trim();
         if (text.Length == 0 || IsStreaming)
         {
-            return;
+            return false; // review M1：拒绝执行（空输入或正在流式中）。
         }
 
         // @引用先于指令前缀展开：Expand 只扫原始输入，避免把指令内容误当 @记号解析。
@@ -1211,95 +1215,108 @@ public partial class ChatViewModel : ObservableObject
         // SOUL + AGENTS.md/CLAUDE.md 已下沉到门面请求组装层，作为独立 system 消息
         // 每轮前置注入（不持久化、不占用户消息体）——长系统提示词不再前缀拼接。
 
-        // G2-3 记忆注入点：会话首轮（投影中尚无用户消息）把 MEMORY.md/USER.md
-        // + 以本轮输入为查询的 Top-K 笔记语义召回，作为 <memory-context> 块前缀注入。
-        // 召回失败降级为仅文件记忆（BuildMemoryBlockAsync 内部如实标注，不阻塞发送）。
-        if (_memory is not null && Messages.All(m => !m.IsUser))
-        {
-            try
-            {
-                var block = await _memory.BuildMemoryBlockAsync(text);
-                if (!string.IsNullOrEmpty(block.Text))
-                {
-                    text = block.Text + "\n\n" + text;
-                    if (block.DegradedNote is not null)
-                    {
-                        StatusText = $"⚠ {block.DegradedNote}";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // 记忆装配异常不阻塞发送：如实标注后按无记忆继续。
-                StatusText = $"⚠ 记忆注入失败已跳过：{ex.Message}";
-            }
-        }
-
-        // 无会话则先按当前 provider/策略建一个。
-        if (SelectedSession is null)
-        {
-            var created = await _sessions.CreateSessionAsync(
-                SelectedStrategy, SelectedProviderId, null);
-            if (!created.IsSuccess)
-            {
-                StatusText = $"新建会话失败：{created.Error}";
-                return;
-            }
-
-            await ReloadSessionsAsync();
-            SelectedSession = Sessions.FirstOrDefault(s => s.Id == created.Value!.Id);
-        }
-
-        var sessionId = SelectedSession!.Id;
-
-        // R4-γ：附件快照后清待发送列表（门面负责序列化，UI 只持快照供投影）。
-        var attachments = PendingAttachments.Count > 0
-            ? PendingAttachments.ToList()
-            : null;
-        PendingAttachments.Clear();
-
-        // 附件摘要投影（用户气泡底部显示文件名列表）。
-        string? attachmentSummary = null;
-        if (attachments is { Count: > 0 })
-        {
-            attachmentSummary = string.Join("\n",
-                attachments.Select(a => $"📎 {a.FileName} ({a.DisplaySize})"));
-        }
-
-        InputText = string.Empty;
-        IsStreaming = true;
-        StatusText = "思考中…";
-        _streamCts = new CancellationTokenSource();
-
-        // 用户消息即时投影（门面负责持久化）。
-        Messages.Add(new MessageItemViewModel
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Role = ChatRole.User,
-            Content = text,
-            AttachmentSummary = attachmentSummary,
-        });
+        // review M3：流 CTS 提前创建并联动外部（队列条目）令牌——"停止"不再只在流式阶段
+        // 生效，前导（记忆注入/建会话）阶段的 await 之间也会响应取消。
+        _streamCts = externalCt.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(externalCt)
+            : new CancellationTokenSource();
+        var streamToken = _streamCts.Token;
 
         try
         {
+            // G2-3 记忆注入点：会话首轮（投影中尚无用户消息）把 MEMORY.md/USER.md
+            // + 以本轮输入为查询的 Top-K 笔记语义召回，作为 <memory-context> 块前缀注入。
+            // 召回失败降级为仅文件记忆（BuildMemoryBlockAsync 内部如实标注，不阻塞发送）。
+            if (_memory is not null && Messages.All(m => !m.IsUser))
+            {
+                try
+                {
+                    var block = await _memory.BuildMemoryBlockAsync(text);
+                    if (!string.IsNullOrEmpty(block.Text))
+                    {
+                        text = block.Text + "\n\n" + text;
+                        if (block.DegradedNote is not null)
+                        {
+                            StatusText = $"⚠ {block.DegradedNote}";
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 记忆装配异常不阻塞发送：如实标注后按无记忆继续。
+                    StatusText = $"⚠ 记忆注入失败已跳过：{ex.Message}";
+                }
+
+                streamToken.ThrowIfCancellationRequested(); // M3：前导阶段响应停止。
+            }
+
+            // 无会话则先按当前 provider/策略建一个。
+            if (SelectedSession is null)
+            {
+                var created = await _sessions.CreateSessionAsync(
+                    SelectedStrategy, SelectedProviderId, null);
+                if (!created.IsSuccess)
+                {
+                    StatusText = $"新建会话失败：{created.Error}";
+                    return true; // 已如实上报（非拒绝），该条按已处理消费。
+                }
+
+                await ReloadSessionsAsync();
+                SelectedSession = Sessions.FirstOrDefault(s => s.Id == created.Value!.Id);
+                streamToken.ThrowIfCancellationRequested(); // M3：前导阶段响应停止。
+            }
+
+            var sessionId = SelectedSession!.Id;
+
+            // R4-γ：附件快照后清待发送列表（门面负责序列化，UI 只持快照供投影）。
+            var attachments = PendingAttachments.Count > 0
+                ? PendingAttachments.ToList()
+                : null;
+            PendingAttachments.Clear();
+
+            // 附件摘要投影（用户气泡底部显示文件名列表）。
+            string? attachmentSummary = null;
+            if (attachments is { Count: > 0 })
+            {
+                attachmentSummary = string.Join("\n",
+                    attachments.Select(a => $"📎 {a.FileName} ({a.DisplaySize})"));
+            }
+
+            InputText = string.Empty;
+            IsStreaming = true;
+            StatusText = "思考中…";
+
+            // 用户消息即时投影（门面负责持久化）。
+            Messages.Add(new MessageItemViewModel
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Role = ChatRole.User,
+                Content = text,
+                AttachmentSummary = attachmentSummary,
+            });
+
             await foreach (var ev in _facade.SendAsync(
-                sessionId, text, attachments, _streamCts.Token))
+                sessionId, text, attachments, streamToken))
             {
                 await Dispatcher.UIThread.InvokeAsync(() => HandleEvent(ev));
             }
+
+            return true;
         }
         catch (OperationCanceledException)
         {
             StatusText = "已停止";
+            return true; // 中断也算已处理。
         }
         catch (Exception ex)
         {
             StatusText = $"对话失败：{ex.Message}";
+            return true;
         }
         finally
         {
             IsStreaming = false;
-            _streamCts.Dispose();
+            _streamCts?.Dispose();
             _streamCts = null;
             await ReloadSessionsAsync(); // 标题可能因首条消息自动更新
         }

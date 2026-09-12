@@ -118,8 +118,9 @@ public partial class AIAssistantViewModel : ObservableObject
         _factory.ProvidersChanged += OnProvidersChanged;
 
         // UIR-5：指令队列引擎 —— 执行体复用本页 SendAsync，自动开始以 IsStreaming 为空闲守卫。
+        // review M1：返回 executed/refused 供引擎区分"执行"与"拒绝"。
         Queue = new CommandQueueEngine(
-            async (text, ct) => { UserInput = text; await SendAsync(ct); },
+            async (text, ct) => { UserInput = text; return await SendAsync(ct); },
             () => !IsStreaming);
     }
 
@@ -179,9 +180,9 @@ public partial class AIAssistantViewModel : ObservableObject
     // ============== Core: Send ==============
 
     [RelayCommand]
-    private async Task SendAsync(CancellationToken ct)
+    private async Task<bool> SendAsync(CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(UserInput) || IsStreaming) return;
+        if (string.IsNullOrWhiteSpace(UserInput) || IsStreaming) return false; // review M1：拒绝执行。
         var provider = _factory.Get(SelectedProviderId);
         History.Add(new ChatMessage { Role = "user", Content = UserInput });
         var inputSnapshot = UserInput;
@@ -219,6 +220,8 @@ public partial class AIAssistantViewModel : ObservableObject
         {
             IsStreaming = false;
         }
+
+        return true; // review M1：已处理（含流式完成与 catch 已收敛的错误）。
     }
 
     [RelayCommand]

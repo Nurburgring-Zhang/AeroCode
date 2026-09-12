@@ -27,7 +27,12 @@ public partial class QueuedCommandViewModel : ObservableObject
 /// </summary>
 public partial class CommandQueueEngine : ObservableObject
 {
-    private readonly Func<string, CancellationToken, Task> _executor;
+    /// <summary>
+    /// 执行体委托（review M1）：执行一条指令，返回 <c>true</c> = 已执行（含中断/失败，均算"已处理"），
+    /// <c>false</c> = 宿主拒绝执行（前置条件不满足，如无笔记/无 provider）。引擎据此区分
+    /// "执行" 与 "拒绝"，拒绝时保留该条并停止队列、诚实上报，绝不静默吞掉用户指令。
+    /// </summary>
+    private readonly Func<string, CancellationToken, Task<bool>> _executor;
     private readonly Func<bool>? _isHostIdle;
     private CancellationTokenSource? _cts;
 
@@ -50,7 +55,7 @@ public partial class CommandQueueEngine : ObservableObject
     /// <summary>队列状态文本（供宿主展示，可为空）。</summary>
     [ObservableProperty] private string _statusText = string.Empty;
 
-    public CommandQueueEngine(Func<string, CancellationToken, Task> executor, Func<bool>? isHostIdle = null)
+    public CommandQueueEngine(Func<string, CancellationToken, Task<bool>> executor, Func<bool>? isHostIdle = null)
     {
         _executor = executor ?? throw new ArgumentNullException(nameof(executor));
         _isHostIdle = isHostIdle;
@@ -96,23 +101,27 @@ public partial class CommandQueueEngine : ObservableObject
         IsRunning = true;
         IsCollapsed = false;
         _stopRequested = false;
+        var refused = false;
         try
         {
             while (!_stopRequested && Queue.Count > 0)
             {
                 var cmd = Queue[0];
                 _cts = new CancellationTokenSource();
+                bool executed;
                 try
                 {
-                    await _executor(cmd.Text, _cts.Token);
+                    executed = await _executor(cmd.Text, _cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
                     StatusText = "当前指令已中断";
+                    executed = true; // 中断也算"已处理"，移除该条
                 }
                 catch (Exception ex)
                 {
                     StatusText = $"执行失败：{ex.Message}";
+                    executed = true; // 失败也算"已处理"，移除该条并继续（不阻塞队列）
                 }
                 finally
                 {
@@ -120,9 +129,15 @@ public partial class CommandQueueEngine : ObservableObject
                     _cts = null;
                 }
 
+                if (!executed)
+                {
+                    // review M1：宿主拒绝执行（前置条件不满足）→ 保留该条、停止队列、诚实上报，
+                    // 绝不静默吞掉用户指令（宿主已在自身 StatusText 给出具体原因）。
+                    refused = true;
+                    break;
+                }
+
                 // review H2：按引用移除已执行的条——无论它是否在执行期间被插队/上移挪走。
-                // 旧实现只在 cmd 仍是 Queue[0] 时才移除，一旦用户在执行中插队，cmd 被挪到后面
-                // 就会残留并在之后被二次执行（静默重复发送）。IndexOf 命中即删；已被用户删除则 -1 跳过。
                 var doneIndex = Queue.IndexOf(cmd);
                 if (doneIndex >= 0)
                 {
@@ -130,9 +145,11 @@ public partial class CommandQueueEngine : ObservableObject
                 }
             }
 
-            StatusText = Queue.Count == 0
-                ? "✓ 队列执行完毕"
-                : $"队列已停止，剩余 {Queue.Count} 条";
+            StatusText = refused
+                ? "队列已暂停：有指令当前无法执行（宿主未就绪），已保留在队首，满足条件后重新运行"
+                : Queue.Count == 0
+                    ? "✓ 队列执行完毕"
+                    : $"队列已停止，剩余 {Queue.Count} 条";
         }
         finally
         {
