@@ -68,18 +68,50 @@
             <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}"
                     BorderThickness="1" CornerRadius="6" Padding="16">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="拉取新模型" FontSize="14" FontWeight="SemiBold"
+                    <TextBlock Text="拉取新模型（网站 / Ollama 仓库 / HuggingFace）" FontSize="14" FontWeight="SemiBold"
                                Foreground="{DynamicResource Accent}" />
                     <Grid ColumnDefinitions="*,Auto">
-                        <TextBox Grid.Column="0" Watermark="模型名，如 qwen2.5:1.5b" FontSize="12"
+                        <TextBox Grid.Column="0" Watermark="模型名，如 qwen2.5:1.5b 或 hf.co/user/repo:Q4_K_M" FontSize="12"
                                  Text="{Binding PullModelName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                         <Button Grid.Column="1" Content="拉取" Margin="8,0,0,0"
                                 Command="{Binding PullModelCommand}"
-                                ToolTip.Tip="从 Ollama 仓库下载该模型（GGUF），进度见下" />
+                                ToolTip.Tip="从 Ollama 仓库下载该模型（GGUF），进度见下；支持 hf.co/ HuggingFace 前缀（Ollama 0.34+）" />
                     </Grid>
+                    <TextBlock Text="模型目录（选中后一键拉取）" FontSize="12" Foreground="{DynamicResource FgMuted}" />
+                    <ListBox ItemsSource="{Binding Catalog}" SelectedItem="{Binding SelectedCatalogModel, Mode=TwoWay}"
+                             MinHeight="60" MaxHeight="160">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="vm:CatalogModelItem">
+                                <TextBlock Text="{Binding Summary}" FontSize="12"
+                                           Foreground="{DynamicResource FgPrimary}" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <Button Content="拉取选中模型" Command="{Binding PullCatalogModelCommand}"
+                            ToolTip.Tip="一键拉取上方目录选中的模型" />
                     <TextBlock Text="{Binding PullProgress}" TextWrapping="Wrap" FontSize="12"
                                Foreground="{DynamicResource FgPrimary}" />
                     <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="4" />
+                </StackPanel>
+            </Border>
+
+            <!-- 导入本地 GGUF（从网站如 HuggingFace 下载后载入） -->
+            <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}"
+                    BorderThickness="1" CornerRadius="6" Padding="16">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="导入本地 GGUF 文件" FontSize="14" FontWeight="SemiBold"
+                               Foreground="{DynamicResource Accent}" />
+                    <TextBox Watermark="本地 .gguf 文件绝对路径，如 D:\models\qwen.gguf" FontSize="12"
+                             Text="{Binding ImportGgufPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBox Grid.Column="0" Watermark="导入后的模型名，如 my-model:latest" FontSize="12"
+                                 Text="{Binding ImportGgufName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="导入" Margin="8,0,0,0"
+                                Command="{Binding ImportGgufCommand}"
+                                ToolTip.Tip="把本地 .gguf 文件导入 Ollama（ollama create），导入后即可在聊天中使用" />
+                    </Grid>
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource FgMuted}"
+                               Text="从 HuggingFace 等网站下载 .gguf 文件后，填入绝对路径并命名导入；导入成功后出现在已安装模型列表，可设为聊天默认。" />
                 </StackPanel>
             </Border>
 

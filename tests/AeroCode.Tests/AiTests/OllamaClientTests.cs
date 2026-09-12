@@ -149,6 +149,48 @@ public sealed class OllamaClientTests
         });
     }
 
+    [Fact]
+    public async Task CreateModel_StreamsProgress_AndSendsModelAndFrom()
+    {
+        var ndjson = string.Join("\n",
+            """{"status":"reading model metadata"}""",
+            """{"status":"success"}""");
+        using var handler = new FakeHandler(_ => Json(ndjson));
+        using var client = new OllamaClient(handler: handler);
+
+        var progress = new List<OllamaPullProgress>();
+        await foreach (var p in client.CreateModelAsync("my-model", @"D:\models\m.gguf"))
+        {
+            progress.Add(p);
+        }
+
+        Assert.Equal(2, progress.Count);
+        Assert.True(progress[1].IsDone);
+
+        // 请求体如实携带 model + from（导入本地 GGUF 的关键字段）。
+        var (method, uri, body) = handler.Requests[0];
+        Assert.Equal(HttpMethod.Post, method);
+        Assert.EndsWith("/api/create", uri.AbsolutePath);
+        Assert.Contains("my-model", body);
+        Assert.Contains("m.gguf", body);
+    }
+
+    [Fact]
+    public async Task CreateModel_EmptyNameOrFrom_Throws()
+    {
+        using var handler = new FakeHandler(_ => Json("{}"));
+        using var client = new OllamaClient(handler: handler);
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        {
+            await foreach (var _ in client.CreateModelAsync(" ", "x.gguf")) { }
+        });
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        {
+            await foreach (var _ in client.CreateModelAsync("m", " ")) { }
+        });
+    }
+
     // ---------------- 真实 Ollama E2E（本机服务可达才跑，否则诚实跳过） ----------------
 
     private static async Task<bool> OllamaReachableAsync()

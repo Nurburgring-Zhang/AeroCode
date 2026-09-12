@@ -133,4 +133,21 @@ public sealed class LocalModelsTuningTests : IDisposable
         var reader = new LocalModelsViewModel(FakeClient(), settings, providerFactory: null);
         Assert.Equal("qwen2.5:1.5b", reader.CurrentDefaultModel);
     }
+
+    [Fact]
+    public void Catalog_IsNonEmpty_AndContainsExpectedFamilies()
+    {
+        var vm = new LocalModelsViewModel(FakeClient());
+
+        Assert.NotEmpty(vm.Catalog);
+        Assert.Contains(vm.Catalog, c => c.Name.StartsWith("qwen2.5"));
+        Assert.Contains(vm.Catalog, c => c.Name.StartsWith("llama3.2"));
+        // 每个条目都有名称/大小/描述（供目录展示）。
+        Assert.All(vm.Catalog, c =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(c.Name));
+            Assert.False(string.IsNullOrWhiteSpace(c.Size));
+            Assert.False(string.IsNullOrWhiteSpace(c.Summary));
+        });
+    }
 }

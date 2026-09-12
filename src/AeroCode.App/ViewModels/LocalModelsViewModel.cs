@@ -42,6 +42,13 @@ public sealed class LocalModelItemViewModel
     };
 }
 
+/// <summary>模型目录条目（精选常用模型，供一键拉取；名称为 Ollama 注册表名）。</summary>
+public sealed record CatalogModelItem(string Name, string Size, string Description)
+{
+    /// <summary>单行摘要（目录列表展示）。</summary>
+    public string Summary => $"{Name} · {Size} · {Description}";
+}
+
 /// <summary>
 /// 本地模型管理 VM。构造注入 <see cref="OllamaClient"/>（DI 单例）；
 /// 参数调节另注入 <see cref="SettingsService"/>/<see cref="ProviderFactory"/>（可空，便于单测仅传 client）。
@@ -100,6 +107,33 @@ public sealed partial class LocalModelsViewModel : ObservableObject
     /// <summary>ollama provider 当前默认模型（聊天实际使用的模型；水合自 provider 配置）。</summary>
     [ObservableProperty]
     private string _currentDefaultModel = string.Empty;
+
+    /// <summary>精选模型目录（Ollama 注册表常用模型，供一键拉取）。</summary>
+    public IReadOnlyList<CatalogModelItem> Catalog { get; } = new[]
+    {
+        new CatalogModelItem("qwen2.5:0.5b", "~0.4GB", "Qwen2.5 0.5B，极轻量，CPU 快速"),
+        new CatalogModelItem("qwen2.5:1.5b", "~0.9GB", "Qwen2.5 1.5B，轻量均衡"),
+        new CatalogModelItem("qwen2.5:3b", "~1.8GB", "Qwen2.5 3B，更强"),
+        new CatalogModelItem("qwen2.5:7b", "~4.4GB", "Qwen2.5 7B，强（需较大内存）"),
+        new CatalogModelItem("llama3.2:1b", "~0.7GB", "Llama3.2 1B，轻量"),
+        new CatalogModelItem("llama3.2:3b", "~1.9GB", "Llama3.2 3B"),
+        new CatalogModelItem("gemma2:2b", "~1.5GB", "Gemma2 2B"),
+        new CatalogModelItem("phi3:mini", "~2.2GB", "Phi-3 Mini 3.8B"),
+        new CatalogModelItem("deepseek-r1:1.5b", "~0.9GB", "DeepSeek-R1-Distill 1.5B，推理型"),
+        new CatalogModelItem("deepseek-r1:7b", "~4.3GB", "DeepSeek-R1-Distill 7B，推理型"),
+    };
+
+    /// <summary>目录中选中的模型（供一键拉取）。</summary>
+    [ObservableProperty]
+    private CatalogModelItem? _selectedCatalogModel;
+
+    /// <summary>要导入的本地 .gguf 文件绝对路径。</summary>
+    [ObservableProperty]
+    private string _importGgufPath = string.Empty;
+
+    /// <summary>导入模型的名称（如 my-model:latest）。</summary>
+    [ObservableProperty]
+    private string _importGgufName = string.Empty;
 
     // ---------------- Ollama 调参（LOCAL_LLM_SPEC §4，持久化到 ollama provider 的 ExtraBody） ----------------
 
@@ -191,14 +225,49 @@ public sealed partial class LocalModelsViewModel : ObservableObject
         }
     }
 
-    /// <summary>拉取模型（流式进度）。</summary>
+    /// <summary>拉取模型（流式进度）。支持 Ollama 注册表名与 hf.co/ HuggingFace 前缀。</summary>
     [RelayCommand]
     public async Task PullModelAsync()
     {
         var name = PullModelName?.Trim() ?? string.Empty;
         if (string.IsNullOrEmpty(name))
         {
-            await OnUiAsync(() => StatusText = "请输入要拉取的模型名（如 qwen2.5:1.5b）");
+            await OnUiAsync(() => StatusText = "请输入要拉取的模型名（如 qwen2.5:1.5b，或 hf.co/user/repo:Q4_K_M）");
+            return;
+        }
+
+        await PullByNameAsync(name);
+    }
+
+    /// <summary>拉取目录中选中的模型（一键）。</summary>
+    [RelayCommand]
+    public async Task PullCatalogModelAsync()
+    {
+        var sel = SelectedCatalogModel;
+        if (sel is null || string.IsNullOrWhiteSpace(sel.Name))
+        {
+            await OnUiAsync(() => StatusText = "请先在模型目录中选择一个模型");
+            return;
+        }
+
+        await PullByNameAsync(sel.Name);
+    }
+
+    /// <summary>导入本地 .gguf 文件（从网站如 HuggingFace 下载后载入），经 /api/create。</summary>
+    [RelayCommand]
+    public async Task ImportGgufAsync()
+    {
+        var path = ImportGgufPath?.Trim() ?? string.Empty;
+        var name = ImportGgufName?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(path))
+        {
+            await OnUiAsync(() => StatusText = "请输入本地 .gguf 文件的绝对路径");
+            return;
+        }
+
+        if (string.IsNullOrEmpty(name))
+        {
+            await OnUiAsync(() => StatusText = "请为导入的模型命名（如 my-model:latest）");
             return;
         }
 
@@ -206,29 +275,41 @@ public sealed partial class LocalModelsViewModel : ObservableObject
         await SetBusyAsync(true);
         try
         {
-            await OnUiAsync(() => PullProgress = "开始拉取…");
-            var lastError = string.Empty;
-            var succeeded = false;
+            var (succeeded, lastError) = await RunProgressLoopAsync(
+                _client.CreateModelAsync(name, path), "开始导入…");
 
-            await foreach (var progress in _client.PullModelAsync(name))
+            await OnUiAsync(() =>
             {
-                if (progress.IsDone)
-                {
-                    succeeded = true;
-                }
+                PullProgress = succeeded ? "导入完成" : string.Empty;
+                StatusText = succeeded
+                    ? $"已导入本地模型 {name}。"
+                    : $"导入 {name} 失败：{(string.IsNullOrEmpty(lastError) ? "未知原因" : lastError)}";
+            });
 
-                var text = progress.Fraction is { } f
-                    ? $"{progress.Status} {f:P0}"
-                    : progress.Status;
-                if (progress.Status.StartsWith("pull failed", StringComparison.OrdinalIgnoreCase) ||
-                    progress.Status.StartsWith("pull unreachable", StringComparison.OrdinalIgnoreCase) ||
-                    progress.Status.StartsWith("pull timed out", StringComparison.OrdinalIgnoreCase))
-                {
-                    lastError = progress.Status;
-                }
-
-                await OnUiAsync(() => PullProgress = text);
+            if (succeeded)
+            {
+                await RefreshCoreAsync();
             }
+        }
+        catch (Exception ex)
+        {
+            await OnUiAsync(() => StatusText = $"导入失败：{ex.Message}");
+        }
+        finally
+        {
+            await SetBusyAsync(false);
+        }
+    }
+
+    /// <summary>按名称拉取（注册表名或 hf.co/ 前缀），复用进度循环。</summary>
+    private async Task PullByNameAsync(string name)
+    {
+        if (IsBusy) return;
+        await SetBusyAsync(true);
+        try
+        {
+            var (succeeded, lastError) = await RunProgressLoopAsync(
+                _client.PullModelAsync(name), "开始拉取…");
 
             await OnUiAsync(() =>
             {
@@ -251,6 +332,37 @@ public sealed partial class LocalModelsViewModel : ObservableObject
         {
             await SetBusyAsync(false);
         }
+    }
+
+    /// <summary>共享进度循环：逐条消费进度并更新 PullProgress，返回（是否成功，最后错误）。</summary>
+    private async Task<(bool Succeeded, string LastError)> RunProgressLoopAsync(
+        IAsyncEnumerable<OllamaPullProgress> source, string startMsg)
+    {
+        await OnUiAsync(() => PullProgress = startMsg);
+        var lastError = string.Empty;
+        var succeeded = false;
+
+        await foreach (var progress in source)
+        {
+            if (progress.IsDone)
+            {
+                succeeded = true;
+            }
+
+            var text = progress.Fraction is { } f
+                ? $"{progress.Status} {f:P0}"
+                : progress.Status;
+            if (progress.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+                progress.Status.Contains("unreachable", StringComparison.OrdinalIgnoreCase) ||
+                progress.Status.Contains("timed out", StringComparison.OrdinalIgnoreCase))
+            {
+                lastError = progress.Status;
+            }
+
+            await OnUiAsync(() => PullProgress = text);
+        }
+
+        return (succeeded, lastError);
     }
 
     /// <summary>删除选中的模型。</summary>

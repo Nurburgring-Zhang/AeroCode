@@ -120,16 +120,54 @@ public sealed class OllamaClient : IDisposable
     /// <summary>
     /// POST /api/pull（stream=true）：拉取模型，逐条产出 <see cref="OllamaPullProgress"/>。
     /// 网络中断/服务端错误如实以失败项或异常向上暴露，绝不伪造 success。
+    /// <paramref name="name"/> 支持 Ollama 注册表模型名（如 qwen2.5:1.5b）及
+    /// hf.co/ 前缀的 HuggingFace 模型（Ollama 0.34+，如 hf.co/user/repo:Q4_K_M）。
     /// </summary>
-    public async IAsyncEnumerable<OllamaPullProgress> PullModelAsync(
+    public IAsyncEnumerable<OllamaPullProgress> PullModelAsync(
         string name,
-        [EnumeratorCancellation] CancellationToken ct = default)
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
             throw new ArgumentException("model name must not be empty", nameof(name));
         }
 
+        return StreamProgressAsync("/api/pull", new { name, stream = true }, "pull", ct);
+    }
+
+    /// <summary>
+    /// POST /api/create（stream=true）：创建/导入模型，逐条产出 <see cref="OllamaPullProgress"/>。
+    /// <paramref name="from"/> 可为已有模型名（派生）或本地 .gguf 文件绝对路径
+    /// （导入从网站如 HuggingFace 下载的 GGUF 文件）。失败如实上报，绝不伪造 success。
+    /// </summary>
+    public IAsyncEnumerable<OllamaPullProgress> CreateModelAsync(
+        string name,
+        string from,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("model name must not be empty", nameof(name));
+        }
+
+        if (string.IsNullOrWhiteSpace(from))
+        {
+            throw new ArgumentException("from (source model or .gguf path) must not be empty", nameof(from));
+        }
+
+        return StreamProgressAsync("/api/create", new { model = name, from, stream = true }, "create", ct);
+    }
+
+    /// <summary>
+    /// 共享：POST <paramref name="payload"/> 到 <paramref name="path"/> 并流式读取 NDJSON 进度。
+    /// 失败如实产出失败项，绝不伪造 success。
+    /// </summary>
+    private async IAsyncEnumerable<OllamaPullProgress> StreamProgressAsync(
+        string path,
+        object payload,
+        string op,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(LongTimeout);
 
@@ -137,10 +175,10 @@ public sealed class OllamaClient : IDisposable
         string? sendFailure = null;
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/pull")
+            using var request = new HttpRequestMessage(HttpMethod.Post, path)
             {
                 Content = new StringContent(
-                    JsonSerializer.Serialize(new { name, stream = true }, JsonOpts),
+                    JsonSerializer.Serialize(payload, JsonOpts),
                     Encoding.UTF8,
                     "application/json"),
             };
@@ -155,17 +193,17 @@ public sealed class OllamaClient : IDisposable
         }
         catch (OperationCanceledException)
         {
-            sendFailure = $"pull timed out after {LongTimeout.TotalMinutes:0} min";
+            sendFailure = $"{op} timed out after {LongTimeout.TotalMinutes:0} min";
         }
         catch (HttpRequestException ex)
         {
-            sendFailure = $"pull unreachable: {ex.Message}";
+            sendFailure = $"{op} unreachable: {ex.Message}";
         }
 
         if (response is null)
         {
             // catch 体内不能 yield（CS1631），改在 catch 外如实产出失败项。
-            yield return new OllamaPullProgress { Status = sendFailure ?? "pull failed" };
+            yield return new OllamaPullProgress { Status = sendFailure ?? $"{op} failed" };
             yield break;
         }
 
@@ -176,7 +214,7 @@ public sealed class OllamaClient : IDisposable
                 var body = await ReadBodyAsync(response, timeoutCts.Token).ConfigureAwait(false);
                 yield return new OllamaPullProgress
                 {
-                    Status = $"pull failed HTTP {(int)response.StatusCode}: {ExtractError(body)}",
+                    Status = $"{op} failed HTTP {(int)response.StatusCode}: {ExtractError(body)}",
                 };
                 yield break;
             }
