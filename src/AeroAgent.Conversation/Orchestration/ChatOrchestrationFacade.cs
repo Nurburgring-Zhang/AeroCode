@@ -59,6 +59,9 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
     /// </summary>
     private const int AttachmentInjectionBudgetChars = 120_000;
 
+    /// <summary>附件注入正文与用户文本之间的分隔符（review L4：其长度计入注入预算）。</summary>
+    private const string AttachmentSeparator = "\n\n";
+
     public ChatOrchestrationFacade(
         ISessionService sessions,
         IProviderRegistry providers,
@@ -120,8 +123,10 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
         string? attachmentsJson = null;
         if (attachments is { Count: > 0 })
         {
-            var descriptions = MessageAttachment.BuildInjection(attachments, AttachmentInjectionBudgetChars);
-            effectiveText = descriptions + "\n\n" + userText;
+            // review L4：分隔符也计入注入预算——持久化后的附件部分总量严格不超预算。
+            var descriptions = MessageAttachment.BuildInjection(
+                attachments, AttachmentInjectionBudgetChars - AttachmentSeparator.Length);
+            effectiveText = descriptions + AttachmentSeparator + userText;
             attachmentsJson = JsonSerializer.Serialize(
                 attachments.Select(a => new { a.FileName, a.MimeType, a.SizeBytes }).ToArray());
         }
@@ -133,6 +138,8 @@ public sealed class ChatOrchestrationFacade : IChatOrchestrationFacade
             Content = effectiveText,
             Status = MessageStatus.Completed,
             AttachmentsJson = attachmentsJson,
+            // review L1：保留原始文本作为驱逐锚点（无附件时 Content 即原文，无需重复）。
+            UserText = attachments is { Count: > 0 } ? userText : null,
         };
         var appended = await _sessions.AppendMessageAsync(userMessage);
         if (!appended.IsSuccess)

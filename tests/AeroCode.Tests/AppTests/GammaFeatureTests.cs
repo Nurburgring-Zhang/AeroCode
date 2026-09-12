@@ -533,6 +533,94 @@ public sealed class FacadeAttachmentTests : IDisposable
         Assert.Equal("你好", userMsg.Content);
         Assert.Null(userMsg.AttachmentsJson);
     }
+
+    [Fact]
+    public async Task SendWithAttachments_PersistsUserTextAnchor_NullWithoutAttachments()
+    {
+        // review L1：带附件消息持久化原始文本作为驱逐锚点；无附件消息不冗余存储。
+        var provider = new ScriptedProvider { Deltas = new[] { "收到" } };
+        var registry = new TestProviderRegistry();
+        registry.Add(provider);
+        var facade = new ChatOrchestrationFacade(_sessions, registry,
+            new IOrchestrationStrategy[] { new SingleStrategy(_sessions) });
+
+        var session = (await _sessions.CreateSessionAsync()).Value!;
+
+        var attachments = new List<MessageAttachment>
+        {
+            new("note.md", "text/markdown", 10, textContent: "正文"),
+        };
+        await CollectAsync(facade.SendAsync(session.Id, "请分析", attachments));
+        await CollectAsync(facade.SendAsync(session.Id, "纯文本跟进"));
+
+        var messages = (await _sessions.GetMessagesAsync(session.Id)).Value!;
+        var users = messages.Where(m => m.Role == ChatRole.User).ToList();
+        Assert.Equal(2, users.Count);
+
+        Assert.Equal("请分析", users[0].UserText);
+        Assert.Null(users[1].UserText);
+    }
+
+    [Fact]
+    public async Task MultiTurnAttachments_OldInjectionEvicted_FromModelContext_DbKeptIntact()
+    {
+        // review L1 端到端：三轮附件对话，第三轮模型收到的上下文里
+        // 第一轮注入正文被驱逐为元信息存根（原文保留），第二/三轮完整；
+        // DB 中第一轮 Content 仍含完整注入（UI 展示/fork/重跑不受影响）。
+        var provider = new ScriptedProvider { Deltas = new[] { "ok" } };
+        var registry = new TestProviderRegistry();
+        registry.Add(provider);
+        var facade = new ChatOrchestrationFacade(_sessions, registry,
+            new IOrchestrationStrategy[] { new SingleStrategy(_sessions) });
+        var session = (await _sessions.CreateSessionAsync()).Value!;
+
+        await CollectAsync(facade.SendAsync(session.Id, "第一问",
+            new List<MessageAttachment> { new("r1.md", "text/markdown", 100, textContent: "INJECT-A") }));
+        await CollectAsync(facade.SendAsync(session.Id, "第二问",
+            new List<MessageAttachment> { new("r2.md", "text/markdown", 100, textContent: "INJECT-B") }));
+        await CollectAsync(facade.SendAsync(session.Id, "第三问",
+            new List<MessageAttachment> { new("r3.md", "text/markdown", 100, textContent: "INJECT-C") }));
+
+        var users = provider.LastRequestMessages!.Where(m => m.Role == "user").ToList();
+        Assert.Equal(3, users.Count);
+        Assert.DoesNotContain("INJECT-A", users[0].Content);
+        Assert.Contains("第一问", users[0].Content);
+        Assert.Contains("r1.md", users[0].Content); // 元信息存根含文件名
+        Assert.Contains("INJECT-B", users[1].Content);
+        Assert.Contains("INJECT-C", users[2].Content);
+
+        var stored = (await _sessions.GetMessagesAsync(session.Id)).Value!;
+        var firstUser = stored.First(m => m.Role == ChatRole.User);
+        Assert.Contains("INJECT-A", firstUser.Content); // DB 保真
+        Assert.Equal("第一问", firstUser.UserText);
+    }
+
+    [Fact]
+    public async Task SendWithHugeTextAttachment_AttachmentPortionStrictlyWithinBudget()
+    {
+        // review L4：分隔符计入预算——持久化后「注入正文 + 分隔符」严格 ≤ 120K 字符。
+        var provider = new ScriptedProvider { Deltas = new[] { "收到" } };
+        var registry = new TestProviderRegistry();
+        registry.Add(provider);
+        var facade = new ChatOrchestrationFacade(_sessions, registry,
+            new IOrchestrationStrategy[] { new SingleStrategy(_sessions) });
+        var session = (await _sessions.CreateSessionAsync()).Value!;
+
+        var bigText = new string('A', 200_000);
+        var attachments = new List<MessageAttachment>
+        {
+            new("big.txt", "text/plain", 200_000, textContent: bigText),
+        };
+        await CollectAsync(facade.SendAsync(session.Id, "你好", attachments));
+
+        var messages = (await _sessions.GetMessagesAsync(session.Id)).Value!;
+        var userMsg = messages.First(m => m.Role == ChatRole.User);
+
+        Assert.EndsWith("\n\n你好", userMsg.Content);
+        var attachmentPortion = userMsg.Content.Length - "你好".Length;
+        Assert.True(attachmentPortion <= 120_000,
+            $"附件部分（注入+分隔符）{attachmentPortion} 字符超出 120K 预算");
+    }
 }
 
 #endregion

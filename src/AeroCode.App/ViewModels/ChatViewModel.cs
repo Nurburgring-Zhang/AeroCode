@@ -88,6 +88,13 @@ public partial class MessageItemViewModel : ObservableObject
     [ObservableProperty]
     private string? _attachmentSummary;
 
+    /// <summary>
+    /// 带附件用户消息的原文锚点（review L1/MED-3）。历史里附件消息的 Content =
+    /// 注入正文 + 原文；编辑/重跑/分叉运行取 UserText 而非 Content，
+    /// 避免把陈旧注入正文当作新输入重发（重发后将不可驱逐，撑大上下文）。
+    /// </summary>
+    public string? UserText { get; init; }
+
     /// <summary>附件缩略图字节（PNG/JPEG 前 4KB 预览，R4-γ 最小实现暂不渲染）。</summary>
     [ObservableProperty]
     private byte[]? _attachmentPreview;
@@ -828,6 +835,8 @@ public partial class ChatViewModel : ObservableObject
                 HasToolCalls = !string.IsNullOrEmpty(m.ToolCallsJson),
                 // R4-γ：从 AttachmentsJson 恢复附件摘要投影。
                 AttachmentSummary = BuildAttachmentSummary(m.AttachmentsJson),
+                // review MED-3：原文锚点供编辑/重跑/分叉运行优先取用。
+                UserText = m.UserText,
                 // 落库时拒绝与失败同为 Degraded；UI 依错误文本恢复"已拒绝"标识。
                 ToolDenied = m.Role == ChatRole.Tool
                     && m.Status == MessageStatus.Degraded
@@ -1026,7 +1035,8 @@ public partial class ChatViewModel : ObservableObject
     private void EditMessage(MessageItemViewModel? msg)
     {
         if (msg is null || !msg.IsUser) { StatusText = "仅支持编辑用户消息"; return; }
-        InputText = msg.Content ?? string.Empty;
+        // review MED-3：附件消息优先取原文锚点，不把注入正文载入输入框。
+        InputText = msg.UserText ?? msg.Content ?? string.Empty;
         StatusText = "已载入输入框，可修改后发送（重跑）或分叉运行";
     }
 
@@ -1036,7 +1046,9 @@ public partial class ChatViewModel : ObservableObject
     {
         if (msg is null || !msg.IsUser) { StatusText = "仅支持重跑用户消息"; return; }
         if (IsStreaming) { StatusText = "正在流式中，请先停止"; return; }
-        InputText = msg.Content ?? string.Empty;
+        // review MED-3：附件消息重跑只重发原文——注入正文已在原轮消费，
+        // 重发会落库为不可驱逐的巨型用户消息，撑大后续每轮上下文。
+        InputText = msg.UserText ?? msg.Content ?? string.Empty;
         await SendAsync();
     }
 
@@ -1058,7 +1070,8 @@ public partial class ChatViewModel : ObservableObject
 
         await ReloadSessionsAsync();
         SelectedSession = Sessions.FirstOrDefault(s => s.Id == result.Value!.Id);
-        InputText = msg.Content ?? string.Empty;
+        // review MED-3：附件消息分叉运行同样只重发原文。
+        InputText = msg.UserText ?? msg.Content ?? string.Empty;
         StatusText = $"已分叉为「{result.Value.Title}」，正在新分支重新运行…";
         await SendAsync();
     }

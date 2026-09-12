@@ -92,5 +92,14 @@ public class ChatMessage
     /// </summary>
     public string? AttachmentsJson { get; set; }
 
+    /// <summary>
+    /// 带附件用户消息的原始用户文本（review L1 附件驱逐用）。
+    /// 带附件时 <see cref="Content"/> = 附件注入正文 + 分隔符 + 用户文本，
+    /// 持久化后无法无损拆回；本列保留拆分锚点，HistoryMapper 对超出保留窗口的
+    /// 旧附件轮次降级为「元信息存根 + 原文」时有据可依。
+    /// null = 无附件消息或早期版本数据（驱逐对此类行保持原样，不做破坏性猜测）。
+    /// </summary>
+    public string? UserText { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

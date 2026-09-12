@@ -699,3 +699,53 @@ public sealed class ChatViewModelAttachmentCapTests
         Assert.Contains("10GB", vm.StatusText);
     }
 }
+
+/// <summary>
+/// review MED-3：编辑/重跑/分叉运行对附件消息必须优先取原文锚点（UserText），
+/// 不得把历史里「注入正文 + 原文」的 Content 当作新输入重发
+/// （重发后落库为不可驱逐的巨型用户消息，重新撑大上下文）。
+/// </summary>
+public sealed class ChatViewModelMessageActionsEvictionTests
+{
+    private static ChatViewModel MakeViewModel() =>
+        new(
+            new NullSessionService(), new UnusedFacade(), new TestProviderRegistry(), new MoaOptions(),
+            ChatViewModelWiring.NewPermission(), null, null);
+
+    [Fact]
+    public void EditMessage_PrefersUserTextAnchor_OverInjectionContent()
+    {
+        var vm = MakeViewModel();
+        var msg = new MessageItemViewModel
+        {
+            Id = "m1",
+            Role = ChatRole.User,
+            Content = "[Attached file: a.md (1.0KB), text/markdown]\n```\n大段注入正文\n```\n\n请分析",
+            UserText = "请分析",
+        };
+        vm.Messages.Add(msg);
+
+        vm.EditMessageCommand.Execute(msg);
+
+        Assert.Equal("请分析", vm.InputText);
+        Assert.DoesNotContain("注入正文", vm.InputText);
+    }
+
+    [Fact]
+    public void EditMessage_WithoutAnchor_FallsBackToContent()
+    {
+        var vm = MakeViewModel();
+        var msg = new MessageItemViewModel
+        {
+            Id = "m2",
+            Role = ChatRole.User,
+            Content = "普通用户消息",
+            UserText = null,
+        };
+        vm.Messages.Add(msg);
+
+        vm.EditMessageCommand.Execute(msg);
+
+        Assert.Equal("普通用户消息", vm.InputText);
+    }
+}

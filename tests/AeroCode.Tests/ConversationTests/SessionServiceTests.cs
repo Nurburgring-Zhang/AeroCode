@@ -164,6 +164,26 @@ public sealed class SessionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AppendMessage_FirstAttachmentMessage_TitleFromUserText()
+    {
+        // review LOW-3：附件消息 Content 以注入正文开头，标题必须取原文锚点。
+        var s = (await _svc.CreateSessionAsync()).Value!;
+        var msg = new ChatMessage
+        {
+            SessionId = s.Id,
+            Role = ChatRole.User,
+            Content = "[Attached file: report.md (10.0KB), text/markdown]\n```\n正文…\n```\n\n请分析这份报告",
+            UserText = "请分析这份报告",
+            AttachmentsJson = "[{\"FileName\":\"report.md\",\"MimeType\":\"text/markdown\",\"SizeBytes\":10240}]",
+            Status = MessageStatus.Completed,
+        };
+        Assert.True((await _svc.AppendMessageAsync(msg)).IsSuccess);
+
+        var session = (await _svc.GetSessionAsync(s.Id)).Value!;
+        Assert.Equal("请分析这份报告", session.Title);
+    }
+
+    [Fact]
     public async Task GetMessages_ReturnsChronological()
     {
         var s = (await _svc.CreateSessionAsync()).Value!;

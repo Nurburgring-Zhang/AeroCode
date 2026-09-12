@@ -74,6 +74,7 @@ public sealed class SessionService : ISessionService, ISessionFork, IDisposable
         ToolCallId = m.ToolCallId,
         Name = m.Name,
         AttachmentsJson = m.AttachmentsJson,
+        UserText = m.UserText,
         Status = m.Status,
         Error = m.Error,
         TokensIn = m.TokensIn,
@@ -286,9 +287,13 @@ public sealed class SessionService : ISessionService, ISessionFork, IDisposable
                 && session.Title.StartsWith("新会话 ", StringComparison.Ordinal)
                 && !string.IsNullOrWhiteSpace(message.Content))
             {
-                session.Title = message.Content.Length <= 40
+                // review LOW-3：附件消息 Content 以注入正文开头，标题取原文锚点。
+                var titleSource = string.IsNullOrWhiteSpace(message.UserText)
                     ? message.Content
-                    : message.Content[..40] + "…";
+                    : message.UserText!;
+                session.Title = titleSource.Length <= 40
+                    ? titleSource
+                    : titleSource[..40] + "…";
             }
 
             session.UpdatedAtUtc = DateTime.UtcNow;
@@ -406,6 +411,7 @@ public sealed class SessionService : ISessionService, ISessionFork, IDisposable
                     ToolCallId = m.ToolCallId,
                     Name = m.Name,
                     AttachmentsJson = m.AttachmentsJson,
+                    UserText = m.UserText,
                     Status = m.Status,
                     Error = m.Error,
                     TokensIn = m.TokensIn,

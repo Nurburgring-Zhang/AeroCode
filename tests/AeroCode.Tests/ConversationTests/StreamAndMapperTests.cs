@@ -284,4 +284,210 @@ public class HistoryMapperTests
         Assert.Equal("assistant", only.Role);
         Assert.NotNull(only.ToolCalls);
     }
+
+    // ---------- 附件历史驱逐（review L1） ----------
+
+    private static string AttachmentsJsonOf(params (string Name, long Size)[] files)
+        => JsonSerializer.Serialize(
+            files.Select(f => new { FileName = f.Name, MimeType = "application/octet-stream", SizeBytes = f.Size }));
+
+    private static ChatMessage AttachmentUserTurn(string injection, string userText, string attachmentsJson)
+        => new()
+        {
+            Role = ChatRole.User,
+            Content = injection + "\n\n" + userText,
+            AttachmentsJson = attachmentsJson,
+            UserText = userText,
+            Status = MessageStatus.Completed,
+        };
+
+    [Fact]
+    public void OldAttachmentTurns_Evicted_RecentTwoUserTurnsKept()
+    {
+        var history = new List<ChatMessage>
+        {
+            AttachmentUserTurn("[Attached file: a.txt] 注入正文A", "第一问", AttachmentsJsonOf(("a.txt", 10240))),
+            new() { Role = ChatRole.Assistant, Content = "回答A", Status = MessageStatus.Completed },
+            AttachmentUserTurn("[Attached file: b.txt] 注入正文B", "第二问", AttachmentsJsonOf(("b.txt", 10240))),
+            new() { Role = ChatRole.Assistant, Content = "回答B", Status = MessageStatus.Completed },
+            AttachmentUserTurn("[Attached file: c.txt] 注入正文C", "第三问", AttachmentsJsonOf(("c.txt", 10240))),
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        var users = mapped.Where(m => m.Role == "user").ToList();
+        Assert.Equal(3, users.Count);
+
+        // 第一轮被驱逐：注入正文消失，元信息存根（文件名/大小）+ 原文保留。
+        Assert.DoesNotContain("注入正文A", users[0].Content);
+        Assert.Contains("第一问", users[0].Content);
+        Assert.Contains("a.txt", users[0].Content);
+        Assert.Contains("驱逐", users[0].Content);
+
+        // 最近两个用户轮（含当前轮）完整保留注入正文。
+        Assert.Contains("注入正文B", users[1].Content);
+        Assert.Contains("注入正文C", users[2].Content);
+    }
+
+    [Fact]
+    public void OldAttachmentTurn_WithoutUserText_KeptAsIs()
+    {
+        // 早期数据（无 UserText 锚点）：不做破坏性猜测，保持原样。
+        var legacy = new ChatMessage
+        {
+            Role = ChatRole.User,
+            Content = "[Attached file: old.txt] 旧注入\n\n旧问题",
+            AttachmentsJson = AttachmentsJsonOf(("old.txt", 100)),
+            UserText = null,
+            Status = MessageStatus.Completed,
+        };
+        var history = new List<ChatMessage>
+        {
+            legacy,
+            new() { Role = ChatRole.User, Content = "第二问", Status = MessageStatus.Completed },
+            new() { Role = ChatRole.User, Content = "第三问", Status = MessageStatus.Completed },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        Assert.Contains("旧注入", mapped[0].Content);
+        Assert.DoesNotContain("驱逐", mapped[0].Content);
+    }
+
+    [Fact]
+    public void OldNonAttachmentTurns_Untouched_ByEviction()
+    {
+        var history = new List<ChatMessage>
+        {
+            new() { Role = ChatRole.User, Content = "第一问", Status = MessageStatus.Completed },
+            new() { Role = ChatRole.User, Content = "第二问", Status = MessageStatus.Completed },
+            new() { Role = ChatRole.User, Content = "第三问", Status = MessageStatus.Completed },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        Assert.Equal(
+            new[] { "第一问", "第二问", "第三问" },
+            mapped.Select(m => m.Content).ToArray());
+    }
+
+    [Fact]
+    public void RetentionWindow_CountsOnlyEmittedUserTurns()
+    {
+        // 失败的用户轮不进上下文，也不应顶掉保留窗口（不庇护更早的附件轮）。
+        var history = new List<ChatMessage>
+        {
+            AttachmentUserTurn("注入正文X", "第一问", AttachmentsJsonOf(("x.txt", 1))),
+            new() { Role = ChatRole.User, Content = "失败轮", Status = MessageStatus.Failed },
+            new() { Role = ChatRole.User, Content = "第二问", Status = MessageStatus.Completed },
+            new() { Role = ChatRole.User, Content = "第三问", Status = MessageStatus.Completed },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        var users = mapped.Where(m => m.Role == "user").ToList();
+        Assert.Equal(3, users.Count);
+        Assert.DoesNotContain("注入正文X", users[0].Content);
+        Assert.Contains("第一问", users[0].Content);
+    }
+
+    [Fact]
+    public void EvictedStub_CorruptedAttachmentsJson_DegradesToListLessStub()
+    {
+        // 元数据损坏：降级为无清单存根，原文仍保留。
+        var history = new List<ChatMessage>
+        {
+            new()
+            {
+                Role = ChatRole.User,
+                Content = "注入\n\n第一问",
+                AttachmentsJson = "{这不是JSON",
+                UserText = "第一问",
+                Status = MessageStatus.Completed,
+            },
+            new() { Role = ChatRole.User, Content = "第二问", Status = MessageStatus.Completed },
+            new() { Role = ChatRole.User, Content = "第三问", Status = MessageStatus.Completed },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        Assert.Contains("驱逐", mapped[0].Content);
+        Assert.Contains("第一问", mapped[0].Content);
+        Assert.DoesNotContain("注入", mapped[0].Content);
+    }
+
+    [Fact]
+    public void SteerTurns_DoNotConsumeRetentionWindow()
+    {
+        // review MED-1：steer 插话由门面追加在本轮用户消息之后；
+        // 若它们占用保留窗口，排队 ≥2 条插话时当前轮刚发的附件消息会被驱逐。
+        var history = new List<ChatMessage>
+        {
+            AttachmentUserTurn("[Attached file: a.txt] 注入正文A", "第一问", AttachmentsJsonOf(("a.txt", 10))),
+            new() { Role = ChatRole.Assistant, Content = "回答A", Status = MessageStatus.Completed },
+            AttachmentUserTurn("[Attached file: b.txt] 注入正文B", "第二问", AttachmentsJsonOf(("b.txt", 10))),
+            new() { Role = ChatRole.User, Content = "插话1", Label = "steer", Status = MessageStatus.Completed },
+            new() { Role = ChatRole.User, Content = "插话2", Label = "steer", Status = MessageStatus.Completed },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        var users = mapped.Where(m => m.Role == "user").ToList();
+        Assert.Equal(4, users.Count);
+
+        // 两个真实用户轮都在窗口内：均不被驱逐。
+        Assert.Contains("注入正文A", users[0].Content);
+        Assert.Contains("注入正文B", users[1].Content);
+
+        // steer 本身照常进上下文。
+        Assert.Equal("插话1", users[2].Content);
+        Assert.Equal("插话2", users[3].Content);
+    }
+
+    [Fact]
+    public void SteerTurns_DoNotShieldOlderAttachmentTurns()
+    {
+        // steer 不计窗口 ⇒ 也不庇护更早的附件轮：3 个真实用户轮时第一轮仍被驱逐。
+        var history = new List<ChatMessage>
+        {
+            AttachmentUserTurn("注入正文A", "第一问", AttachmentsJsonOf(("a.txt", 10))),
+            AttachmentUserTurn("注入正文B", "第二问", AttachmentsJsonOf(("b.txt", 10))),
+            new() { Role = ChatRole.User, Content = "插话", Label = "steer", Status = MessageStatus.Completed },
+            AttachmentUserTurn("注入正文C", "第三问", AttachmentsJsonOf(("c.txt", 10))),
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        var users = mapped.Where(m => m.Role == "user").ToList();
+        Assert.Equal(4, users.Count);
+        Assert.DoesNotContain("注入正文A", users[0].Content);
+        Assert.Contains("第一问", users[0].Content);
+        Assert.Contains("注入正文B", users[1].Content);
+        Assert.Contains("注入正文C", users[3].Content);
+    }
+
+    [Fact]
+    public void EvictedStub_HostileAttachmentsJson_DegradesWithoutThrowing()
+    {
+        // review MED-2：非对象元素/非字符串 FileName 不得抛异常，合法项仍入清单。
+        var history = new List<ChatMessage>
+        {
+            new()
+            {
+                Role = ChatRole.User,
+                Content = "注入\n\n第一问",
+                AttachmentsJson = "[123, {\"FileName\":42}, {\"FileName\":\"ok.md\",\"SizeBytes\":5}]",
+                UserText = "第一问",
+                Status = MessageStatus.Completed,
+            },
+            new() { Role = ChatRole.User, Content = "第二问", Status = MessageStatus.Completed },
+            new() { Role = ChatRole.User, Content = "第三问", Status = MessageStatus.Completed },
+        };
+
+        var mapped = HistoryMapper.ToProviderMessages(history);
+
+        Assert.Contains("ok.md", mapped[0].Content);
+        Assert.Contains("第一问", mapped[0].Content);
+        Assert.DoesNotContain("注入", mapped[0].Content);
+    }
 }

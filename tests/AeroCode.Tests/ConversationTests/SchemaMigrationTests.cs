@@ -126,10 +126,50 @@ public sealed class SchemaMigrationTests : MoaTestBase
         await ConversationDbContext.EnsureSchemaAsync(Db);
 
         var columns = await ListColumnsAsync();
-        foreach (var managed in new[] { "Label", "IsFinal", "ToolCallsJson", "ToolCallId", "Name" })
+        foreach (var managed in new[] { "Label", "IsFinal", "ToolCallsJson", "ToolCallId", "Name", "AttachmentsJson", "UserText" })
         {
             Assert.Equal(1, columns.Count(c => string.Equals(c, managed, StringComparison.OrdinalIgnoreCase)));
         }
+    }
+
+    [Fact]
+    public async Task PreL1Database_EnsureSchemaBackfillsUserText_EfRoundTripWorks()
+    {
+        // review L1：存量库（无 UserText 列）升级后，驱逐锚点列立即可读写。
+        await Db.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE chat_messages DROP COLUMN \"UserText\";");
+        Assert.False(await ColumnExistsAsync("UserText"));
+
+        Db.Database.EnsureCreated();
+        await ConversationDbContext.EnsureSchemaAsync(Db);
+
+        Assert.True(await ColumnExistsAsync("UserText"));
+
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Title = "驱逐锚点升级回归",
+            Strategy = OrchestrationStrategy.Single,
+        };
+        Db.Sessions.Add(session);
+        await Db.SaveChangesAsync();
+
+        Db.Messages.Add(new ChatMessage
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            SessionId = session.Id,
+            Role = ChatRole.User,
+            Content = "[Attached file: a.md] 注入\n\n请分析",
+            AttachmentsJson = "[{\"FileName\":\"a.md\",\"MimeType\":\"text/markdown\",\"SizeBytes\":10}]",
+            UserText = "请分析",
+            Status = MessageStatus.Completed,
+        });
+        await Db.SaveChangesAsync();
+
+        var loaded = await Db.Messages
+            .Where(m => m.SessionId == session.Id && m.Role == ChatRole.User)
+            .SingleAsync();
+        Assert.Equal("请分析", loaded.UserText);
     }
 
     /// <summary>把当前库改回 Phase 2 形态：删掉三个工具列。</summary>
