@@ -98,6 +98,28 @@ public sealed class MessageAttachmentTests
     }
 
     [Fact]
+    public void ToInjectionBlock_ExtractionFailed_HonestLabel_NotBinary()
+    {
+        // review L3：文本抽取失败的文本文件 → 标"文本读取失败"，不误报为二进制/图片。
+        var att = new MessageAttachment("bad.txt", "text/plain", 100) { ExtractionFailed = true };
+        var block = att.ToInjectionBlock();
+
+        Assert.Contains("文本读取失败", block);
+        Assert.DoesNotContain("二进制/图片附件", block);
+    }
+
+    [Fact]
+    public void ToInjectionBlock_GenuineBinary_KeepsBinaryLabel()
+    {
+        // review L3：真二进制（ExtractionFailed=false）仍标"二进制/图片附件"。
+        var att = new MessageAttachment("img.png", "image/png", 100);
+        var block = att.ToInjectionBlock();
+
+        Assert.Contains("二进制/图片附件", block);
+        Assert.DoesNotContain("文本读取失败", block);
+    }
+
+    [Fact]
     public void BuildInjection_RespectsBudget_AnnotatesReferencedOnly()
     {
         // 两个文本附件，预算只够第一个 → 第二个应降级为「已引用未注入正文」。
@@ -117,6 +139,33 @@ public sealed class MessageAttachmentTests
     public void BuildInjection_EmptyList_ReturnsEmpty()
     {
         Assert.Equal(string.Empty, MessageAttachment.BuildInjection(System.Array.Empty<MessageAttachment>(), 1000));
+    }
+
+    [Fact]
+    public void BuildInjection_PartialFragment_AnnotatesBudgetTruncation()
+    {
+        // review M7：预算放不下完整块、但剩余足够放一个 >=200 字符片段 → 走"预算截断，仅注入片段"分支。
+        var att = new MessageAttachment("frag.txt", "text/plain", 1000, null, textContent: new string('X', 1000), false);
+
+        var result = MessageAttachment.BuildInjection(new[] { att }, totalCharBudget: 400);
+
+        Assert.Contains("预算截断，仅注入片段", result);      // 片段分支标注
+        Assert.Contains(new string('X', 100), result);        // 注入了部分正文
+        Assert.DoesNotContain(new string('X', 1000), result); // 但绝非全文
+    }
+
+    [Fact]
+    public void BuildInjection_ExactFit_InjectsFullBlock_NoFragmentMarker()
+    {
+        // review M7：预算恰好等于块长（used + block.Length == budget）→ 完整注入，不走片段/降级分支。
+        var att = new MessageAttachment("fit.txt", "text/plain", 300, null, textContent: new string('F', 300), false);
+        var blockLen = att.ToInjectionBlock().Length;
+
+        var result = MessageAttachment.BuildInjection(new[] { att }, totalCharBudget: blockLen);
+
+        Assert.Contains(new string('F', 300), result);   // 全文注入
+        Assert.DoesNotContain("预算截断", result);          // 未走片段分支
+        Assert.DoesNotContain("已引用未注入正文", result);    // 未降级
     }
 }
 
@@ -154,6 +203,30 @@ public sealed class BuildAttachmentTests : System.IDisposable
     {
         // 超出单文件预算（128K 字符）→ 截断并标注。
         var path = Write("big.txt", new string('x', 200_000));
+        var att = AeroCode.App.ViewModels.ChatViewModel.BuildAttachment(new System.IO.FileInfo(path));
+
+        Assert.True(att.HasText);
+        Assert.True(att.ContentTruncated);
+        Assert.Equal(128 * 1024, att.TextContent!.Length);
+    }
+
+    [Fact]
+    public void TextFile_ExactlyAtBudget_NotTruncated()
+    {
+        // review M7：恰好 128K 字符 → 全量读出（n == 预算），不视为截断。
+        var path = Write("exact.txt", new string('x', 128 * 1024));
+        var att = AeroCode.App.ViewModels.ChatViewModel.BuildAttachment(new System.IO.FileInfo(path));
+
+        Assert.True(att.HasText);
+        Assert.False(att.ContentTruncated);
+        Assert.Equal(128 * 1024, att.TextContent!.Length);
+    }
+
+    [Fact]
+    public void TextFile_OneCharOverBudget_Truncated()
+    {
+        // review M7：128K+1 字符 → n == 预算+1 > 预算，视为截断，抽取仍为 128K。
+        var path = Write("over.txt", new string('x', 128 * 1024 + 1));
         var att = AeroCode.App.ViewModels.ChatViewModel.BuildAttachment(new System.IO.FileInfo(path));
 
         Assert.True(att.HasText);

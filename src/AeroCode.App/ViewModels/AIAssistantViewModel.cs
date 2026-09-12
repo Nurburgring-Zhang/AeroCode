@@ -219,6 +219,7 @@ public partial class AIAssistantViewModel : ObservableObject
         finally
         {
             IsStreaming = false;
+            Queue.NotifyHostIdle(); // review M2：转空闲后接续执行积压队列（队列循环中为无操作）。
         }
 
         return true; // review M1：已处理（含流式完成与 catch 已收敛的错误）。

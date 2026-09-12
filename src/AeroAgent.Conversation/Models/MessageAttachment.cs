@@ -57,6 +57,12 @@ public sealed record MessageAttachment
     /// <summary>TextContent 是否因单文件预算被截断。</summary>
     public bool ContentTruncated { get; init; }
 
+    /// <summary>
+    /// 文本类文件抽取正文是否失败（编码/锁等，review L3）——区别于"本就是二进制/图片"，
+    /// 供 <see cref="ToInjectionBlock"/> 如实标注，避免把读取失败的文本误报为二进制。
+    /// </summary>
+    public bool ExtractionFailed { get; init; }
+
     /// <summary>是否抽到了可注入正文。</summary>
     [JsonIgnore]
     public bool HasText => !string.IsNullOrEmpty(TextContent);
@@ -80,7 +86,10 @@ public sealed record MessageAttachment
     {
         if (!HasText)
         {
-            return $"{ToDescription()}（二进制/图片附件，未注入正文，仅告知存在）";
+            // review L3：区分"文本读取失败"与"本就是二进制/图片"，如实标注不误导。
+            return ExtractionFailed
+                ? $"{ToDescription()}（文本读取失败，未注入正文，仅告知存在）"
+                : $"{ToDescription()}（二进制/图片附件，未注入正文，仅告知存在）";
         }
 
         var sb = new StringBuilder();

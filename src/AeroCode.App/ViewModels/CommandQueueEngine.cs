@@ -102,6 +102,7 @@ public partial class CommandQueueEngine : ObservableObject
         IsCollapsed = false;
         _stopRequested = false;
         var refused = false;
+        var failed = 0; // review M4：失败条数，收尾如实上报，不被"✓ 完毕"掩盖。
         try
         {
             while (!_stopRequested && Queue.Count > 0)
@@ -120,6 +121,7 @@ public partial class CommandQueueEngine : ObservableObject
                 }
                 catch (Exception ex)
                 {
+                    failed++; // review M4：记录失败，收尾汇总。
                     StatusText = $"执行失败：{ex.Message}";
                     executed = true; // 失败也算"已处理"，移除该条并继续（不阻塞队列）
                 }
@@ -148,7 +150,9 @@ public partial class CommandQueueEngine : ObservableObject
             StatusText = refused
                 ? "队列已暂停：有指令当前无法执行（宿主未就绪），已保留在队首，满足条件后重新运行"
                 : Queue.Count == 0
-                    ? "✓ 队列执行完毕"
+                    ? failed > 0
+                        ? $"✓ 队列执行完毕，其中 {failed} 条失败" // review M4：失败如实可见。
+                        : "✓ 队列执行完毕"
                     : $"队列已停止，剩余 {Queue.Count} 条";
         }
         finally
@@ -174,6 +178,20 @@ public partial class CommandQueueEngine : ObservableObject
         _stopRequested = true;
         _cts?.Cancel();
         StatusText = "正在停止队列…";
+    }
+
+    /// <summary>
+    /// 宿主转为空闲时调用（review M2）：若有积压条目且无循环在跑则自动开始。
+    /// Enqueue 只在入队那一刻检查"空闲才自动开始"，宿主当时正忙则条目会一直积压——
+    /// 宿主每次发送收尾（finally）调用本方法即可在转空闲后接续执行积压队列。
+    /// 单飞守卫（IsRunning）保证正在跑的循环不会被重复启动。
+    /// </summary>
+    public void NotifyHostIdle()
+    {
+        if (!IsRunning && HostIdle && Queue.Count > 0)
+        {
+            _ = RunQueueAsync();
+        }
     }
 
     /// <summary>从队列删除一条指令。</summary>

@@ -118,4 +118,45 @@ public sealed class CommandQueueEngineTests
         Assert.Single(engine.Queue); // A 被保留，未被吞掉
         Assert.Equal("A", engine.Queue[0].Text);
     }
+
+    [Fact]
+    public async Task Failed_Items_Are_Counted_In_Final_Status()
+    {
+        // M4 回归：失败的条不被"✓ 队列执行完毕"掩盖，收尾如实上报失败数。
+        var engine = new CommandQueueEngine((text, _) =>
+        {
+            if (text == "bad") throw new InvalidOperationException("boom");
+            return Task.FromResult(true);
+        });
+        engine.Queue.Add(new QueuedCommandViewModel { Text = "bad" });
+        engine.Queue.Add(new QueuedCommandViewModel { Text = "good" });
+
+        await engine.RunQueueAsync();
+
+        Assert.Contains("1 条失败", engine.StatusText);
+        Assert.Empty(engine.Queue);
+    }
+
+    [Fact]
+    public async Task NotifyHostIdle_Resumes_Parked_Queue()
+    {
+        // M2 回归：宿主正忙时入队不自动开始（条目积压）；宿主转空闲调 NotifyHostIdle 后接续执行。
+        var executed = new List<string>();
+        var hostIdle = false;
+        var engine = new CommandQueueEngine((text, _) =>
+        {
+            lock (executed) executed.Add(text);
+            return Task.FromResult(true);
+        }, () => hostIdle);
+
+        engine.Enqueue("A"); // hostIdle=false → 不自动开始，A 积压
+        Assert.False(engine.IsRunning);
+        Assert.Single(engine.Queue);
+
+        hostIdle = true;
+        engine.NotifyHostIdle(); // 转空闲 → 接续执行积压队列
+        await WaitAsync(() => !engine.IsRunning && engine.Queue.Count == 0);
+
+        lock (executed) Assert.Equal(new[] { "A" }, executed.ToArray());
+    }
 }

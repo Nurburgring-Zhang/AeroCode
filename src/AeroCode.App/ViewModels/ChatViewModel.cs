@@ -458,7 +458,8 @@ public partial class ChatViewModel : ObservableObject
                     continue;
                 }
 
-                PendingAttachments.Add(BuildAttachment(info));
+                // review M6：文件读取/文本解码挪到后台线程，避免选大量文件时卡住 UI 线程。
+                PendingAttachments.Add(await Task.Run(() => BuildAttachment(info)));
                 StatusText = $"已添加附件 {info.Name}（共 {PendingAttachments.Count} 个）";
             }
             catch (Exception ex)
@@ -489,6 +490,7 @@ public partial class ChatViewModel : ObservableObject
 
         string? textContent = null;
         var truncated = false;
+        var extractionFailed = false; // review L3：文本抽取失败标记（区别于本就是二进制）。
         if (info.Length > 0 && IsTextLike(ext))
         {
             try
@@ -504,12 +506,14 @@ public partial class ChatViewModel : ObservableObject
                 // 抽取失败（编码/锁等）：降级为仅元信息，不阻塞附加。
                 textContent = null;
                 truncated = false;
+                extractionFailed = true;
             }
         }
 
         return new MessageAttachment(info.Name, mime, info.Length, preview, textContent, truncated)
         {
             SourcePath = info.FullName,
+            ExtractionFailed = extractionFailed,
         };
     }
 
@@ -1319,6 +1323,7 @@ public partial class ChatViewModel : ObservableObject
             _streamCts?.Dispose();
             _streamCts = null;
             await ReloadSessionsAsync(); // 标题可能因首条消息自动更新
+            Queue.NotifyHostIdle(); // review M2：转空闲后接续执行积压队列（队列循环中为无操作）。
         }
     }
 
