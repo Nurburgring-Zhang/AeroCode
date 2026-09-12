@@ -222,7 +222,8 @@ public sealed class OllamaClient : IDisposable
             var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token).ConfigureAwait(false);
             using var reader = new StreamReader(stream);
             string? line;
-            while ((line = await reader.ReadLineAsync().ConfigureAwait(false)) is not null)
+            // M-2：ReadLineAsync 带超时令牌——卡住的流式拉取受 LongTimeout 约束，不会无限挂起。
+            while ((line = await reader.ReadLineAsync(timeoutCts.Token).ConfigureAwait(false)) is not null)
             {
                 if (ct.IsCancellationRequested)
                 {
@@ -246,6 +247,13 @@ public sealed class OllamaClient : IDisposable
 
                 if (progress is not null)
                 {
+                    // M-1：Ollama 失败行 {"error":"..."}——转为带原因的失败项并终止，绝不静默丢弃。
+                    if (progress.IsError)
+                    {
+                        yield return new OllamaPullProgress { Status = $"{op} failed: {progress.Error}" };
+                        yield break;
+                    }
+
                     yield return progress;
                 }
             }

@@ -150,4 +150,33 @@ public sealed class LocalModelsTuningTests : IDisposable
             Assert.False(string.IsNullOrWhiteSpace(c.Summary));
         });
     }
+
+    [Fact]
+    public async Task LoadExistingSettings_LackingOllama_SeedsOllamaProvider()
+    {
+        // H-1 回归：存量 settings.json 缺 ollama provider 时，LoadAsync 应补种子，
+        // 使「设为聊天默认/应用调参」可用（而非"未找到 ollama provider"）。
+        var paths = new AppDataPaths(_root);
+
+        // 1) 首次加载生成默认（含 ollama），随后移除 ollama 并落盘，模拟存量安装。
+        var writer = new SettingsService(paths);
+        await writer.LoadAsync();
+        writer.Current.Ai.Providers.RemoveAll(p => p.Id == LocalModelsViewModel.OllamaProviderId);
+        await writer.SaveAsync();
+        Assert.DoesNotContain(writer.Current.Ai.Providers, p => p.Id == LocalModelsViewModel.OllamaProviderId);
+
+        // 2) 重新加载：EnsureOllamaProvider 应补回 ollama。
+        var reader = new SettingsService(paths);
+        await reader.LoadAsync();
+        Assert.Contains(reader.Current.Ai.Providers, p => p.Id == LocalModelsViewModel.OllamaProviderId);
+
+        // 3) 设为聊天默认应成功（不再"未找到 ollama provider"）。
+        var vm = new LocalModelsViewModel(FakeClient(), reader, providerFactory: null)
+        {
+            SelectedModel = new LocalModelItemViewModel { Name = "qwen2.5:1.5b" },
+        };
+        await vm.SetAsDefaultModelAsync();
+        var ollama = reader.Current.Ai.Providers.First(p => p.Id == LocalModelsViewModel.OllamaProviderId);
+        Assert.Equal("qwen2.5:1.5b", ollama.DefaultModel);
+    }
 }

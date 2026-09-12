@@ -191,6 +191,29 @@ public sealed class OllamaClientTests
         });
     }
 
+    [Fact]
+    public async Task Pull_NDJsonErrorLine_SurfacesReason()
+    {
+        // M-1：Ollama 失败时流式输出 {"error":"..."}，应转为带原因的失败项，不被静默丢弃。
+        var ndjson = string.Join("\n",
+            """{"status":"pulling manifest"}""",
+            """{"error":"pull model manifest: file does not exist"}""");
+        using var handler = new FakeHandler(_ => Json(ndjson));
+        using var client = new OllamaClient(handler: handler);
+
+        var progress = new List<OllamaPullProgress>();
+        await foreach (var p in client.PullModelAsync("no-such-model"))
+        {
+            progress.Add(p);
+        }
+
+        // 末项为失败项且携带原因（含 "file does not exist"），而非空状态。
+        var last = Assert.IsType<OllamaPullProgress>(progress[^1]);
+        Assert.Contains("failed", last.Status, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("file does not exist", last.Status);
+        Assert.False(last.IsDone);
+    }
+
     // ---------------- 真实 Ollama E2E（本机服务可达才跑，否则诚实跳过） ----------------
 
     private static async Task<bool> OllamaReachableAsync()

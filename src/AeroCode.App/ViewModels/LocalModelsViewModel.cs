@@ -291,6 +291,10 @@ public sealed partial class LocalModelsViewModel : ObservableObject
                 await RefreshCoreAsync();
             }
         }
+        catch (OperationCanceledException)
+        {
+            await OnUiAsync(() => StatusText = $"导入 {name} 超时或已取消");
+        }
         catch (Exception ex)
         {
             await OnUiAsync(() => StatusText = $"导入失败：{ex.Message}");
@@ -323,6 +327,10 @@ public sealed partial class LocalModelsViewModel : ObservableObject
             {
                 await RefreshCoreAsync();
             }
+        }
+        catch (OperationCanceledException)
+        {
+            await OnUiAsync(() => StatusText = $"拉取 {name} 超时或已取消");
         }
         catch (Exception ex)
         {

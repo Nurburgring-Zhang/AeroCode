@@ -579,6 +579,7 @@ public sealed class SettingsService
         {
             var json = await File.ReadAllTextAsync(path);
             Current = JsonSerializer.Deserialize<AppSettings>(json, ReadOpts) ?? CreateDefaults();
+            EnsureOllamaProvider(Current);
             LastLoadError = null;
             LastCorruptBackupPath = null;
             SettingsChanged?.Invoke(this, EventArgs.Empty);
@@ -747,12 +748,32 @@ public sealed class SettingsService
             Kind = "OpenAICompatible", BaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1",
             DefaultModel = "qwen3-max", ApiKeyEnvVar = "DASHSCOPE_API_KEY"
         });
-        s.Ai.Providers.Add(new ProviderConfig
-        {
-            Id = "ollama", DisplayName = "Ollama (local)",
-            Kind = "OpenAICompatible", BaseUrl = "http://localhost:11434/v1",
-            DefaultModel = "qwen2.5:7b", RequiresApiKey = false
-        });
+        s.Ai.Providers.Add(OllamaSeedProvider());
         return s;
+    }
+
+    /// <summary>ollama provider 种子（本地模型，免 key，OpenAI 兼容 /v1）。</summary>
+    private static ProviderConfig OllamaSeedProvider() => new()
+    {
+        Id = "ollama",
+        DisplayName = "Ollama (local)",
+        Kind = "OpenAICompatible",
+        BaseUrl = "http://localhost:11434/v1",
+        DefaultModel = "qwen2.5:7b",
+        RequiresApiKey = false
+    };
+
+    /// <summary>
+    /// H-1：存量安装（settings.json 已存在、仅有其他 provider）可能缺 ollama provider，
+    /// 导致本地模型调参/设为默认找不到配置、聊天无法选择 Ollama。加载后若缺则补种子（幂等）。
+    /// </summary>
+    private static void EnsureOllamaProvider(AppSettings s)
+    {
+        if (s.Ai.Providers.Any(p => string.Equals(p.Id, "ollama", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        s.Ai.Providers.Add(OllamaSeedProvider());
     }
 }

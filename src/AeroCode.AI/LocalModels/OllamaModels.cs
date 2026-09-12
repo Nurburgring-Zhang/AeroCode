@@ -100,6 +100,9 @@ public sealed record OllamaPullProgress
     /// <summary>已完成字节。</summary>
     [JsonPropertyName("completed")] public long? Completed { get; init; }
 
+    /// <summary>错误信息（Ollama 失败时流式输出 {"error":"..."}；M-1：不再静默丢弃）。</summary>
+    [JsonPropertyName("error")] public string? Error { get; init; }
+
     /// <summary>下载进度 0..1（无 total 时为 null）。</summary>
     [JsonIgnore]
     public double? Fraction => Total is > 0 && Completed is not null
@@ -109,6 +112,10 @@ public sealed record OllamaPullProgress
     /// <summary>是否终态成功。</summary>
     [JsonIgnore]
     public bool IsDone => string.Equals(Status, "success", System.StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>是否失败项（携带 error）。</summary>
+    [JsonIgnore]
+    public bool IsError => !string.IsNullOrWhiteSpace(Error);
 }
 
 /// <summary>/api/version 响应。</summary>
