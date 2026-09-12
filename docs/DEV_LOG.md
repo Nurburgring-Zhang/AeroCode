@@ -382,3 +382,31 @@ zip 56,053,840 B（SHA256 e34c87cb…9c58，328 条目零增零删）；APK 126,
 - **#64 γ-2 热重载其余四开关**：暂缓（启动烧进 DI 单例、UI 不暴露、默认全关、无真实 mission 无法验证，无安全有价值子集）。
 - **#68 网关 UI 徽标/X-MOA-Mock 展示面（P8-1）**：数据面（StateChanged 事件 + [Mock] 标签随消息）已就绪；ExpertsGatewayHint 已在 Experts 策略选中时诚实展示网关配置态。持久徽标/健康探活展示面待 GatewaySidecar 组合根接线后做。
 - **Android 真机冒烟 / release keystore 重签**：本机无设备/未生成 keystore（既有环境限制）。
+
+## 2026-09-12 · γ-2 四开关 UI 暴露 + #68 网关实时徽标 + 五轮独立评审修复（结论）
+
+### 范围（本轮完成项）
+
+- **γ-2 四开关 UI 暴露（cb391fc，#64 安全切片）**：Budget/LoopGuard/Curation/Deprecation 四开关从「仅 settings.json」升级为设置 UI 一等公民——SettingsViewModel 加 8 项可观察属性（BudgetEnabled/LimitTokens/WarningRatio、LoopGuardEnabled/MaxStrikes、CurationEnabled、DeprecationEnabled/Monitor）+ hydrate/save 落盘；SettingsView 加「高级任务 / MOA 开关」段。默认全关=现行为不变；改动随 Save 落盘、需重启生效（真热重载仍暂缓，消费点在组合根启动烧进 DI 单例）。UIA 实证 SETTINGS-4SWITCH-PASS。
+- **#68 网关 UI 徽标 / X-MOA-Mock 展示面（a19bb6e，关闭 2026-09-11 遗留）**：把静态环境变量网关提示升级为**实时状态徽标**——ChatViewModel 注入 MoaGatewayClient 单例，视图加载/选中专家团时真实探活 /health，展示可达性+版本+端点/mock 端点可见性（绿点=在线、琥珀点=不可达/未证实）。诚实语义：未注入客户端或探活失败回落配置态、绝不伪造连通。X-MOA-Mock 半边经消息 Label（"MOA 专家团 · [Mock]"+Status=Degraded）+ ChatView Label 徽标管线贯通。真实 E2E：起 moa-gateway-pro v3.1.1（venv uvicorn :8910，mock 模式）→ UIA 选 Experts → 徽标显示「网关在线 v3.1.1 · 端点 73/73 · mock 26（mode=explicit）」GATEWAY-BADGE-ONLINE-PASS。
+
+### 五轮独立评审（builder≠verifier）修复
+
+- **0822070**：网关徽标探活竞态（`_probeGeneration` 代号序列化，杜绝慢速旧探活覆盖新状态）+ BudgetLimitTokens clamp 对齐 NumericUpDown 上下界 + 删死 OCE catch-rethrow + 测试强化。
+- **003e568**：命令队列 **H1**（StopQueue 单飞，`_stopRequested` 标志、IsRunning 归循环 finally 独占）+ **H2**（已执行条按引用 IndexOf 移除，杜绝插队后二次执行）+ **M5**（剪贴板粘贴补 100 个/10GB 上限）。
+- **083daf2**：executor 契约升级 `Task<bool>`（**M1** 拒绝语义：宿主拒绝时保留该条、停止队列、诚实上报）+ **M3**（Chat `_streamCts` 提前创建并联动外部令牌，停止在前导/流式各阶段生效；Send 命令拆薄包装）。
+- **6a03bef**：**M2**（NotifyHostIdle 转空闲接续积压队列）+ **M4**（失败条计数收尾上报）+ **M6**（BuildAttachment 文件 IO 挪后台线程）+ **M7**（分块注入片段/恰好装满/128K 截断边界测试）+ **L3**（文本抽取失败诚实标注 ExtractionFailed）。
+- **d2a4f61**：独立 verifier 对抗式复核四个修复提交，六项（SendAsync 行为保持/NotifyHostIdle 重入/拒绝契约/M5 上限/M6 线程安全/测试质量）**全 VERIFIED OK**；修唯一 **I-1**（AttachFileAsync 三段重构：元信息筛上限→单批后台构建→同步添加，杜绝上限判定与添加间的 await 交错），并补剪贴板大小上限测试。
+
+### 验证（真实执行）
+
+- 全量回归 **2011 通过 / 0 失败 / 26 跳过**（跳过=需外部真实服务的诚实跳过）。
+- 桌面启动冒烟：deliverables/r5/win-x64 重建（317 文件，剔 pdb，含 aerocode-mcp sidecar）启动到窗口级 Responding=True。
+- 网关徽标真实 E2E（GATEWAY-BADGE-ONLINE-PASS）；四开关 UIA 实测（SETTINGS-4SWITCH-PASS）。
+
+### 遗留（如实）
+
+- **推送**：本地领先 origin/main 24 提交；后台无非交互凭据路径（git push 与 git credential fill 均挂起），须用户终端 `git push origin main`。
+- **#64 γ-2 真热重载**：四开关 UI 已暴露（cb391fc），但真热重载仍暂缓——消费点在组合根启动烧进 DI 单例（MissionController/WorkerRunner/ExpertsStrategy），无真实 mission 环境无法验证，无安全有价值子集；强推须用户授权并标 [DEGRADED]。
+- **Android**：android workload 已装（35.0.105），但本机无 Android SDK 平台目录，实跑 build 得 **XA5300 找不到 Android SDK 目录**；需先装 SDK 平台，且无设备/模拟器冒烟。
+- **L1/L2/L4（评审判定的设计级后续项）**：**L1** 附件注入文本入永久历史、每轮重发致上下文膨胀（真修需逐轮降级旧附件注入的驱逐/摘要策略，触及核心持久化/历史链路）；**L2** 执行体覆写用户输入框；**L4** 分隔符不计注入预算。均为设计级，未动。
