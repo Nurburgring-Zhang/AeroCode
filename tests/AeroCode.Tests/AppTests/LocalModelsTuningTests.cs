@@ -111,4 +111,26 @@ public sealed class LocalModelsTuningTests : IDisposable
         Assert.Equal(55, reader.TopK);
         Assert.Equal(1.05, reader.RepeatPenalty);
     }
+
+    [Fact]
+    public async Task SetAsDefaultModel_WritesSelectedModelToProvider_AndHydrates()
+    {
+        var paths = new AppDataPaths(_root);
+        var settings = new SettingsService(paths);
+        await settings.LoadAsync();
+
+        var vm = new LocalModelsViewModel(FakeClient(), settings, providerFactory: null);
+        vm.SelectedModel = new LocalModelItemViewModel { Name = "qwen2.5:1.5b" };
+
+        await vm.SetAsDefaultModelAsync();
+
+        var ollama = settings.Current.Ai.Providers
+            .First(p => p.Id == LocalModelsViewModel.OllamaProviderId);
+        Assert.Equal("qwen2.5:1.5b", ollama.DefaultModel);
+        Assert.Equal("qwen2.5:1.5b", vm.CurrentDefaultModel);
+
+        // 新 VM 水合时应回读到新默认模型。
+        var reader = new LocalModelsViewModel(FakeClient(), settings, providerFactory: null);
+        Assert.Equal("qwen2.5:1.5b", reader.CurrentDefaultModel);
+    }
 }

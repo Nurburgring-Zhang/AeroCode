@@ -41,10 +41,13 @@
             <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource Border}"
                     BorderThickness="1" CornerRadius="6" Padding="16">
                 <StackPanel Spacing="10">
-                    <Grid ColumnDefinitions="*,Auto">
+                    <Grid ColumnDefinitions="*,Auto,Auto">
                         <TextBlock Grid.Column="0" Text="已安装模型" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Accent}" />
-                        <Button Grid.Column="1" Content="删除选中" Command="{Binding DeleteSelectedModelCommand}"
+                        <Button Grid.Column="1" Content="设为聊天默认" Command="{Binding SetAsDefaultModelCommand}"
+                                Margin="0,0,8,0"
+                                ToolTip.Tip="把选中的已装模型设为 ollama provider 默认模型（聊天实际使用），热重载免重启" />
+                        <Button Grid.Column="2" Content="删除选中" Command="{Binding DeleteSelectedModelCommand}"
                                 ToolTip.Tip="删除上方列表选中的本地模型" />
                     </Grid>
                     <ListBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel, Mode=TwoWay}"
@@ -56,6 +59,8 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <TextBlock Text="{Binding CurrentDefaultModel, StringFormat='当前聊天默认本地模型：{0}'}"
+                               TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource FgPrimary}" />
                 </StackPanel>
             </Border>
 

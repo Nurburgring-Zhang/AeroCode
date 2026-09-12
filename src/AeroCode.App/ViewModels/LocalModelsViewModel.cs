@@ -97,6 +97,10 @@ public sealed partial class LocalModelsViewModel : ObservableObject
     [ObservableProperty]
     private string _pullProgress = string.Empty;
 
+    /// <summary>ollama provider 当前默认模型（聊天实际使用的模型；水合自 provider 配置）。</summary>
+    [ObservableProperty]
+    private string _currentDefaultModel = string.Empty;
+
     // ---------------- Ollama 调参（LOCAL_LLM_SPEC §4，持久化到 ollama provider 的 ExtraBody） ----------------
 
     /// <summary>上下文长度 num_ctx（0 = 用模型默认）。</summary>
@@ -311,10 +315,14 @@ public sealed partial class LocalModelsViewModel : ObservableObject
 
     // ---------------- Ollama 调参：水合 / 应用 ----------------
 
-    /// <summary>从 ollama provider 的 ExtraBody 水合调参项（构造时 + 检测时）。</summary>
+    /// <summary>从 ollama provider 水合：默认模型 + ExtraBody 调参项（构造时 + 检测时）。</summary>
     public void HydrateOptions()
     {
-        var extra = GetOllamaExtraBody();
+        var ollama = _settings?.Current.Ai.Providers.FirstOrDefault(p =>
+            string.Equals(p.Id, OllamaProviderId, StringComparison.OrdinalIgnoreCase));
+        CurrentDefaultModel = ollama?.DefaultModel ?? string.Empty;
+
+        var extra = ollama?.ExtraBody;
         if (extra is null)
         {
             return; // 无 ollama provider / 无 ExtraBody：保持默认值。
@@ -365,6 +373,52 @@ public sealed partial class LocalModelsViewModel : ObservableObject
         catch (Exception ex)
         {
             await OnUiAsync(() => StatusText = $"保存调参失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 把选中的已装模型设为 ollama provider 的默认模型（聊天实际使用的模型），
+    /// 落盘并热重载，无需重启。闭合"种子默认模型（如 qwen2.5:7b）未必已安装"的缺口。
+    /// </summary>
+    [RelayCommand]
+    public async Task SetAsDefaultModelAsync()
+    {
+        var target = SelectedModel;
+        if (target is null || string.IsNullOrWhiteSpace(target.Name))
+        {
+            await OnUiAsync(() => StatusText = "请先在列表中选择一个已装模型");
+            return;
+        }
+
+        if (_settings is null)
+        {
+            await OnUiAsync(() => StatusText = "设置服务不可用，无法设置默认模型");
+            return;
+        }
+
+        try
+        {
+            var ollama = _settings.Current.Ai.Providers.FirstOrDefault(p =>
+                string.Equals(p.Id, OllamaProviderId, StringComparison.OrdinalIgnoreCase));
+            if (ollama is null)
+            {
+                await OnUiAsync(() => StatusText = "未找到 ollama provider 配置，无法设置默认模型");
+                return;
+            }
+
+            ollama.DefaultModel = target.Name;
+            await _settings.SaveAsync();
+            _providerFactory?.Reload(_settings.ToAiOptions());
+
+            await OnUiAsync(() =>
+            {
+                CurrentDefaultModel = target.Name;
+                StatusText = $"已将 {target.Name} 设为聊天默认本地模型（热重载生效）。";
+            });
+        }
+        catch (Exception ex)
+        {
+            await OnUiAsync(() => StatusText = $"设置默认模型失败：{ex.Message}");
         }
     }
 
