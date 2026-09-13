@@ -1,6 +1,6 @@
-# 📒 AeroCode
+# 🤖 AeroCode
 
-> **本地优先的 Markdown 笔记 × 多模型 AI 助手 × 本地大模型 × Agent Harness —— 一套代码，Windows 与 Android 同源双端**
+> **本地优先的 AI 编程 Agent 工作台 —— 代码编写 × 项目执行 × 多模型编排 × 数据不出本机**
 > .NET 9 + Avalonia 11 · MIT · 开发主线 r5.3 + 多轮独立评审收口 · 全量 2045 用例 / 0 失败 / 26 门控跳过
 
 <p>
@@ -13,38 +13,68 @@
 
 **[发行版下载](https://github.com/Nurburgring-Zhang/AeroCode/releases)** · **[开发日志](docs/DEV_LOG.md)** · **[架构](docs/ARCHITECTURE.md)** · **[本地模型规格](docs/LOCAL_LLM_SPEC.md)** · **[附件驱逐规格](docs/ATTACHMENT_EVICTION_SPEC.md)** · **[Android 构建指南](docs/ANDROID_BUILD.md)**
 
-AeroCode 是一款跑在你自己设备上的本地优先工作台：Markdown 双栏笔记、多 Provider 流式 AI 助手、**本地 GGUF 大模型（Ollama，纯 CPU 可跑）**、MOA 多模型编排、权限化的 Agent 工具链，数据全部落在本地 SQLite，API Key 只从环境变量读取。一套 C# / .NET 9 + Avalonia 11 代码同时构建 Windows 桌面与 Android 客户端，发行包内附自包含的 `aerocode-mcp` 演示服务器（MCP stdio）。
+AeroCode 是一款跑在你自己设备上的**本地优先 AI 编程 Agent 工作台**。它的核心是两件事：
+
+- **代码编写**——AI 直接在工作区读 / 写 / 编辑 / 删除文件、跑 shell、走完整 Git 流程，配合 Plan 模式与多 AI 对抗代码评审；
+- **项目执行**——Mission 自治内核把目标拆成任务状态机与工程循环，指令队列 / 子代理 / 定时调度 / 会话 fork 协同推进。
+
+支撑这两件事的是 **MOA 多模型编排**与**本地 GGUF 大模型（Ollama，纯 CPU 可跑、免 API Key）**。代码、对话、记忆全部落在本地 SQLite，支持完全离线的本地推理——**数据不出本机**。Markdown 笔记作为轻量知识载体一并内置。一套 C# / .NET 9 + Avalonia 11 代码同时构建 Windows 桌面与 Android 客户端，发行包内附自包含的 `aerocode-mcp` 演示服务器（MCP stdio）。
 
 > **版本说明（如实）**：GitHub 最新 Release 标签为 `v1.1.0`；当前 `main` 已演进到 r5.3 并完成多轮 builder≠verifier 独立评审收口（本地大模型、消息操作、指令队列、多附件、SOUL、TTS、vision、附件历史驱逐等），见 [docs/DEV_LOG.md](docs/DEV_LOG.md)。
 
 ---
 
-## ✨ 特性
-
-### 📝 笔记与知识
+## 💻 代码编写能力
 
 | 能力 | 实现 |
 |---|---|
-| Markdown 编辑器 | 双栏（编辑 + 实时预览），自动保存，Markdig 渲染 |
-| 笔记本 / 标签 / 全文搜索 / 置顶 / 软删除 | EF Core + SQLite，全部真实持久化 |
-| 笔记导出 | Markdown / JSON 一键导出 |
-| 笔记内 AI | 问答 / 分析 / 整理 / 摘要 / 应用到笔记，流式写回 |
-
-### 🤖 AI 对话与本地大模型
-
-| 能力 | 实现 |
-|---|---|
-| AI 助手 | 多 Provider（OpenAI 兼容 / Anthropic Messages / MiniMax / **Ollama 本地**）、流式、深度思考档、100 办公生产场景库、改写/扩写/续写/大纲/待办/表格化 |
-| 统一对话 | 会话历史持久化（SQLite）、token 用量统计、消息**复制 / 编辑 / 重跑 / 分叉运行**（悬停提示，五面板） |
-| 指令队列 | 多输入框自动执行 + 排序 + 插队 + 编辑 + 删除 + 折叠（对话 / AI 助手 / 笔记 AI 三处共用 `CommandQueueEngine`） |
-| 多附件 | 任意类型、最多 100 个 / 合计 10GB；文本类抽正文按 120K 字符预算**分块注入**，超预算如实标「已引用未注入」；支持 **vision 图像上送**（OpenAI 兼容 content-parts） |
-| 附件历史驱逐 | 旧附件注入正文按保留窗口降级为「元信息存根 + 原文」，模型上下文钉死在 ≤2×120K 硬上界，长会话不膨胀（见 [规格](docs/ATTACHMENT_EVICTION_SPEC.md)） |
-| **本地大模型** | Ollama GGUF 全链路：运行时检测 / 已装模型列表 / 拉取 / **导入本地 .gguf** / **HuggingFace 拉取** / 参数调节（num_ctx/thread/temperature…热重载）/ 一键设为聊天默认 / 精选模型目录；纯 CPU 推理，免 API Key（见 [规格](docs/LOCAL_LLM_SPEC.md)） |
-| SOUL 长系统提示词 | InstructionLoader 全文装载（全局 + 项目级，不截断）→ 真实 system 消息注入；内置 394KB 参考级预设（嵌入资源，一键安装/移除） |
-| 语音 / 多模态 | MiniMax TTS（t2a_v2）、生图（image-01）、生视频（video-01 异步任务） |
+| 工作区文件操作 | `read_file` / `write_file` / `edit_file` / `delete_file` + 文件搜索 + `run_shell`，全部经权限 Broker 裁决 |
+| Git 工作流 | `git_status` / `git_diff` / `git_commit` / `git_push` / `git_undo` 五件套 |
+| 文件检查点 | 可回滚的文件快照（checkpoint），改坏可退 |
+| Plan 模式 | PLAN.md 状态机：先出方案再动手，四档权限中的独立档位 |
 | 多 AI 对抗代码评审 | 批评者 → 辩护者 → 裁判三轮真实 LLM；单 provider 时如实标注「同模型多角色」 |
+| 内置 Code Review 面板 | 产品内一键审查 |
+| 危险命令护栏 | `rm` / `format` / `git push --mirror` / `--delete` 等破坏性模式探测，任何权限档位不降级 |
+| MCP 外部工具 | 通过 Model Context Protocol 接入外部进程工具（aerocode-mcp stdio） |
+| Skills 技能系统 | 可扩展技能定义 + 内置分析技能（含敏感信息检测正则） |
 
-### 🧬 MOA 多模型编排
+## 🚀 项目执行能力
+
+| 能力 | 实现 |
+|---|---|
+| Mission 自治内核 | 任务状态机 + 工程循环 + 真实网络检索，产品内 Mission 面板（复制轨迹 / 编辑目标推进重跑） |
+| 指令队列 | 多输入框自动执行 + 排序 + 插队 + 编辑 + 删除 + 折叠（对话 / AI 助手 / 笔记 AI 三处共用 `CommandQueueEngine`） |
+| 子代理 | 独立会话 + 权限显式继承 + 并行上限，多代理协同 |
+| 定时调度 | 调度器（jobs.json）+ Hook 引擎（hooks.json） |
+| 会话 fork / Steer 插话 | 从任意轮次分叉新分支；流式进行中插话下一轮注入 |
+| Todo 持久化 | 任务清单落库 |
+| 上下文溢出压缩 | 长会话自动压缩，不中断 |
+| 消息操作 | 任意消息**复制 / 编辑 / 重跑 / 分叉运行**（悬停提示，五面板） |
+
+## 🛡️ Agent 护栏与权限（安全优先）
+
+| 能力 | 实现 |
+|---|---|
+| 四档权限 | Default / AcceptEdits / Plan / Bypass —— 显式 Deny 恒胜 Ask |
+| 工具权限 | 允许 / 拒绝 / 每次询问，持久化 permissions.json |
+| 守卫链 | 工作区边界 / 命令分级 / doom-loop 检测 / 敏感文件 / 急停哨兵 |
+| 智能审批 | Advisor 建议卡，不可用时零行为差异（不伪造审批） |
+| 危险模式探测 | 不受任何降级影响，Deny 恒胜 |
+| Memory 治理 | 长期记忆存取（已去除人为字符上限） |
+
+## 🧠 本地大模型（数据不出本机）
+
+| 能力 | 实现 |
+|---|---|
+| Ollama GGUF 全链路 | 运行时检测 / 已装模型列表 / 拉取 / **导入本地 .gguf** / **HuggingFace 拉取**（`hf.co/<repo>:<quant>`） |
+| 参数调节 | num_ctx / num_thread / temperature / top_p / top_k / repeat_penalty / num_predict，应用后热重载免重启 |
+| 一键设为聊天默认 | 选中已装模型写入 ollama provider，对话即走本地推理 |
+| 精选模型目录 | qwen2.5 / llama3.2 / gemma2 / phi3 / deepseek-r1 等常用模型一键拉取 |
+| 免 API Key | 本地推理无需任何密钥，代码与对话数据不出本机 |
+
+> 本机无 NVIDIA GPU 时走纯 CPU 推理（Intel 集显等）；CUDA / FlashAttention / vLLM 等 GPU 加速路径如实标注为环境受限，见 [docs/LOCAL_LLM_SPEC.md](docs/LOCAL_LLM_SPEC.md)。
+
+## 🧬 MOA 多模型编排
 
 | 能力 | 实现 |
 |---|---|
@@ -53,26 +83,34 @@ AeroCode 是一款跑在你自己设备上的本地优先工作台：Markdown �
 | 网关实时徽标 | 专家团页真实探活 MOA 网关 `/health`，绿点=在线 / 琥珀=不可达，绝不伪造连通；X-MOA-Mock 模式如实标注 |
 | 高级开关 | Budget / LoopGuard / Curation / Deprecation 四开关入设置 UI（默认关，改动落盘需重启；真热重载暂缓，见 DEV_LOG） |
 
-### 🛡️ Agent Harness（工具链与护栏）
+## 🤖 AI 对话与多模态
 
 | 能力 | 实现 |
 |---|---|
-| 工具系统 | 笔记工具箱 + Skills + MCP 外部进程工具（aerocode-mcp） |
-| 工具权限 | 允许 / 拒绝 / 每次询问 + 危险模式探测任何档位不降级，持久化 permissions.json |
-| 工作区八工具 | read / write / edit / delete / list / search / grep / run_shell + 文件检查点 + Plan 模式（PLAN.md 状态机）+ Git 工作流 |
-| 四档权限 | Default / AcceptEdits / Plan / Bypass —— 显式 Deny 恒胜 Ask |
-| 子代理与守卫链 | 独立会话 + 权限显式继承 + 并行上限；工作区边界 / 命令分级 / doom-loop / 敏感文件 / 急停哨兵 |
-| 扩展生态 | 智能审批 Advisor（不可用零行为差异）+ Hook 引擎（hooks.json）+ 调度器（jobs.json）+ 会话 fork / Steer 插话 / Todo 持久化 / 上下文溢出压缩 |
-| Memory | 长期记忆存取（已去除人为字符上限） |
-| Mission 自治内核 | 任务状态机 + 工程循环 + 真实网络检索，产品内 Mission 面板（复制轨迹 / 编辑目标推进重跑） |
+| AI 助手 | 多 Provider（OpenAI 兼容 / Anthropic Messages / MiniMax / **Ollama 本地**）、流式、深度思考档、100 办公生产场景库、改写/扩写/续写/大纲/待办/表格化 |
+| 统一对话 | 会话历史持久化（SQLite）、token 用量统计 |
+| 多附件 | 任意类型、最多 100 个 / 合计 10GB；文本类抽正文按 120K 字符预算**分块注入**，超预算如实标「已引用未注入」；支持 **vision 图像上送** |
+| 附件历史驱逐 | 旧附件注入正文按保留窗口降级为「元信息存根 + 原文」，模型上下文钉死在 ≤2×120K 硬上界，长会话不膨胀（见 [规格](docs/ATTACHMENT_EVICTION_SPEC.md)） |
+| SOUL 长系统提示词 | InstructionLoader 全文装载（全局 + 项目级，不截断）→ 真实 system 消息注入；内置 394KB 参考级预设（嵌入资源，一键安装/移除） |
+| 语音 / 多模态 | MiniMax TTS（t2a_v2）、生图（image-01）、生视频（video-01 异步任务） |
 
-### 🔎 诊断与评测
+## 📝 笔记与知识（附带能力）
 
 | 能力 | 实现 |
 |---|---|
-| Code Review / Diagnostics | 内置审查与诊断面板 |
+| Markdown 编辑器 | 双栏（编辑 + 实时预览），自动保存，Markdig 渲染 |
+| 笔记本 / 标签 / 全文搜索 / 置顶 / 软删除 | EF Core + SQLite，全部真实持久化 |
+| 笔记导出 | Markdown / JSON 一键导出 |
+| 笔记内 AI | 问答 / 分析 / 整理 / 摘要 / 应用到笔记，流式写回 |
+
+## 🔎 评测
+
+| 能力 | 实现 |
+|---|---|
 | **AeroCode.Eval** | 独立评测工程（只读复用 src，禁改源码）：Baseline/Compare Runner + 三项指标（CheckpointPassRate / MultiTurnHallucination / UnitCostCompletion），gateway 模式经 `MoaGatewayClient` 真实采集，报告见 `eval/reports/` |
-| 跨平台 | Windows（桌面窗口）与 Android（单视图 + Overlay 对话框）共享同一 UI/服务栈 |
+| Code Review / Diagnostics | 内置审查与诊断面板 |
+
+---
 
 ## 🏗️ 架构（12 个工程：10 src + 1 eval + 1 tests）
 
@@ -144,16 +182,13 @@ dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage -p:EmbedAss
 4. 「设为聊天默认」把选中模型写入 ollama provider，对话即走本地推理。
 5. 「参数调节」可改 num_ctx / num_thread / temperature / top_p / top_k / repeat_penalty / num_predict，应用后热重载免重启。
 
-> 本机无 NVIDIA GPU 时走纯 CPU 推理（Intel 集显等）；CUDA / FlashAttention / vLLM 等 GPU 加速路径如实标注为环境受限，见 [docs/LOCAL_LLM_SPEC.md](docs/LOCAL_LLM_SPEC.md)。
+## 🔐 数据安全与本地运行（设计原则）
 
-## 🔐 安全与隐私
-
-- API Key 一律从环境变量读取（设置页只存 `ApiKeyEnvVar` 变量名），仓库与产物中不含任何密钥；
-- 本地大模型（Ollama）免 API Key，数据不出本机；
-- `.gitignore` 覆盖 `*.keystore / *.jks / *.pem / *.p12 / *.pfx` 与本地数据库；
-- MCP 外部工具默认「每次询问」，危险模式探测（如 `rm` / `format` / `git push --mirror`）不受任何降级影响；
-- 附件注入 / 历史驱逐只认真实数据，超预算如实标注「已引用未注入」，绝不伪造已读全文；
-- 成本核算只认真实用量，未知价格跳过、绝不估算。
+- **数据不出本机**：代码、对话、记忆全部落在本地 SQLite（`%LOCALAPPDATA%/AeroCode`）；本地大模型（Ollama）推理完全离线，免 API Key；
+- **密钥零落盘**：API Key 一律从环境变量读取（设置页只存 `ApiKeyEnvVar` 变量名），仓库与产物中不含任何密钥；
+- **权限不降级**：MCP 外部工具默认「每次询问」，危险模式探测（`rm` / `format` / `git push --mirror`）不受任何降级影响，显式 Deny 恒胜 Ask；
+- **诚实不伪造**：附件注入 / 历史驱逐只认真实数据，超预算如实标「已引用未注入」；成本核算只认真实用量，未知价格跳过、绝不估算；网关不可达如实显示琥珀点，绝不伪造连通；
+- **产物卫生**：`.gitignore` 覆盖 `*.keystore / *.jks / *.pem / *.p12 / *.pfx` 与本地数据库。
 
 ## 🛠️ 技术栈
 
@@ -179,14 +214,7 @@ dotnet build src/AeroCode.App.Android -c Debug -t:SignAndroidPackage -p:EmbedAss
 
 ## 🔗 相关项目（定位坐标与致敬）
 
-AeroCode 取「本地优先笔记」与「AI Agent 工作台」两条开源主线的交集。以下项目是本仓库 README 与产品定位的重要参考坐标（仅借鉴公开的定位与表达方式，代码无任何复制）：
-
-**本地优先 / 笔记**
-
-- [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) —— 开源 Notion 替代、AI 协作工作区，主打「数据不失控」
-- [SiYuan 思源笔记](https://github.com/siyuan-note/siyuan) —— 隐私优先的自托管知识工作区，「人与 AI Agent 协同」的定位对本项目启发最直接
-- [Logseq](https://github.com/logseq/logseq) —— 隐私优先的开源知识管理平台
-- [Joplin](https://github.com/laurent22/joplin) —— 全平台隐私笔记 + 同步，多端一致性的范本
+AeroCode 取「AI Agent 编码工作台」与「本地优先数据主权」两条开源主线的交集。以下项目是本仓库 README 与产品定位的重要参考坐标（仅借鉴公开的定位与表达方式，代码无任何复制）：
 
 **AI Agent / 编码助手**
 
@@ -197,6 +225,13 @@ AeroCode 取「本地优先笔记」与「AI Agent 工作台」两条开源主�
 - [goose](https://github.com/aaif-goose/goose) —— 可扩展通用 Agent，桌面 + CLI + API 多形态范本
 - [Tabby](https://github.com/TabbyML/tabby) —— 自托管 AI 编码助手
 - [Ollama](https://github.com/ollama/ollama) —— 本地大模型运行时；AeroCode 本地模型子系统基于其原生 /api 与 OpenAI 兼容端点
+
+**本地优先 / 数据主权**
+
+- [SiYuan 思源笔记](https://github.com/siyuan-note/siyuan) —— 隐私优先的自托管知识工作区，「人与 AI Agent 协同」的定位对本项目启发最直接
+- [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) —— 开源 Notion 替代、AI 协作工作区，主打「数据不失控」
+- [Logseq](https://github.com/logseq/logseq) —— 隐私优先的开源知识管理平台
+- [Joplin](https://github.com/laurent22/joplin) —— 全平台隐私笔记 + 同步，多端一致性的范本
 
 **协议**
 
